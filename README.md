@@ -1,77 +1,60 @@
 # pin
 
-A lightweight, zero-dependency, hyper-fast CLI tool written in Zig for saving, filtering, and retrieving deep markdown-based ideas into a unified vault directory located at `~/.pin_vault/`.
+zero deps idea CLI tool for you and your agents
 
-## Features
+A lightweight vault for saving ideas and discoveries that should be implemented but are out of scope right now. Both humans and AI agents can use it to pin forward-looking proposals and next-step roadmaps.
 
-- **Zero Dependencies**: Pure, modern Zig 0.16.0 standard library implementations.
-- **Sub-millisecond Performance**: Stream-based JSON parsing and file iteration that reads only front-matter metadata without loading entire markdown bodies into memory.
-- **O(1) Memory JSON Output**: Directly formats and streams JSON arrays to `stdout`.
-- **Automatic Context Mapping**: Defaults to using the current directory base name as the project context and auto-generates clean, UTF-8-safe titles if omitted.
+Ideas are stored as markdown files with YAML front matter in `~/.pin_vault/` (override with `PIN_VAULT` env var).
 
 ## Installation
-
-To download and install the binary globally on your system, run:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/JoeriKaiser/pin/main/install.sh | sh
 ```
 
-### Manual Compilation
+Requires [Zig](https://ziglang.org) compiler.
 
-If you have Zig installed locally, you can clone the repository and compile the binary directly:
-
-```bash
-zig build-exe main.zig -O ReleaseSafe
-mv main /usr/local/bin/pin
-```
-
----
-
-## Agent Integration (Skills)
-
-For AI agents (like Claude, ChatGPT, or other LLMs operating locally), you can install the `pin` skill to enable structured repository planning and brainstorming retrieval:
+## Agent Integration
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/JoeriKaiser/pin/main/SKILL.md -o ~/.agent_skills/pin.md
 ```
 
-Once installed, the agent will dynamically look up folder context and manage system notes using this tool.
+## Usage
 
----
-
-## Usage Command Reference
-
-### 1. Add an Idea
-Saves a markdown-based idea to the vault.
 ```bash
-pin add "This is my detailed design idea." --project "MyProject" --title "Custom Title"
-```
-- **Fallback Behavior**:
-  - If `--project` is omitted, it defaults to the folder name of your current working directory.
-  - If `--title` is omitted, it defaults to the first 30 characters of the content.
+# Add an idea
+pin add "markdown content" [--project <name>] [--title <string>] [--tags <comma,separated>]
 
-### 2. List All Ideas
-Streams back a fast JSON summary array of all files in the vault.
-```bash
+# Add from stdin
+cat notes.md | pin add --stdin --title "My Idea" --project myproj
+
+# List all ideas (JSON, newest first)
 pin list
-```
-*Output*: `[{"filename":"2026-07-09_1783632296.md","project":"MyProject","title":"Custom Title","timestamp":1783632296}]`
 
-### 3. List Project Ideas
-Streams back a filtered JSON summary array of ideas corresponding exactly to the current project (base name of current directory).
-```bash
+# List with filters and human-readable output
+pin list --project <name> --tag <name> --format table
+
+# List ideas for the current project folder
 pin list-project
-```
 
-### 4. Search Ideas
-Case-insensitively searches the entire file content (front matter + body) for a query string, streaming back matching ideas.
-```bash
-pin search "<query>"
-```
+# Search all ideas (case-insensitive)
+pin search "<query>" [--tag <name>] [--format table]
 
-### 5. Read an Idea
-Outputs the absolute raw content (Front matter + Markdown body) of a specific idea file in the vault.
-```bash
+# Read a specific idea
 pin read <filename>
+
+# Remove an idea
+pin rm <filename>
+
+# Edit an idea in $EDITOR
+pin edit <filename>
+
+# Vault statistics
+pin stats
 ```
+
+## Output Formats
+
+- **JSON** (default): Machine-readable, sorted newest first. Includes `filename`, `project`, `title`, `timestamp`, and optional `tags`.
+- **Table** (`--format table`): Human-readable with date, project, title, tags, and filename.

@@ -20,18 +20,21 @@ fi
     zig build-exe main.zig -O ReleaseSafe
 )
 
+BINARY_NAME="main"
 INSTALL_PATH="/usr/local/bin/pin"
 LOCAL_BIN_DIR="$HOME/.local/bin"
 
 echo "==> Installing pin binary..."
 if [ -w "/usr/local/bin" ]; then
-    cp "$TEMP_DIR/main" "$INSTALL_PATH"
+    cp "$TEMP_DIR/$BINARY_NAME" "$INSTALL_PATH"
+    chmod +x "$INSTALL_PATH"
     echo "Installed pin to $INSTALL_PATH"
 else
     mkdir -p "$LOCAL_BIN_DIR"
-    cp "$TEMP_DIR/main" "$LOCAL_BIN_DIR/pin"
+    cp "$TEMP_DIR/$BINARY_NAME" "$LOCAL_BIN_DIR/pin"
+    chmod +x "$LOCAL_BIN_DIR/pin"
     echo "Installed pin to $LOCAL_BIN_DIR/pin"
-    
+
     # Check if ~/.local/bin is in PATH
     case ":$PATH:" in
         *":$LOCAL_BIN_DIR:"*) ;;
