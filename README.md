@@ -17,7 +17,7 @@ Requires [Zig](https://ziglang.org) compiler.
 ## Agent Integration
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/JoeriKaiser/pin/main/SKILL.md -o ~/.agent_skills/pin.md
+mkdir -p ~/.agents/skills/pin && curl -fsSL https://raw.githubusercontent.com/JoeriKaiser/pin/main/SKILL.md -o ~/.agents/skills/pin/SKILL.md
 ```
 
 ## Usage
