@@ -6,21 +6,80 @@ set -e
 TEMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TEMP_DIR"' EXIT
 
-echo "==> Downloading main.zig..."
-curl -fsSL https://raw.githubusercontent.com/JoeriKaiser/pin/main/main.zig -o "$TEMP_DIR/main.zig"
+verify_checksum() {
+    FILE="$1"
+    SHA_FILE="$2"
+    EXPECTED=$(tr -d '\r\n' < "$SHA_FILE" | cut -d' ' -f1)
+    if command -v sha256sum >/dev/null 2>&1; then
+        ACTUAL=$(sha256sum "$FILE" | cut -d' ' -f1)
+    elif command -v shasum >/dev/null 2>&1; then
+        ACTUAL=$(shasum -a 256 "$FILE" | cut -d' ' -f1)
+    else
+        echo "Warning: Neither sha256sum nor shasum was found. Falling back to source compilation." >&2
+        return 1
+    fi
+    EXPECTED=$(echo "$EXPECTED" | tr -d ' ')
+    ACTUAL=$(echo "$ACTUAL" | tr -d ' ')
+    [ "$EXPECTED" = "$ACTUAL" ]
+}
 
-echo "==> Compiling pin CLI with Zig..."
-if ! command -v zig >/dev/null 2>&1; then
-    echo "Error: Zig compiler not found. Please install Zig (https://ziglang.org) and try again." >&2
-    exit 1
+OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+ARCH=$(uname -m)
+TARGET=""
+
+case "$OS" in
+    linux)
+        case "$ARCH" in
+            x86_64) TARGET="linux-amd64" ;;
+            aarch64|arm64) TARGET="linux-arm64" ;;
+        esac
+        ;;
+    darwin)
+        case "$ARCH" in
+            x86_64) TARGET="macos-amd64" ;;
+            aarch64|arm64) TARGET="macos-arm64" ;;
+        esac
+        ;;
+esac
+
+BINARY_NAME=""
+
+if [ -n "$TARGET" ]; then
+    echo "==> Downloading pre-compiled binary for $TARGET..."
+    URL="https://github.com/JoeriKaiser/pin/releases/latest/download/pin-$TARGET"
+    if curl -fsSL "$URL" -o "$TEMP_DIR/pin"; then
+        if curl -fsSL "$URL.sha256" -o "$TEMP_DIR/pin.sha256"; then
+            if verify_checksum "$TEMP_DIR/pin" "$TEMP_DIR/pin.sha256"; then
+                BINARY_NAME="pin"
+            else
+                echo "Error: Checksum verification failed for pre-compiled binary." >&2
+                echo "Falling back to source compilation..."
+            fi
+        else
+            echo "Warning: Could not download checksum file. Falling back to source compilation..."
+        fi
+    else
+        echo "==> Pre-compiled binary not found or download failed. Falling back to source compilation..."
+    fi
 fi
 
-(
-    cd "$TEMP_DIR"
-    zig build-exe main.zig -O ReleaseSafe
-)
+if [ -z "$BINARY_NAME" ]; then
+    echo "==> Downloading main.zig..."
+    curl -fsSL https://raw.githubusercontent.com/JoeriKaiser/pin/main/main.zig -o "$TEMP_DIR/main.zig"
 
-BINARY_NAME="main"
+    echo "==> Compiling pin CLI with Zig..."
+    if ! command -v zig >/dev/null 2>&1; then
+        echo "Error: Zig compiler not found and no pre-compiled binary available for $OS-$ARCH." >&2
+        echo "Please install Zig (https://ziglang.org) to build from source, or check releases at https://github.com/JoeriKaiser/pin/releases." >&2
+        exit 1
+    fi
+
+    (
+        cd "$TEMP_DIR"
+        zig build-exe main.zig -O ReleaseSafe
+    )
+    BINARY_NAME="main"
+fi
 INSTALL_PATH="/usr/local/bin/pin"
 LOCAL_BIN_DIR="$HOME/.local/bin"
 

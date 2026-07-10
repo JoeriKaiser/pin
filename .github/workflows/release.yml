@@ -1,0 +1,51 @@
+name: Release
+
+on:
+  release:
+    types: [created]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build for ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-linux
+            output_name: pin-linux-amd64
+          - target: aarch64-linux
+            output_name: pin-linux-arm64
+          - target: x86_64-macos
+            output_name: pin-macos-amd64
+          - target: aarch64-macos
+            output_name: pin-macos-arm64
+          - target: x86_64-windows
+            output_name: pin-windows-amd64.exe
+          - target: aarch64-windows
+            output_name: pin-windows-arm64.exe
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - name: Build binary
+        run: |
+          zig build-exe main.zig -target ${{ matrix.target }} -O ReleaseSafe
+          mv main ${{ matrix.output_name }} || mv main.exe ${{ matrix.output_name }}
+          sha256sum ${{ matrix.output_name }} > ${{ matrix.output_name }}.sha256
+
+      - name: Upload Release Asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ matrix.output_name }}
+            ${{ matrix.output_name }}.sha256
