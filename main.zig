@@ -308,7 +308,7 @@ fn print_usage() void {
         \\  pin add "<markdown_content>" [--project <name>] [--title <string>] [--tags <comma,separated>]
         \\  pin add --stdin [--project <name>] [--title <string>] [--tags <comma,separated>]
         \\  pin list [--project <name>] [--tag <name>] [--format table]
-        \\  pin list-project [--tag <name>] [--format table]
+        \\  pin list-project [--project <name>] [--tag <name>] [--format table]
         \\  pin search "<query>" [--project <name>] [--tag <name>] [--format table]
         \\  pin read <filename>
         \\  pin rm <filename>

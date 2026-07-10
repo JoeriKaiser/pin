@@ -6,6 +6,23 @@ set -e
 TEMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TEMP_DIR"' EXIT
 
+verify_checksum() {
+    FILE="$1"
+    SHA_FILE="$2"
+    EXPECTED=$(tr -d '\r\n' < "$SHA_FILE" | cut -d' ' -f1)
+    if command -v sha256sum >/dev/null 2>&1; then
+        ACTUAL=$(sha256sum "$FILE" | cut -d' ' -f1)
+    elif command -v shasum >/dev/null 2>&1; then
+        ACTUAL=$(shasum -a 256 "$FILE" | cut -d' ' -f1)
+    else
+        echo "Warning: Neither sha256sum nor shasum was found. Skipping integrity check." >&2
+        return 0
+    fi
+    EXPECTED=$(echo "$EXPECTED" | tr -d ' ')
+    ACTUAL=$(echo "$ACTUAL" | tr -d ' ')
+    [ "$EXPECTED" = "$ACTUAL" ]
+}
+
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
 ARCH=$(uname -m)
 TARGET=""
@@ -31,7 +48,16 @@ if [ -n "$TARGET" ]; then
     echo "==> Downloading pre-compiled binary for $TARGET..."
     URL="https://github.com/JoeriKaiser/pin/releases/latest/download/pin-$TARGET"
     if curl -fsSL "$URL" -o "$TEMP_DIR/pin"; then
-        BINARY_NAME="pin"
+        if curl -fsSL "$URL.sha256" -o "$TEMP_DIR/pin.sha256"; then
+            if verify_checksum "$TEMP_DIR/pin" "$TEMP_DIR/pin.sha256"; then
+                BINARY_NAME="pin"
+            else
+                echo "Error: Checksum verification failed for pre-compiled binary." >&2
+                echo "Falling back to source compilation..."
+            fi
+        else
+            echo "Warning: Could not download checksum file. Falling back to source compilation..."
+        fi
     else
         echo "==> Pre-compiled binary not found or download failed. Falling back to source compilation..."
     fi

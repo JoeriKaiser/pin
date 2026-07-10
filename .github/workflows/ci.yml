@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        target: [x86_64-linux, aarch64-linux, x86_64-macos, aarch64-macos, x86_64-windows]
+        target: [x86_64-linux, aarch64-linux, x86_64-macos, aarch64-macos, x86_64-windows, aarch64-windows]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
