@@ -15,8 +15,8 @@ verify_checksum() {
     elif command -v shasum >/dev/null 2>&1; then
         ACTUAL=$(shasum -a 256 "$FILE" | cut -d' ' -f1)
     else
-        echo "Warning: Neither sha256sum nor shasum was found. Skipping integrity check." >&2
-        return 0
+        echo "Warning: Neither sha256sum nor shasum was found. Falling back to source compilation." >&2
+        return 1
     fi
     EXPECTED=$(echo "$EXPECTED" | tr -d ' ')
     ACTUAL=$(echo "$ACTUAL" | tr -d ' ')
