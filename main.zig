@@ -94,6 +94,44 @@ fn emit_idea_table(writer: *std.Io.Writer, meta: IdeaMeta) !void {
     try writer.print("           {s}\n", .{meta.filename});
 }
 
+fn escape_yaml_string(arena: std.mem.Allocator, value: []const u8) ![]const u8 {
+    // If it doesn't contain backslash or double quote, return as-is (duped)
+    if (std.mem.indexOfScalar(u8, value, '\\') == null and std.mem.indexOfScalar(u8, value, '"') == null) {
+        return try arena.dupe(u8, value);
+    }
+    var result: std.ArrayList(u8) = .empty;
+    for (value) |c| {
+        if (c == '\\' or c == '"') {
+            try result.append(arena, '\\');
+        }
+        try result.append(arena, c);
+    }
+    return result.items;
+}
+
+fn unescape_yaml_string(arena: std.mem.Allocator, value: []const u8) ![]const u8 {
+    const stripped = strip_yaml_quotes(value);
+    // If it doesn't contain any backslashes, we don't need to allocate/unescape
+    if (std.mem.indexOfScalar(u8, stripped, '\\') == null) {
+        return try arena.dupe(u8, stripped);
+    }
+    var result: std.ArrayList(u8) = .empty;
+    var i: usize = 0;
+    while (i < stripped.len) {
+        if (stripped[i] == '\\' and i + 1 < stripped.len) {
+            const next = stripped[i + 1];
+            if (next == '"' or next == '\\') {
+                try result.append(arena, next);
+                i += 2;
+                continue;
+            }
+        }
+        try result.append(arena, stripped[i]);
+        i += 1;
+    }
+    return result.items;
+}
+
 /// Parse YAML front matter from an in-memory buffer.
 fn parse_front_matter_from_buf(arena: std.mem.Allocator, content: []const u8) !?IdeaMeta {
     if (content.len < 4) return null;
@@ -121,13 +159,13 @@ fn parse_front_matter_from_buf(arena: std.mem.Allocator, content: []const u8) !?
         const value = std.mem.trim(u8, line[colon_idx + 1 ..], " ");
 
         if (std.mem.eql(u8, key, "project")) {
-            project = try arena.dupe(u8, strip_yaml_quotes(value));
+            project = try unescape_yaml_string(arena, value);
         } else if (std.mem.eql(u8, key, "title")) {
-            title = try arena.dupe(u8, strip_yaml_quotes(value));
+            title = try unescape_yaml_string(arena, value);
         } else if (std.mem.eql(u8, key, "timestamp")) {
             timestamp = std.fmt.parseInt(i64, value, 10) catch 0;
         } else if (std.mem.eql(u8, key, "tags")) {
-            tags = try arena.dupe(u8, strip_yaml_quotes(value));
+            tags = try unescape_yaml_string(arena, value);
         }
     }
 
@@ -270,7 +308,8 @@ fn print_usage() void {
         \\  pin add "<markdown_content>" [--project <name>] [--title <string>] [--tags <comma,separated>]
         \\  pin add --stdin [--project <name>] [--title <string>] [--tags <comma,separated>]
         \\  pin list [--project <name>] [--tag <name>] [--format table]
-        \\  pin search "<query>" [--tag <name>] [--format table]
+        \\  pin list-project [--tag <name>] [--format table]
+        \\  pin search "<query>" [--project <name>] [--tag <name>] [--format table]
         \\  pin read <filename>
         \\  pin rm <filename>
         \\  pin edit <filename>
@@ -361,6 +400,10 @@ pub fn main(init: std.process.Init) !void {
         const proj_name = if (project) |p| p else cwd_basename;
         const title_val = if (title) |t| try arena.dupe(u8, t) else try get_default_title(arena, final_content);
 
+        const escaped_proj = try escape_yaml_string(arena, proj_name);
+        const escaped_title = try escape_yaml_string(arena, title_val);
+        const escaped_tags = if (tags) |t| try escape_yaml_string(arena, t) else null;
+
         // Get timestamp with nanosecond precision for unique filenames
         const ts = std.Io.Timestamp.now(io, .real);
         const seconds = ts.toSeconds();
@@ -394,7 +437,7 @@ pub fn main(init: std.process.Init) !void {
 
         // YAML Front Matter — all string values quoted to avoid YAML parsing issues
         var file_content: []const u8 = undefined;
-        if (tags) |t| {
+        if (escaped_tags) |et| {
             file_content = try std.fmt.allocPrint(arena,
                 \\---
                 \\project: "{s}"
@@ -404,7 +447,7 @@ pub fn main(init: std.process.Init) !void {
                 \\---
                 \\{s}
                 \\
-            , .{ proj_name, seconds, title_val, t, final_content });
+            , .{ escaped_proj, seconds, escaped_title, et, final_content });
         } else {
             file_content = try std.fmt.allocPrint(arena,
                 \\---
@@ -414,7 +457,7 @@ pub fn main(init: std.process.Init) !void {
                 \\---
                 \\{s}
                 \\
-            , .{ proj_name, seconds, title_val, final_content });
+            , .{ escaped_proj, seconds, escaped_title, final_content });
         }
 
         dir.writeFile(io, .{ .sub_path = filename, .data = file_content }) catch |err| {
@@ -524,13 +567,21 @@ pub fn main(init: std.process.Init) !void {
             std.process.exit(1);
         }
         const query = args[2];
+        var filter_project: ?[]const u8 = null;
         var filter_tag: ?[]const u8 = null;
         var format_table = false;
 
         var idx: usize = 3;
         while (idx < args.len) : (idx += 1) {
             const arg = args[idx];
-            if (std.mem.eql(u8, arg, "--tag")) {
+            if (std.mem.eql(u8, arg, "--project")) {
+                if (idx + 1 >= args.len) {
+                    std.debug.print("Error: --project requires a value\n", .{});
+                    std.process.exit(1);
+                }
+                idx += 1;
+                filter_project = args[idx];
+            } else if (std.mem.eql(u8, arg, "--tag")) {
                 if (idx + 1 >= args.len) {
                     std.debug.print("Error: --tag requires a value\n", .{});
                     std.process.exit(1);
@@ -549,6 +600,9 @@ pub fn main(init: std.process.Init) !void {
                     std.debug.print("Error: --format must be 'json' or 'table'\n", .{});
                     std.process.exit(1);
                 }
+            } else {
+                std.debug.print("Error: Unknown flag '{s}'\n", .{arg});
+                std.process.exit(1);
             }
         }
 
@@ -565,7 +619,7 @@ pub fn main(init: std.process.Init) !void {
         };
         defer dir.close(io);
 
-        const ideas = try collect_ideas(arena, io, dir, null, query, filter_tag);
+        const ideas = try collect_ideas(arena, io, dir, filter_project, query, filter_tag);
 
         var out_buf: [4096]u8 = undefined;
         var w = std.Io.File.stdout().writer(io, &out_buf);
@@ -707,12 +761,15 @@ pub fn main(init: std.process.Init) !void {
             init.environ_map.get("VISUAL") orelse
             "vi";
 
-        var child = try std.process.spawn(io, .{
+        var child = std.process.spawn(io, .{
             .argv = &.{ editor, full_path },
             .stdin = .inherit,
             .stdout = .inherit,
             .stderr = .inherit,
-        });
+        }) catch |err| {
+            std.debug.print("Error: Failed to launch editor '{s}': {any}\n", .{ editor, err });
+            std.process.exit(1);
+        };
         const term = try child.wait(io);
 
         switch (term) {
