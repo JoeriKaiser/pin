@@ -75,6 +75,18 @@ assert_contains "$search" '"title":"Cache invalidation"'
 if HOME="$TMP/home" "$PIN_BIN" read "$id" extra >/dev/null 2>&1; then
     fail "read accepted an unexpected argument"
 fi
+if read_error=$(HOME="$TMP/home" "$PIN_BIN" read "$id" --format 2>&1); then
+    fail "read accepted --format without a value"
+fi
+assert_contains "$read_error" '--format requires a value'
+if edit_error=$(HOME="$TMP/home" "$PIN_BIN" edit "$id" --format 2>&1); then
+    fail "edit accepted --format without a value"
+fi
+assert_contains "$edit_error" '--format requires a value'
+if rm_error=$(HOME="$TMP/home" "$PIN_BIN" rm "$id" --format 2>&1); then
+    fail "rm accepted --format without a value"
+fi
+assert_contains "$rm_error" '--format requires a value'
 
 cat >"$TMP/editor" <<'EOF'
 #!/bin/sh
@@ -109,6 +121,18 @@ exported=$(find "$TMP/export" -name '*.md' -type f | wc -l | tr -d ' ')
 rm -f "$TMP/repo/.pin_vault"/*.md
 HOME="$TMP/home" "$PIN_BIN" import "$TMP/export" --format json | grep -q '"operation":"import"'
 [ "$(HOME="$TMP/home" "$PIN_BIN" list-project --format plain | wc -l | tr -d ' ')" -eq 3 ] || fail "import did not restore ideas"
+
+mkdir -p "$TMP/mixed-import" "$TMP/import-target"
+first_pin=$(find "$TMP/export" -name '*.md' -type f | head -1)
+cp "$first_pin" "$TMP/mixed-import/00-valid.md"
+printf '%s\n' 'not a pin file' >"$TMP/mixed-import/99-invalid.md"
+if import_error=$(PIN_VAULT="$TMP/import-target" HOME="$TMP/home" "$PIN_BIN" import "$TMP/mixed-import" --format json 2>&1); then
+    fail "import accepted a malformed pin file"
+fi
+assert_contains "$import_error" 'is not a valid pin file'
+if find "$TMP/import-target" -name '*.md' -type f | grep -q .; then
+    fail "failed import left the destination partially populated"
+fi
 
 HOME="$TMP/home" "$PIN_BIN" rm "$prefix" --format json | grep -q '"removed"'
 

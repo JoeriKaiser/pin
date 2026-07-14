@@ -1101,6 +1101,21 @@ pub fn main(init: std.process.Init) !void {
             try std.Io.Dir.cwd().openDir(io, path, .{});
         defer destination.close(io);
 
+        // Validate every import candidate before writing anything so malformed
+        // input cannot leave the destination vault partially populated.
+        if (is_import) {
+            var validation_iterator = source.iterate();
+            while (try validation_iterator.next(io)) |entry| {
+                if (entry.kind != .file or !std.mem.endsWith(u8, entry.name, ".md")) continue;
+                const content = try source.readFileAlloc(io, entry.name, arena, .unlimited);
+                const meta = try parse_front_matter_from_buf(arena, content);
+                if (meta == null or meta.?.project.len == 0 or meta.?.title.len == 0) {
+                    std.debug.print("Error: '{s}' is not a valid pin file\n", .{entry.name});
+                    std.process.exit(1);
+                }
+            }
+        }
+
         var copied: usize = 0;
         var skipped: usize = 0;
         var iterator = source.iterate();
@@ -1116,13 +1131,6 @@ pub fn main(init: std.process.Init) !void {
                 }
             }
             const content = try source.readFileAlloc(io, entry.name, arena, .unlimited);
-            if (is_import) {
-                const meta = try parse_front_matter_from_buf(arena, content);
-                if (meta == null or meta.?.project.len == 0 or meta.?.title.len == 0) {
-                    std.debug.print("Error: '{s}' is not a valid pin file\n", .{entry.name});
-                    std.process.exit(1);
-                }
-            }
             try destination.writeFile(io, .{ .sub_path = entry.name, .data = content });
             copied += 1;
         }
@@ -1136,18 +1144,24 @@ pub fn main(init: std.process.Init) !void {
 
         // ── read ─────────────────────────────────────────────────────────
     } else if (std.mem.eql(u8, cmd, "read")) {
-        if (args.len != 3 and args.len != 5) {
-            std.debug.print("Error: 'read' requires an ID, ID prefix, or filename and optional --format\n", .{});
+        if (args.len < 3) {
+            std.debug.print("Error: 'read' requires an ID, ID prefix, or filename\n", .{});
             std.process.exit(1);
         }
         const selector = args[2];
         var format: OutputFormat = .plain;
-        if (args.len == 5) {
-            if (!std.mem.eql(u8, args[3], "--format")) {
-                std.debug.print("Error: Unexpected argument '{s}'\n", .{args[3]});
+        var idx: usize = 3;
+        while (idx < args.len) : (idx += 1) {
+            if (!std.mem.eql(u8, args[idx], "--format")) {
+                std.debug.print("Error: Unexpected argument '{s}'\n", .{args[idx]});
                 std.process.exit(1);
             }
-            format = parse_format(args[4]) orelse {
+            if (idx + 1 >= args.len) {
+                std.debug.print("Error: --format requires a value\n", .{});
+                std.process.exit(1);
+            }
+            idx += 1;
+            format = parse_format(args[idx]) orelse {
                 std.debug.print("Error: --format must be json or plain for 'read'\n", .{});
                 std.process.exit(1);
             };
@@ -1207,8 +1221,12 @@ pub fn main(init: std.process.Init) !void {
         var format: ?OutputFormat = null;
         var idx: usize = 3;
         while (idx < args.len) : (idx += 1) {
-            if (!std.mem.eql(u8, args[idx], "--format") or idx + 1 >= args.len) {
+            if (!std.mem.eql(u8, args[idx], "--format")) {
                 std.debug.print("Error: Unexpected argument '{s}'\n", .{args[idx]});
+                std.process.exit(1);
+            }
+            if (idx + 1 >= args.len) {
+                std.debug.print("Error: --format requires a value\n", .{});
                 std.process.exit(1);
             }
             idx += 1;
@@ -1259,18 +1277,24 @@ pub fn main(init: std.process.Init) !void {
 
         // ── edit ─────────────────────────────────────────────────────────
     } else if (std.mem.eql(u8, cmd, "edit")) {
-        if (args.len != 3 and args.len != 5) {
-            std.debug.print("Error: 'edit' requires an ID, ID prefix, or filename and optional --format\n", .{});
+        if (args.len < 3) {
+            std.debug.print("Error: 'edit' requires an ID, ID prefix, or filename\n", .{});
             std.process.exit(1);
         }
         const selector = args[2];
         var format: ?OutputFormat = null;
-        if (args.len == 5) {
-            if (!std.mem.eql(u8, args[3], "--format")) {
-                std.debug.print("Error: Unexpected argument '{s}'\n", .{args[3]});
+        var idx: usize = 3;
+        while (idx < args.len) : (idx += 1) {
+            if (!std.mem.eql(u8, args[idx], "--format")) {
+                std.debug.print("Error: Unexpected argument '{s}'\n", .{args[idx]});
                 std.process.exit(1);
             }
-            format = parse_format(args[4]) orelse {
+            if (idx + 1 >= args.len) {
+                std.debug.print("Error: --format requires a value\n", .{});
+                std.process.exit(1);
+            }
+            idx += 1;
+            format = parse_format(args[idx]) orelse {
                 std.debug.print("Error: --format must be json or plain for 'edit'\n", .{});
                 std.process.exit(1);
             };
