@@ -1,95 +1,188 @@
 ---
 name: pin
-description: Saves, filters, and searches novel project ideas and recommended next steps inside ~/.pin_vault/
+description: Proactively curates substantial project-specific improvement proposals in a Markdown vault. Use at the start and end of every software project session, and whenever work reveals a meaningful out-of-scope technical, product, business, or project improvement. Load existing context first; capture justified, distinct, actionable ideas sparingly.
 ---
 
-# Using the Pin Tool (Project Improvement Registry)
+# Using Pin
 
-The `pin` CLI tool manages **novel ideas about a project** and **recommended next steps towards improving a project** inside a unified vault located at `~/.pin_vault/` (configurable via `PIN_VAULT`).
+`pin` is a durable registry of **future project improvements** and **recommended execution roadmaps**. Treat improvement capture as a lightweight background responsibility during project work.
 
-This tool is **not** a general knowledge system, wiki, code documentation repository, or task-status tracker. Its sole purpose is to act as a registry of forward-looking proposals and concrete execution roadmaps for project improvement.
+Act as a curator, not an idea generator: notice continuously, evaluate strictly, and write sparingly. Never manufacture a pin merely to satisfy this protocol.
 
----
+Pins live as Markdown with YAML front matter in `~/.pin_vault`, a repository-local `.pin_vault`, or `PIN_VAULT`.
 
-## 1. Scope & Threshold (What to Pin)
+## Session protocol
 
-### What to Save:
-- **Novel Project Ideas**: Creative suggestions, new features, structural refactoring concepts, or design improvements.
-- **Recommended Next Steps**: Actionable, step-by-step roadmaps or checklists detailing how to realize an improvement or execute a new idea.
-- **Improvement Proposals**: Clear rationale for why a specific part of the system should be optimized, replaced, or redesigned.
+### 1. Load context first
 
-### What is Strictly Forbidden:
-- **General Documentation / Wiki Entries**: Explanations of how the current code works, API guides, database schemas, or dependency lists.
-- **Trivial Code Checkpoints**: Ephemeral backups of unfinished work, code drafts, or basic git-like logs.
-- **Task Status / Todo Updates**: Status tracking of standard developer tasks.
-- **Raw Compiler / Tool Logs**: Plain stdout/stderr outputs or error logs.
+At the beginning of every project session, run:
 
----
-
-## 2. Markdown Template for Ideas
-
-When writing a new idea using `pin add`, format the markdown content to focus on the proposal and next steps:
-
-```markdown
-# [Title of the Novel Idea]
-
-## Idea & Proposal
-[Detailed explanation of the novel suggestion or improvement]
-
-## Why it Improves the Project
-[The expected benefits, impact on performance/maintainability, or problems solved]
-
-## Recommended Next Steps
-[A concrete, step-by-step checklist of actions needed to realize this idea]
+```bash
+pin context --limit 10 --group kind --format plain
 ```
 
-### Title Guidelines
-- Keep titles as short noun phrases, ideally under 60 characters.
-- Use descriptive nouns, not full sentences (e.g. "Lazy widget loading" not "We should implement lazy loading for widgets").
+Mention relevant existing pins briefly. Context provides awareness and prevents duplication; it is not a mandate to implement or elaborate on every proposal.
 
----
+Before implementing an existing proposal, read it completely:
 
-## 3. Tool Capabilities
+```bash
+pin read <id-or-prefix>
+```
 
-### `pin add "<markdown_content>" [--project <name>] [--title <string>] [--tags <comma,separated>]`
-- **Purpose**: Commits a new novel idea and recommended next steps to the vault.
-- **Parameters**:
-  - `--project`: Associate the idea with a project (defaults to current directory name).
-  - `--title`: A descriptive short noun phrase for listing (auto-extracted from content if omitted, max 60 chars).
-  - `--tags`: Comma-separated labels for categorization (e.g. `perf, ux, refactor`).
-- **Stdin**: Use `--stdin` flag or pipe content directly: `cat notes.md | pin add --title "My Idea"`.
+### 2. Notice candidates during normal work
 
-### `pin list [--project <name>] [--tag <name>] [--format table]`
-- **Purpose**: Retrieves a JSON index of saved ideas, sorted newest first.
-- **Flags**: `--project` filters by project, `--tag` filters by tag, `--format table` for human-readable output.
-- **Backward compat**: `pin list-project` still works (equivalent to `pin list --project <cwd>`).
+Use two observation lenses without interrupting the current task to brainstorm:
 
-### `pin search "<query>" [--tag <name>] [--format table]`
-- **Purpose**: Case-insensitively searches all saved ideas and next steps inside the vault.
+1. **Technical lens:** Did the code, runtime, architecture, security posture, or developer workflow reveal a substantial improvement?
+2. **Product/business/project lens:** Did the work reveal a meaningful opportunity in user value, adoption, delivery, maintenance, community, or long-term project health?
 
-### `pin read <filename>`
-- **Purpose**: Outputs the full proposal and next steps of the selected idea.
+The lenses ensure consideration, not quotas. Do not create one pin per category.
 
-### `pin rm <filename>`
-- **Purpose**: Removes an idea from the vault.
+### 3. Apply the curation gate
 
-### `pin edit <filename>`
-- **Purpose**: Opens an idea in your `$EDITOR` for refinement.
+Create a pin only when every condition is met:
 
-### `pin stats`
-- **Purpose**: Displays vault summary: total ideas, projects, tags, date range.
+- **Project-specific:** grounded in this project's goals, code, users, constraints, or domain.
+- **Substantial:** materially improves value, reliability, security, performance, maintainability, adoption, or sustainability.
+- **Justified:** supported by observed evidence or a clearly labeled hypothesis.
+- **Out of scope:** not something that should simply be completed within the current task.
+- **Distinct:** not already represented by an existing pin.
+- **Actionable:** includes a plausible validation or implementation roadmap.
 
-### Environment
-- `PIN_VAULT`: Override default vault path (`~/.pin_vault`).
+Best-practice knowledge qualifies only when there is concrete evidence of a relevant project gap. “Projects should have tests” is not enough; identify the actual untested risk and consequence.
 
----
+Urgent defects and issues within the current task must be surfaced or fixed directly, not buried in the vault.
 
-## 4. Agent Execution Protocols
+### 4. Search before writing
 
-### Phase A: Discovering Ideas (Read-First)
-1. **Auto-scan on session start**: At the beginning of every session, run `pin list-project` (or `pin list --project <name>`). If any pins exist, mention them in your first response.
-2. **Respect Proposed Roadmaps**: Read the full file content using `pin read <filename>` before implementing an improvement to align with the recommended execution steps.
+Search by the candidate's important terms:
 
-### Phase B: Documenting New Ideas (Write-Second)
-1. **Register Novel Concepts**: If you conceive of a novel feature, design improvement, or major refactor during development, save it using `pin add` with the recommended next steps. Use `--tags` for categorization.
-2. **Formulate Next Steps**: Before finishing a session, if there are remaining steps to fully realize an improvement, document them as a pin so the user or the next agent can seamlessly resume the work.
+```bash
+pin search "<key terms>" --project <project> --format plain
+```
+
+If an existing pin covers the same outcome, do not create another. Read or refine the existing proposal when appropriate.
+
+### 5. Curate at session end
+
+Evaluate substantial candidates before finishing. In a normal session, automatically add at most **one** new pin. More are appropriate only during an explicit audit, review, or ideation task.
+
+Do not ask for permission for a qualifying pin; add it and mention it briefly in the final response:
+
+> Pinned **Incremental configuration validation** (`a82f71`).
+
+If no candidate passes the gate, create nothing.
+
+## Pin domains
+
+Every new pin has exactly one primary `kind`. Choose by its intended outcome; use tags for secondary concerns.
+
+### `technical`
+
+How the system is built and operated: architecture, code quality, performance, reliability, security, infrastructure, and developer experience.
+
+Require concrete technical evidence, an engineering consequence, and a plausible implementation path.
+
+### `product`
+
+What users experience and value: problems, workflows, features, usability, onboarding, and accessibility.
+
+Identify the user or workflow, expected value, evidence and assumptions, and a way to validate the need.
+
+### `business`
+
+How the project reaches users or sustains value: adoption, positioning, distribution, monetization, partnerships, and value capture.
+
+Agents usually lack direct market evidence. State hypotheses as hypotheses, identify the likely audience and value mechanism, and include a low-cost validation experiment. Never present general market knowledge as project-specific fact.
+
+### `project`
+
+How the project is maintained and delivered: releases, documentation, community, contribution process, governance, and operational sustainability.
+
+Identify recurring project friction and a sustainable process improvement.
+
+For cross-cutting ideas, choose the kind matching the primary intended outcome. For example, a shared vault is `product` when the goal is collaboration, but `business` when the proposal is specifically a paid team offering.
+
+Legacy pins without a kind appear as `unspecified`.
+
+## Proposal template
+
+Use short noun-phrase titles and this structure:
+
+```markdown
+# Proposal title
+
+## Idea & Proposal
+Describe the concrete improvement or hypothesis.
+
+## Evidence
+- Reference relevant files, observed behavior, user workflow, constraints, or domain facts.
+
+## Why it Improves the Project
+Explain the expected project-specific impact.
+
+## Confidence & Assumptions
+Confidence: high | medium | low
+
+- State important assumptions and uncertainty.
+- Product and business pins must include a low-cost validation method.
+
+## Recommended Next Steps
+- [ ] Give concrete validation or implementation steps.
+```
+
+Classify the proposal's origin with a tag when useful:
+
+- `observed` — directly supported by project evidence
+- `best-practice` — a concrete project gap identified using domain practice
+- `exploratory` — a plausible but unvalidated novel direction
+
+Add it with an explicit domain:
+
+```bash
+pin add --stdin --kind technical --title "Short title" \
+  --tags "observed,reliability" --priority high <<'EOF'
+# Short title
+
+## Idea & Proposal
+...
+
+## Evidence
+- `src/example.zig` silently ignores malformed records.
+
+## Why it Improves the Project
+...
+
+## Confidence & Assumptions
+Confidence: high
+
+## Recommended Next Steps
+- [ ] ...
+EOF
+```
+
+Duplicate titles are rejected by default. Use `--allow-duplicate` only when the outcomes are genuinely distinct.
+
+## Do not pin
+
+- generic best-practice checklists without a demonstrated gap
+- routine status updates, ordinary todos, or current-task work
+- general documentation about how existing code works
+- raw compiler output, logs, or unfinished code snapshots
+- trivial cleanup or speculative technology substitutions
+- urgent risks that should be disclosed immediately
+- variations of an existing proposal
+
+## Commands
+
+- `pin context [--project <name>] [--kind <kind>] [--limit <n>] [--group kind] [--format json|plain]`
+- `pin add <markdown> --kind technical|product|business|project [--stdin] [--project <name>] [--title <title>] [--tags <csv>] [--priority low|medium|high] [--format json|plain]`
+- `pin list [--project <name>] [--tag <name>] [--kind <kind>] [--format json|table|plain]`
+- `pin list-project [--tag <name>] [--kind <kind>] [--format json|table|plain]`
+- `pin search <query> [--project <name>] [--tag <name>] [--kind <kind>] [--format json|table|plain]`
+- `pin read|edit|rm <id|prefix|filename>`
+- `pin stats [--format json|plain]`
+- `pin init --local [--project <name>]`
+- `pin import|export <directory> [--force]`
+
+Project identity resolves from `--project`, `PIN_PROJECT`, repository-root `.pin-project`, repository name, then current directory name. Vault location resolves from `PIN_VAULT`, repository-root `.pin_vault`, then `~/.pin_vault`.
