@@ -22,6 +22,21 @@ jobs:
       - name: Verify formatting
         run: zig fmt --check main.zig
 
+  behavior:
+    name: CLI behavior
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - name: Run CLI tests
+        run: ./tests/cli.sh
+
   build_test:
     name: Verify Compilation for ${{ matrix.target }}
     runs-on: ubuntu-latest

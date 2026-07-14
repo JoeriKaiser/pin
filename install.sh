@@ -64,13 +64,25 @@ if [ -n "$TARGET" ]; then
 fi
 
 if [ -z "$BINARY_NAME" ]; then
-    echo "==> Downloading main.zig..."
-    curl -fsSL https://raw.githubusercontent.com/JoeriKaiser/pin/main/main.zig -o "$TEMP_DIR/main.zig"
+    REQUIRED_ZIG="0.16.0"
+    LATEST_URL=$(curl -fsSL -o /dev/null -w '%{url_effective}' https://github.com/JoeriKaiser/pin/releases/latest || true)
+    RELEASE_TAG=${LATEST_URL##*/}
+    case "$RELEASE_TAG" in
+        ""|latest) RELEASE_TAG="main" ;;
+    esac
 
-    echo "==> Compiling pin CLI with Zig..."
+    echo "==> Downloading main.zig from $RELEASE_TAG..."
+    curl -fsSL "https://raw.githubusercontent.com/JoeriKaiser/pin/$RELEASE_TAG/main.zig" -o "$TEMP_DIR/main.zig"
+
+    echo "==> Compiling pin CLI with Zig $REQUIRED_ZIG..."
     if ! command -v zig >/dev/null 2>&1; then
         echo "Error: Zig compiler not found and no pre-compiled binary available for $OS-$ARCH." >&2
-        echo "Please install Zig (https://ziglang.org) to build from source, or check releases at https://github.com/JoeriKaiser/pin/releases." >&2
+        echo "Install Zig $REQUIRED_ZIG (https://ziglang.org) or use a supported release binary." >&2
+        exit 1
+    fi
+    ACTUAL_ZIG=$(zig version)
+    if [ "$ACTUAL_ZIG" != "$REQUIRED_ZIG" ]; then
+        echo "Error: Source fallback requires Zig $REQUIRED_ZIG, but found $ACTUAL_ZIG." >&2
         exit 1
     fi
 
