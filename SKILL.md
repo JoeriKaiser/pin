@@ -73,6 +73,14 @@ Do not ask for permission for a qualifying pin; add it and mention it briefly in
 
 If no candidate passes the gate, create nothing.
 
+When the current task fully implements an existing proposal and verification passes, archive it instead of deleting it:
+
+```bash
+pin archive <id-or-prefix> --resolution implemented --note "Brief shipped outcome"
+```
+
+Do not archive partially implemented proposals. Use `pin unarchive` if later evidence shows that work remains.
+
 ## Pin domains
 
 Every new pin has exactly one primary `kind`. Choose by its intended outcome; use tags for secondary concerns.
@@ -175,11 +183,14 @@ Duplicate titles are rejected by default. Use `--allow-duplicate` only when the 
 
 ## Commands
 
-- `pin context [--project <name>] [--kind <kind>] [--limit <n>] [--group kind] [--format json|plain]`
+- `pin context [--project <name>] [--kind <kind>] [--limit <n>] [--group kind] [--archived|--all] [--format json|plain]`
 - `pin add <markdown> --kind technical|product|business|project [--stdin] [--project <name>] [--title <title>] [--tags <csv>] [--priority low|medium|high] [--format json|plain]`
-- `pin list [--project <name>] [--tag <name>] [--kind <kind>] [--format json|table|plain]`
-- `pin list-project [--tag <name>] [--kind <kind>] [--format json|table|plain]`
-- `pin search <query> [--project <name>] [--tag <name>] [--kind <kind>] [--format json|table|plain]`
+- `pin list [--project <name>] [--tag <name>] [--kind <kind>] [--archived|--all] [--format json|table|plain]`
+- `pin list-project [--tag <name>] [--kind <kind>] [--archived|--all] [--format json|table|plain]`
+- `pin search <query> [--project <name>] [--tag <name>] [--kind <kind>] [--limit <n>] [--archived|--all] [--format json|table|plain]`
+- `pin doctor [--repair] [--strict] [--format json|plain]`
+- `pin archive <id|prefix|filename> [--resolution implemented|rejected|superseded|stale] [--note <text>]`
+- `pin unarchive <id|prefix|filename>`
 - `pin read|edit|rm <id|prefix|filename>`
 - `pin stats [--format json|plain]`
 - `pin init --local [--project <name>]`

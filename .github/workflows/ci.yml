@@ -37,6 +37,66 @@ jobs:
       - name: Run CLI tests
         run: ./tests/cli.sh
 
+  unit:
+    name: Zig unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - name: Run unit tests
+        run: zig test main.zig
+
+  windows_installer:
+    name: Windows installer smoke test
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - name: Build local release asset and checksum
+        shell: pwsh
+        run: |
+          $assets = Join-Path $env:RUNNER_TEMP "pin-assets"
+          New-Item -ItemType Directory -Path $assets -Force | Out-Null
+          $binary = Join-Path $assets "pin-windows-amd64.exe"
+          zig build-exe main.zig -target x86_64-windows -O Debug -femit-bin=$binary
+          $hash = (Get-FileHash -Algorithm SHA256 $binary).Hash.ToLowerInvariant()
+          "$hash  pin-windows-amd64.exe" | Set-Content "$binary.sha256"
+
+      - name: Install and run pin
+        shell: pwsh
+        run: |
+          $assets = Join-Path $env:RUNNER_TEMP "pin-assets"
+          $install = Join-Path $env:RUNNER_TEMP "pin-install"
+          ./install.ps1 -AssetDirectory $assets -InstallDir $install -NoPathUpdate
+          $version = & (Join-Path $install "pin.exe") --version
+          if ($version -ne "pin 0.4.0") { throw "Unexpected version: $version" }
+
+      - name: Reject a bad checksum
+        shell: pwsh
+        run: |
+          $assets = Join-Path $env:RUNNER_TEMP "pin-assets"
+          $binary = Join-Path $assets "pin-windows-amd64.exe"
+          "0000000000000000000000000000000000000000000000000000000000000000  pin-windows-amd64.exe" | Set-Content "$binary.sha256"
+          $rejected = $false
+          try {
+            ./install.ps1 -AssetDirectory $assets -InstallDir (Join-Path $env:RUNNER_TEMP "bad-install") -NoPathUpdate
+          } catch {
+            $rejected = $true
+          }
+          if (-not $rejected) { throw "Installer accepted a bad checksum" }
+
   build_test:
     name: Verify Compilation for ${{ matrix.target }}
     runs-on: ubuntu-latest

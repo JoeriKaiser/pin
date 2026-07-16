@@ -1,10 +1,27 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
-const version = "0.3.0";
+const version = "0.4.0";
 
 const OutputFormat = enum { json, table, plain };
+const ArchiveFilter = enum { active, archived, all };
+const IssueSeverity = enum { info, warning, err };
+
+const Issue = struct {
+    code: []const u8,
+    severity: IssueSeverity,
+    filename: []const u8,
+    line: usize,
+    field: []const u8,
+    message: []const u8,
+    repairable: bool,
+};
 
 const IdeaMeta = struct {
+    schema: u16,
+    has_schema: bool,
+    has_id: bool,
+    has_kind: bool,
     id: []const u8,
     filename: []const u8,
     project: []const u8,
@@ -14,6 +31,11 @@ const IdeaMeta = struct {
     title: []const u8,
     tags: []const u8,
     priority: []const u8,
+    archived_at: i64,
+    resolution: []const u8,
+    resolution_note: []const u8,
+    body: []const u8,
+    score: usize,
 
     fn lessThan(_: void, a: IdeaMeta, b: IdeaMeta) bool {
         if (a.timestamp != b.timestamp) return a.timestamp > b.timestamp;
@@ -26,6 +48,11 @@ const IdeaMeta = struct {
         const b_rank = priority_rank(b.priority);
         if (a_rank != b_rank) return a_rank > b_rank;
         return lessThan({}, a, b);
+    }
+
+    fn searchLessThan(_: void, a: IdeaMeta, b: IdeaMeta) bool {
+        if (a.score != b.score) return a.score > b.score;
+        return contextLessThan({}, a, b);
     }
 };
 
@@ -128,6 +155,20 @@ fn emit_idea_json(writer: *std.Io.Writer, meta: IdeaMeta, first: bool) !void {
         try print_escaped_json(writer, meta.priority);
         try writer.writeAll("\"");
     }
+    if (meta.archived_at > 0) {
+        try writer.print(",\"archived_at\":{d}", .{meta.archived_at});
+        if (meta.resolution.len > 0) {
+            try writer.writeAll(",\"resolution\":\"");
+            try print_escaped_json(writer, meta.resolution);
+            try writer.writeAll("\"");
+        }
+        if (meta.resolution_note.len > 0) {
+            try writer.writeAll(",\"resolution_note\":\"");
+            try print_escaped_json(writer, meta.resolution_note);
+            try writer.writeAll("\"");
+        }
+    }
+    if (meta.score > 0) try writer.print(",\"score\":{d}", .{meta.score});
     try writer.writeAll("}");
 }
 
@@ -213,15 +254,92 @@ fn unescape_yaml_string(arena: std.mem.Allocator, value: []const u8) ![]const u8
     return result.items;
 }
 
-/// Parse YAML front matter from an in-memory buffer.
-fn parse_front_matter_from_buf(arena: std.mem.Allocator, content: []const u8) !?IdeaMeta {
-    if (content.len < 4) return null;
+fn add_issue(
+    arena: std.mem.Allocator,
+    issues: ?*std.ArrayList(Issue),
+    filename: []const u8,
+    line: usize,
+    code: []const u8,
+    severity: IssueSeverity,
+    field: []const u8,
+    repairable: bool,
+    comptime fmt: []const u8,
+    args: anytype,
+) !void {
+    const list = issues orelse return;
+    try list.append(arena, .{
+        .code = code,
+        .severity = severity,
+        .filename = try arena.dupe(u8, filename),
+        .line = line,
+        .field = field,
+        .message = try std.fmt.allocPrint(arena, fmt, args),
+        .repairable = repairable,
+    });
+}
 
-    // First line must be "---"
-    const first_nl = std.mem.indexOfScalar(u8, content, '\n') orelse return null;
+fn canonical_kind(value: []const u8) ?[]const u8 {
+    inline for (.{ "technical", "product", "business", "project", "unspecified" }) |kind| {
+        if (std.ascii.eqlIgnoreCase(value, kind)) return kind;
+    }
+    return null;
+}
+
+fn canonical_priority(value: []const u8) ?[]const u8 {
+    inline for (.{ "low", "medium", "high" }) |priority| {
+        if (std.ascii.eqlIgnoreCase(value, priority)) return priority;
+    }
+    return null;
+}
+
+fn valid_resolution(value: []const u8) bool {
+    return std.mem.eql(u8, value, "implemented") or
+        std.mem.eql(u8, value, "rejected") or
+        std.mem.eql(u8, value, "superseded") or
+        std.mem.eql(u8, value, "stale");
+}
+
+fn valid_id(value: []const u8) bool {
+    if (value.len != 12) return false;
+    for (value) |c| if (!std.ascii.isHex(c)) return false;
+    return true;
+}
+
+fn note_field(
+    arena: std.mem.Allocator,
+    issues: ?*std.ArrayList(Issue),
+    filename: []const u8,
+    line: usize,
+    key: []const u8,
+    seen: *bool,
+) !void {
+    if (seen.*) try add_issue(arena, issues, filename, line, "duplicate_field", .err, key, false, "Duplicate front-matter field '{s}'", .{key});
+    seen.* = true;
+}
+
+/// Parse the constrained YAML front matter used by pin and optionally collect diagnostics.
+fn parse_front_matter_detailed(
+    arena: std.mem.Allocator,
+    content: []const u8,
+    filename: []const u8,
+    issues: ?*std.ArrayList(Issue),
+) !?IdeaMeta {
+    if (content.len < 4) {
+        try add_issue(arena, issues, filename, 1, "missing_front_matter", .err, "", false, "Missing front matter", .{});
+        return null;
+    }
+
+    const first_nl = std.mem.indexOfScalar(u8, content, '\n') orelse {
+        try add_issue(arena, issues, filename, 1, "missing_front_matter", .err, "", false, "Missing front matter", .{});
+        return null;
+    };
     const first_line = std.mem.trim(u8, content[0..first_nl], " \r");
-    if (!std.mem.eql(u8, first_line, "---")) return null;
+    if (!std.mem.eql(u8, first_line, "---")) {
+        try add_issue(arena, issues, filename, 1, "missing_front_matter", .err, "", false, "Missing opening front-matter delimiter", .{});
+        return null;
+    }
 
+    var schema: u16 = 0;
     var id: ?[]const u8 = null;
     var project: ?[]const u8 = null;
     var kind: ?[]const u8 = null;
@@ -230,49 +348,367 @@ fn parse_front_matter_from_buf(arena: std.mem.Allocator, content: []const u8) !?
     var title: ?[]const u8 = null;
     var tags: ?[]const u8 = null;
     var priority: ?[]const u8 = null;
+    var archived_at: i64 = 0;
+    var resolution: ?[]const u8 = null;
+    var resolution_note: ?[]const u8 = null;
 
+    var seen_schema = false;
+    var seen_id = false;
+    var seen_project = false;
+    var seen_kind = false;
+    var seen_timestamp = false;
+    var seen_created = false;
+    var seen_title = false;
+    var seen_tags = false;
+    var seen_priority = false;
+    var seen_archived = false;
+    var seen_resolution = false;
+    var seen_resolution_note = false;
+    var unknown_keys: std.ArrayList([]const u8) = .empty;
+    var closed = false;
+    var body_start = content.len;
+    var line_number: usize = 2;
     var pos = first_nl + 1;
-    while (pos < content.len) {
-        const line_end = std.mem.indexOfScalarPos(u8, content, pos, '\n') orelse content.len;
-        const line = std.mem.trim(u8, content[pos..line_end], " \r");
-        pos = line_end + 1;
 
-        if (std.mem.eql(u8, line, "---")) break;
+    while (pos < content.len) : (line_number += 1) {
+        const line_end = std.mem.indexOfScalarPos(u8, content, pos, '\n') orelse content.len;
+        const next_pos = if (line_end < content.len) line_end + 1 else content.len;
+        const line = std.mem.trim(u8, content[pos..line_end], " \r");
+        pos = next_pos;
+
+        if (std.mem.eql(u8, line, "---")) {
+            closed = true;
+            body_start = pos;
+            break;
+        }
 
         const colon_idx = std.mem.indexOfScalar(u8, line, ':') orelse continue;
         const key = std.mem.trim(u8, line[0..colon_idx], " ");
         const value = std.mem.trim(u8, line[colon_idx + 1 ..], " ");
 
-        if (std.mem.eql(u8, key, "id")) {
+        if (std.mem.eql(u8, key, "schema")) {
+            try note_field(arena, issues, filename, line_number, key, &seen_schema);
+            schema = std.fmt.parseInt(u16, value, 10) catch blk: {
+                try add_issue(arena, issues, filename, line_number, "invalid_integer", .err, key, false, "Invalid schema value '{s}'", .{value});
+                break :blk 0;
+            };
+            if (schema > 1) try add_issue(arena, issues, filename, line_number, "unsupported_schema", .err, key, false, "Unsupported schema version {d}", .{schema});
+        } else if (std.mem.eql(u8, key, "id")) {
+            try note_field(arena, issues, filename, line_number, key, &seen_id);
             id = try unescape_yaml_string(arena, value);
+            if (id.?.len > 0 and !valid_id(id.?)) try add_issue(arena, issues, filename, line_number, "invalid_id", .err, key, false, "ID must be 12 hexadecimal characters", .{});
         } else if (std.mem.eql(u8, key, "project")) {
+            try note_field(arena, issues, filename, line_number, key, &seen_project);
             project = try unescape_yaml_string(arena, value);
         } else if (std.mem.eql(u8, key, "kind")) {
-            kind = try unescape_yaml_string(arena, value);
+            try note_field(arena, issues, filename, line_number, key, &seen_kind);
+            const raw = try unescape_yaml_string(arena, value);
+            if (canonical_kind(raw)) |canonical| {
+                kind = canonical;
+                if (!std.mem.eql(u8, raw, canonical)) try add_issue(arena, issues, filename, line_number, "noncanonical_value", .warning, key, true, "Normalize kind '{s}' to '{s}'", .{ raw, canonical });
+            } else {
+                kind = "unspecified";
+                try add_issue(arena, issues, filename, line_number, "invalid_kind", .err, key, false, "Invalid kind '{s}'", .{raw});
+            }
         } else if (std.mem.eql(u8, key, "title")) {
+            try note_field(arena, issues, filename, line_number, key, &seen_title);
             title = try unescape_yaml_string(arena, value);
         } else if (std.mem.eql(u8, key, "timestamp")) {
-            timestamp = std.fmt.parseInt(i64, value, 10) catch 0;
+            try note_field(arena, issues, filename, line_number, key, &seen_timestamp);
+            timestamp = std.fmt.parseInt(i64, value, 10) catch blk: {
+                try add_issue(arena, issues, filename, line_number, "invalid_integer", .err, key, false, "Invalid timestamp '{s}'", .{value});
+                break :blk 0;
+            };
         } else if (std.mem.eql(u8, key, "created_at_ns")) {
-            created_at_ns = std.fmt.parseInt(i128, value, 10) catch 0;
+            try note_field(arena, issues, filename, line_number, key, &seen_created);
+            created_at_ns = std.fmt.parseInt(i128, value, 10) catch blk: {
+                try add_issue(arena, issues, filename, line_number, "invalid_integer", .err, key, false, "Invalid created_at_ns '{s}'", .{value});
+                break :blk 0;
+            };
         } else if (std.mem.eql(u8, key, "tags")) {
+            try note_field(arena, issues, filename, line_number, key, &seen_tags);
             tags = try unescape_yaml_string(arena, value);
         } else if (std.mem.eql(u8, key, "priority")) {
-            priority = try unescape_yaml_string(arena, value);
+            try note_field(arena, issues, filename, line_number, key, &seen_priority);
+            const raw = try unescape_yaml_string(arena, value);
+            if (canonical_priority(raw)) |canonical| {
+                priority = canonical;
+                if (!std.mem.eql(u8, raw, canonical)) try add_issue(arena, issues, filename, line_number, "noncanonical_value", .warning, key, true, "Normalize priority '{s}' to '{s}'", .{ raw, canonical });
+            } else {
+                priority = raw;
+                try add_issue(arena, issues, filename, line_number, "invalid_priority", .err, key, false, "Invalid priority '{s}'", .{raw});
+            }
+        } else if (std.mem.eql(u8, key, "archived_at")) {
+            try note_field(arena, issues, filename, line_number, key, &seen_archived);
+            archived_at = std.fmt.parseInt(i64, value, 10) catch blk: {
+                try add_issue(arena, issues, filename, line_number, "invalid_integer", .err, key, false, "Invalid archived_at '{s}'", .{value});
+                break :blk 0;
+            };
+        } else if (std.mem.eql(u8, key, "resolution")) {
+            try note_field(arena, issues, filename, line_number, key, &seen_resolution);
+            resolution = try unescape_yaml_string(arena, value);
+            if (resolution.?.len > 0 and !valid_resolution(resolution.?)) try add_issue(arena, issues, filename, line_number, "invalid_resolution", .err, key, false, "Invalid resolution '{s}'", .{resolution.?});
+        } else if (std.mem.eql(u8, key, "resolution_note")) {
+            try note_field(arena, issues, filename, line_number, key, &seen_resolution_note);
+            resolution_note = try unescape_yaml_string(arena, value);
+        } else {
+            var duplicate = false;
+            for (unknown_keys.items) |seen_key| if (std.mem.eql(u8, seen_key, key)) {
+                duplicate = true;
+                break;
+            };
+            if (duplicate) {
+                try add_issue(arena, issues, filename, line_number, "duplicate_field", .err, key, false, "Duplicate front-matter field '{s}'", .{key});
+            } else {
+                try unknown_keys.append(arena, try arena.dupe(u8, key));
+            }
         }
     }
 
-    return IdeaMeta{
+    if (!closed) try add_issue(arena, issues, filename, line_number, "unterminated_front_matter", .err, "", false, "Missing closing front-matter delimiter", .{});
+    if (!seen_schema) try add_issue(arena, issues, filename, 1, "missing_schema", .warning, "schema", true, "Legacy file has no schema version", .{});
+    if (!seen_id) try add_issue(arena, issues, filename, 1, "missing_id", .warning, "id", true, "Legacy file has no explicit ID", .{});
+    if (!seen_kind) try add_issue(arena, issues, filename, 1, "missing_kind", .info, "kind", false, "Legacy file has no kind", .{});
+    if (project == null or project.?.len == 0) try add_issue(arena, issues, filename, 1, "missing_required_field", .err, "project", false, "Missing required field 'project'", .{});
+    if (title == null or title.?.len == 0) try add_issue(arena, issues, filename, 1, "missing_required_field", .err, "title", false, "Missing required field 'title'", .{});
+
+    return .{
+        .schema = schema,
+        .has_schema = seen_schema,
+        .has_id = seen_id,
+        .has_kind = seen_kind,
         .id = id orelse "",
         .filename = "",
         .project = project orelse "",
-        .kind = if (kind) |value| if (valid_kind(value)) value else "unspecified" else "unspecified",
+        .kind = kind orelse "unspecified",
         .timestamp = timestamp orelse 0,
         .created_at_ns = created_at_ns orelse 0,
         .title = title orelse "",
         .tags = tags orelse "",
         .priority = priority orelse "",
+        .archived_at = archived_at,
+        .resolution = resolution orelse "",
+        .resolution_note = resolution_note orelse "",
+        .body = if (closed) content[body_start..] else "",
+        .score = 0,
     };
+}
+
+fn parse_front_matter_from_buf(arena: std.mem.Allocator, content: []const u8) !?IdeaMeta {
+    var issues: std.ArrayList(Issue) = .empty;
+    const meta = try parse_front_matter_detailed(arena, content, "", &issues);
+    for (issues.items) |issue| if (issue.severity == .err) return null;
+    return meta;
+}
+
+const FieldUpdate = struct {
+    key: []const u8,
+    value: ?[]const u8,
+};
+
+fn yaml_quoted(arena: std.mem.Allocator, value: []const u8) ![]const u8 {
+    return std.fmt.allocPrint(arena, "\"{s}\"", .{try escape_yaml_string(arena, value)});
+}
+
+fn append_field_line(arena: std.mem.Allocator, output: *std.ArrayList(u8), key: []const u8, value: []const u8) !void {
+    try output.appendSlice(arena, try std.fmt.allocPrint(arena, "{s}: {s}\n", .{ key, value }));
+}
+
+fn rewrite_front_matter(arena: std.mem.Allocator, content: []const u8, updates: []const FieldUpdate) ![]const u8 {
+    const first_nl = std.mem.indexOfScalar(u8, content, '\n') orelse return error.InvalidFrontMatter;
+    if (!std.mem.eql(u8, std.mem.trim(u8, content[0..first_nl], " \r"), "---")) return error.InvalidFrontMatter;
+
+    const applied = try arena.alloc(bool, updates.len);
+    @memset(applied, false);
+    var output: std.ArrayList(u8) = .empty;
+    try output.appendSlice(arena, content[0 .. first_nl + 1]);
+
+    var pos = first_nl + 1;
+    while (pos < content.len) {
+        const line_start = pos;
+        const line_end = std.mem.indexOfScalarPos(u8, content, pos, '\n') orelse content.len;
+        const next_pos = if (line_end < content.len) line_end + 1 else content.len;
+        const line = std.mem.trim(u8, content[line_start..line_end], " \r");
+        pos = next_pos;
+
+        if (std.mem.eql(u8, line, "---")) {
+            for (updates, 0..) |update, i| {
+                if (!applied[i]) if (update.value) |value| try append_field_line(arena, &output, update.key, value);
+            }
+            try output.appendSlice(arena, content[line_start..]);
+            return output.items;
+        }
+
+        const colon_idx = std.mem.indexOfScalar(u8, line, ':');
+        var matched = false;
+        if (colon_idx) |index| {
+            const key = std.mem.trim(u8, line[0..index], " ");
+            for (updates, 0..) |update, i| {
+                if (std.mem.eql(u8, key, update.key)) {
+                    matched = true;
+                    if (!applied[i]) {
+                        if (update.value) |value| try append_field_line(arena, &output, update.key, value);
+                        applied[i] = true;
+                    }
+                    break;
+                }
+            }
+        }
+        if (!matched) try output.appendSlice(arena, content[line_start..next_pos]);
+    }
+    return error.InvalidFrontMatter;
+}
+
+fn atomic_write(arena: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, filename: []const u8, content: []const u8) !void {
+    const nonce = std.Io.Timestamp.now(io, .real).toNanoseconds();
+    const temp_name = try std.fmt.allocPrint(arena, ".{s}.{d}.tmp", .{ filename, nonce });
+    dir.writeFile(io, .{ .sub_path = temp_name, .data = content }) catch |err| return err;
+    std.Io.Dir.rename(dir, temp_name, dir, filename, io) catch |err| {
+        dir.deleteFile(io, temp_name) catch {};
+        return err;
+    };
+}
+
+const VaultScan = struct {
+    ideas: []IdeaMeta,
+    issues: []Issue,
+    files_scanned: usize,
+};
+
+fn scan_vault(arena: std.mem.Allocator, io: std.Io, dir: std.Io.Dir) !VaultScan {
+    var ideas: std.ArrayList(IdeaMeta) = .empty;
+    var issues: std.ArrayList(Issue) = .empty;
+    var files_scanned: usize = 0;
+    var it = dir.iterate();
+    while (try it.next(io)) |entry| {
+        if (entry.kind != .file or !std.mem.endsWith(u8, entry.name, ".md")) continue;
+        files_scanned += 1;
+        const content = dir.readFileAlloc(io, entry.name, arena, .unlimited) catch |err| {
+            try add_issue(arena, &issues, entry.name, 0, "unreadable_file", .err, "", false, "Failed to read file: {any}", .{err});
+            continue;
+        };
+        const issue_start = issues.items.len;
+        if (try parse_front_matter_detailed(arena, content, entry.name, &issues)) |raw_meta| {
+            var valid = true;
+            for (issues.items[issue_start..]) |issue| if (issue.severity == .err) {
+                valid = false;
+                break;
+            };
+            var meta = raw_meta;
+            meta.filename = try arena.dupe(u8, entry.name);
+            meta.id = if (raw_meta.id.len > 0) raw_meta.id else try derive_id(arena, entry.name);
+            if (raw_meta.has_id) {
+                const stem = entry.name[0 .. entry.name.len - 3];
+                const legacy_id = try derive_id(arena, entry.name);
+                if (!std.mem.eql(u8, stem, raw_meta.id) and !std.mem.eql(u8, legacy_id, raw_meta.id)) try add_issue(arena, &issues, entry.name, 1, "id_filename_mismatch", .warning, "id", false, "ID '{s}' does not match filename stem '{s}'", .{ raw_meta.id, stem });
+            }
+            if (valid) try ideas.append(arena, meta);
+        }
+    }
+
+    for (ideas.items, 0..) |idea, i| {
+        for (ideas.items[i + 1 ..]) |other| {
+            if (std.mem.eql(u8, idea.id, other.id)) try add_issue(arena, &issues, other.filename, 1, "duplicate_id", .err, "id", false, "ID '{s}' is also used by '{s}'", .{ other.id, idea.filename });
+        }
+    }
+    return .{ .ideas = ideas.items, .issues = issues.items, .files_scanned = files_scanned };
+}
+
+fn repair_vault(arena: std.mem.Allocator, io: std.Io, dir: std.Io.Dir) !usize {
+    var repaired: usize = 0;
+    var it = dir.iterate();
+    while (try it.next(io)) |entry| {
+        if (entry.kind != .file or !std.mem.endsWith(u8, entry.name, ".md")) continue;
+        const content = dir.readFileAlloc(io, entry.name, arena, .unlimited) catch continue;
+        var issues: std.ArrayList(Issue) = .empty;
+        const raw_meta = (try parse_front_matter_detailed(arena, content, entry.name, &issues)) orelse continue;
+        var updates: std.ArrayList(FieldUpdate) = .empty;
+        if (!raw_meta.has_schema) try updates.append(arena, .{ .key = "schema", .value = "1" });
+        if (!raw_meta.has_id) {
+            const derived = try derive_id(arena, entry.name);
+            try updates.append(arena, .{ .key = "id", .value = try yaml_quoted(arena, derived) });
+        }
+        for (issues.items) |issue| {
+            if (!std.mem.eql(u8, issue.code, "noncanonical_value")) continue;
+            if (std.mem.eql(u8, issue.field, "kind")) try updates.append(arena, .{ .key = "kind", .value = try yaml_quoted(arena, raw_meta.kind) });
+            if (std.mem.eql(u8, issue.field, "priority")) try updates.append(arena, .{ .key = "priority", .value = try yaml_quoted(arena, raw_meta.priority) });
+        }
+        if (updates.items.len == 0) continue;
+        const rewritten = rewrite_front_matter(arena, content, updates.items) catch continue;
+        try atomic_write(arena, io, dir, entry.name, rewritten);
+        repaired += 1;
+    }
+    return repaired;
+}
+
+fn severity_name(severity: IssueSeverity) []const u8 {
+    return switch (severity) {
+        .info => "info",
+        .warning => "warning",
+        .err => "error",
+    };
+}
+
+fn scan_has_failures(scan: VaultScan, strict: bool) bool {
+    for (scan.issues) |issue| {
+        if (issue.severity == .err or (strict and issue.severity == .warning)) return true;
+    }
+    return false;
+}
+
+fn emit_doctor_report(io: std.Io, vault_path: []const u8, scan: VaultScan, repaired: usize, format: OutputFormat) !void {
+    var errors: usize = 0;
+    var warnings: usize = 0;
+    var infos: usize = 0;
+    var repairable: usize = 0;
+    for (scan.issues) |issue| {
+        switch (issue.severity) {
+            .err => errors += 1,
+            .warning => warnings += 1,
+            .info => infos += 1,
+        }
+        if (issue.repairable) repairable += 1;
+    }
+
+    var buf: [8192]u8 = undefined;
+    var w = std.Io.File.stdout().writer(io, &buf);
+    if (format == .json) {
+        try w.interface.print("{{\"healthy\":{s},\"vault\":\"", .{if (errors == 0) "true" else "false"});
+        try print_escaped_json(&w.interface, vault_path);
+        try w.interface.print("\",\"files_scanned\":{d},\"repaired\":{d},\"issues\":[", .{ scan.files_scanned, repaired });
+        for (scan.issues, 0..) |issue, i| {
+            if (i > 0) try w.interface.writeAll(",");
+            try w.interface.writeAll("{\"code\":\"");
+            try print_escaped_json(&w.interface, issue.code);
+            try w.interface.writeAll("\",\"severity\":\"");
+            try w.interface.writeAll(severity_name(issue.severity));
+            try w.interface.writeAll("\",\"filename\":\"");
+            try print_escaped_json(&w.interface, issue.filename);
+            try w.interface.print("\",\"line\":{d}", .{issue.line});
+            if (issue.field.len > 0) {
+                try w.interface.writeAll(",\"field\":\"");
+                try print_escaped_json(&w.interface, issue.field);
+                try w.interface.writeAll("\"");
+            }
+            try w.interface.writeAll(",\"message\":\"");
+            try print_escaped_json(&w.interface, issue.message);
+            try w.interface.print("\",\"repairable\":{s}}}", .{if (issue.repairable) "true" else "false"});
+        }
+        try w.interface.print("],\"summary\":{{\"errors\":{d},\"warnings\":{d},\"info\":{d},\"repairable\":{d}}}}}\n", .{ errors, warnings, infos, repairable });
+    } else {
+        try w.interface.print("Vault: {s}\nScanned: {d} Markdown file(s)\n", .{ vault_path, scan.files_scanned });
+        if (repaired > 0) try w.interface.print("Repaired: {d} file(s)\n", .{repaired});
+        for (scan.issues) |issue| {
+            try w.interface.print("{s}: {s}", .{ severity_name(issue.severity), issue.filename });
+            if (issue.line > 0) try w.interface.print(":{d}", .{issue.line});
+            try w.interface.print(": {s} [{s}]", .{ issue.message, issue.code });
+            if (issue.repairable) try w.interface.writeAll(" (repairable)");
+            try w.interface.writeAll("\n");
+        }
+        if (scan.issues.len == 0) try w.interface.writeAll("No integrity issues found.\n");
+        try w.interface.print("Summary: {d} error(s), {d} warning(s), {d} info\n", .{ errors, warnings, infos });
+    }
+    try w.end();
 }
 
 fn strip_yaml_quotes(value: []const u8) []const u8 {
@@ -422,6 +858,101 @@ fn open_vault_dir(io: std.Io, vault_path: []const u8, iterate: bool) ?std.Io.Dir
     };
 }
 
+fn is_word_byte(c: u8) bool {
+    return std.ascii.isAlphanumeric(c) or c == '_';
+}
+
+fn contains_word_ignore_case(haystack: []const u8, needle: []const u8) bool {
+    if (needle.len == 0 or needle.len > haystack.len) return false;
+    var pos: usize = 0;
+    while (std.ascii.findIgnoreCase(haystack[pos..], needle)) |relative| {
+        const start = pos + relative;
+        const end = start + needle.len;
+        if ((start == 0 or !is_word_byte(haystack[start - 1])) and (end == haystack.len or !is_word_byte(haystack[end]))) return true;
+        pos = start + 1;
+        if (pos + needle.len > haystack.len) break;
+    }
+    return false;
+}
+
+fn search_score(meta: IdeaMeta, query: []const u8) ?usize {
+    var score: usize = 0;
+    var terms = std.mem.tokenizeAny(u8, query, " \t\r\n");
+    var term_count: usize = 0;
+    while (terms.next()) |term| {
+        term_count += 1;
+        var matched = false;
+        if (std.ascii.findIgnoreCase(meta.title, term) != null) {
+            score += 8;
+            matched = true;
+            if (contains_word_ignore_case(meta.title, term)) score += 2;
+        }
+        if (std.ascii.findIgnoreCase(meta.tags, term) != null) {
+            score += 4;
+            matched = true;
+            if (contains_word_ignore_case(meta.tags, term)) score += 1;
+        }
+        if (std.ascii.findIgnoreCase(meta.body, term) != null) {
+            score += 1;
+            matched = true;
+            if (contains_word_ignore_case(meta.body, term)) score += 1;
+        }
+        if (!matched) return null;
+    }
+    if (term_count == 0) return 1;
+    if (std.ascii.eqlIgnoreCase(std.mem.trim(u8, meta.title, " \t\r\n"), std.mem.trim(u8, query, " \t\r\n"))) score += 32 else if (std.ascii.findIgnoreCase(meta.title, query) != null) score += 16;
+    if (std.ascii.findIgnoreCase(meta.body, query) != null) score += 2;
+    return score;
+}
+
+fn archive_matches(meta: IdeaMeta, filter: ArchiveFilter) bool {
+    return switch (filter) {
+        .active => meta.archived_at == 0,
+        .archived => meta.archived_at > 0,
+        .all => true,
+    };
+}
+
+fn collect_ideas_filtered(
+    arena: std.mem.Allocator,
+    io: std.Io,
+    dir: std.Io.Dir,
+    filter_project: ?[]const u8,
+    filter_query: ?[]const u8,
+    filter_tag: ?[]const u8,
+    filter_kind: ?[]const u8,
+    archive_filter: ArchiveFilter,
+) ![]IdeaMeta {
+    var list: std.ArrayList(IdeaMeta) = .empty;
+    var it = dir.iterate();
+
+    while (try it.next(io)) |entry| {
+        if (entry.kind != .file or !std.mem.endsWith(u8, entry.name, ".md")) continue;
+        const content = dir.readFileAlloc(io, entry.name, arena, .unlimited) catch continue;
+        const meta_opt = try parse_front_matter_from_buf(arena, content);
+        if (meta_opt) |raw_meta| {
+            var meta = raw_meta;
+            meta.id = if (raw_meta.id.len > 0) raw_meta.id else try derive_id(arena, entry.name);
+            meta.filename = try arena.dupe(u8, entry.name);
+
+            if (!archive_matches(meta, archive_filter)) continue;
+            if (filter_project) |proj| if (!std.mem.eql(u8, meta.project, proj)) continue;
+            if (filter_tag) |tag| if (!tag_matches(meta.tags, tag)) continue;
+            if (filter_kind) |kind| if (!std.ascii.eqlIgnoreCase(meta.kind, kind)) continue;
+            if (filter_query) |query| meta.score = search_score(meta, query) orelse continue;
+            try list.append(arena, meta);
+        }
+    }
+
+    const items = list.items;
+    if (filter_query != null) {
+        std.sort.block(IdeaMeta, items, {}, IdeaMeta.searchLessThan);
+    } else {
+        std.sort.block(IdeaMeta, items, {}, IdeaMeta.lessThan);
+    }
+    return items;
+}
+
 fn collect_ideas(
     arena: std.mem.Allocator,
     io: std.Io,
@@ -431,51 +962,7 @@ fn collect_ideas(
     filter_tag: ?[]const u8,
     filter_kind: ?[]const u8,
 ) ![]IdeaMeta {
-    var list: std.ArrayList(IdeaMeta) = .empty;
-    var it = dir.iterate();
-
-    while (try it.next(io)) |entry| {
-        if (entry.kind != .file or !std.mem.endsWith(u8, entry.name, ".md")) continue;
-
-        const content = dir.readFileAlloc(io, entry.name, arena, .unlimited) catch continue;
-
-        // Query filter: search full file content
-        if (filter_query) |query| {
-            if (std.ascii.findIgnoreCase(content, query) == null) continue;
-        }
-
-        const meta_opt = try parse_front_matter_from_buf(arena, content);
-        if (meta_opt) |raw_meta| {
-            // Project filter
-            if (filter_project) |proj| {
-                if (!std.mem.eql(u8, raw_meta.project, proj)) continue;
-            }
-
-            // Tag and domain filters
-            if (filter_tag) |tag| {
-                if (!tag_matches(raw_meta.tags, tag)) continue;
-            }
-            if (filter_kind) |kind| {
-                if (!std.ascii.eqlIgnoreCase(raw_meta.kind, kind)) continue;
-            }
-
-            try list.append(arena, .{
-                .id = if (raw_meta.id.len > 0) raw_meta.id else try derive_id(arena, entry.name),
-                .filename = try arena.dupe(u8, entry.name),
-                .project = raw_meta.project,
-                .kind = raw_meta.kind,
-                .timestamp = raw_meta.timestamp,
-                .created_at_ns = raw_meta.created_at_ns,
-                .title = raw_meta.title,
-                .tags = raw_meta.tags,
-                .priority = raw_meta.priority,
-            });
-        }
-    }
-
-    const items = list.items;
-    std.sort.block(IdeaMeta, items, {}, IdeaMeta.lessThan);
-    return items;
+    return collect_ideas_filtered(arena, io, dir, filter_project, filter_query, filter_tag, filter_kind, .active);
 }
 
 fn tag_matches(tags_csv: []const u8, needle: []const u8) bool {
@@ -503,7 +990,7 @@ fn resolve_selector(arena: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, selec
         }
     }
 
-    const ideas = try collect_ideas(arena, io, dir, null, null, null, null);
+    const ideas = try collect_ideas_filtered(arena, io, dir, null, null, null, null, .all);
     var match: ?[]const u8 = null;
     for (ideas) |meta| {
         if (std.mem.eql(u8, meta.id, selector)) return meta.filename;
@@ -537,6 +1024,84 @@ fn format_date(writer: *std.Io.Writer, timestamp: i64) !void {
     try writer.print("{d:0>4}-{d:0>2}-{d:0>2}", .{ year_day.year, @intFromEnum(month_day.month), month_day.day_index + 1 });
 }
 
+fn require_flag_value(args: []const []const u8, idx: *usize, flag: []const u8) []const u8 {
+    if (idx.* + 1 >= args.len) {
+        std.debug.print("Error: {s} requires a value\n", .{flag});
+        std.process.exit(1);
+    }
+    idx.* += 1;
+    return args[idx.*];
+}
+
+fn parse_format_arg(value: []const u8, allow_table: bool, command: []const u8) OutputFormat {
+    const format = parse_format(value) orelse {
+        if (allow_table) {
+            std.debug.print("Error: --format must be json, table, or plain for '{s}'\n", .{command});
+        } else {
+            std.debug.print("Error: --format must be json or plain for '{s}'\n", .{command});
+        }
+        std.process.exit(1);
+    };
+    if (!allow_table and format == .table) {
+        std.debug.print("Error: --format must be json or plain for '{s}'\n", .{command});
+        std.process.exit(1);
+    }
+    return format;
+}
+
+const SelectorArgs = struct {
+    selector: []const u8,
+    format: ?OutputFormat,
+};
+
+fn parse_selector_args(args: []const []const u8, command: []const u8) SelectorArgs {
+    if (args.len < 3) {
+        std.debug.print("Error: '{s}' requires an ID, ID prefix, or filename\n", .{command});
+        std.process.exit(1);
+    }
+    var result = SelectorArgs{ .selector = args[2], .format = null };
+    var idx: usize = 3;
+    while (idx < args.len) : (idx += 1) {
+        if (!std.mem.eql(u8, args[idx], "--format")) {
+            std.debug.print("Error: Unexpected argument '{s}'\n", .{args[idx]});
+            std.process.exit(1);
+        }
+        result.format = parse_format_arg(require_flag_value(args, &idx, "--format"), false, command);
+    }
+    if (!validate_filename(result.selector)) {
+        std.debug.print("Error: Invalid selector '{s}'\n", .{result.selector});
+        std.process.exit(1);
+    }
+    return result;
+}
+
+fn open_vault_or_exit(io: std.Io, vault_path: []const u8) std.Io.Dir {
+    return std.Io.Dir.openDirAbsolute(io, vault_path, .{ .iterate = true }) catch |err| {
+        if (err == error.FileNotFound) std.debug.print("Error: Vault not found.\n", .{}) else std.debug.print("Error: Failed to open vault directory: {any}\n", .{err});
+        std.process.exit(1);
+    };
+}
+
+fn resolve_selector_or_exit(arena: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, selector: []const u8) []const u8 {
+    return resolve_selector(arena, io, dir, selector) catch |err| {
+        if (err == SelectorError.AmbiguousSelector) {
+            std.debug.print("Error: Selector '{s}' is ambiguous. Use more ID characters.\n", .{selector});
+        } else if (err == SelectorError.SelectorNotFound) {
+            std.debug.print("Error: No idea matches '{s}'.\n", .{selector});
+        } else {
+            std.debug.print("Error: Failed to resolve '{s}': {any}\n", .{ selector, err });
+        }
+        std.process.exit(1);
+    };
+}
+
+fn idea_id_for_file(arena: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, filename: []const u8) ![]const u8 {
+    const content = try dir.readFileAlloc(io, filename, arena, .unlimited);
+    const meta = try parse_front_matter_from_buf(arena, content);
+    if (meta) |value| if (value.id.len > 0) return value.id;
+    return derive_id(arena, filename);
+}
+
 fn print_usage(io: std.Io) !void {
     var buf: [4096]u8 = undefined;
     var w = std.Io.File.stdout().writer(io, &buf);
@@ -547,10 +1112,13 @@ fn print_usage(io: std.Io) !void {
         \\  pin init --local [--project <name>] [--format json|plain]
         \\  pin add "<markdown>" --kind technical|product|business|project [--project <name>] [--title <title>] [--tags <csv>] [--priority low|medium|high] [--format json|plain]
         \\  pin add --stdin [options]
-        \\  pin list [--project <name>] [--tag <name>] [--kind <kind>] [--format json|table|plain]
-        \\  pin list-project [--tag <name>] [--kind <kind>] [--format json|table|plain]
-        \\  pin search "<query>" [--project <name>] [--tag <name>] [--kind <kind>] [--format json|table|plain]
-        \\  pin context [--project <name>] [--kind <kind>] [--limit <n>] [--group kind] [--format json|plain]
+        \\  pin list [--project <name>] [--tag <name>] [--kind <kind>] [--archived|--all] [--format json|table|plain]
+        \\  pin list-project [--tag <name>] [--kind <kind>] [--archived|--all] [--format json|table|plain]
+        \\  pin search "<query>" [--project <name>] [--tag <name>] [--kind <kind>] [--limit <n>] [--archived|--all] [--format json|table|plain]
+        \\  pin context [--project <name>] [--kind <kind>] [--limit <n>] [--group kind] [--archived|--all] [--format json|plain]
+        \\  pin doctor [--repair] [--strict] [--format json|plain]
+        \\  pin archive <id|id-prefix|filename> [--resolution implemented|rejected|superseded|stale] [--note <text>] [--format json|plain]
+        \\  pin unarchive <id|id-prefix|filename> [--format json|plain]
         \\  pin import <directory> [--force] [--format json|plain]
         \\  pin export <directory> [--force] [--format json|plain]
         \\  pin read <id|id-prefix|filename> [--format json|plain]
@@ -609,21 +1177,8 @@ pub fn main(init: std.process.Init) !void {
                 local = true;
             } else if (std.mem.eql(u8, args[idx], "--project") or std.mem.eql(u8, args[idx], "--format")) {
                 const flag = args[idx];
-                if (idx + 1 >= args.len) {
-                    std.debug.print("Error: {s} requires a value\n", .{flag});
-                    std.process.exit(1);
-                }
-                idx += 1;
-                if (std.mem.eql(u8, flag, "--project")) project = args[idx] else {
-                    format = parse_format(args[idx]) orelse {
-                        std.debug.print("Error: --format must be json or plain for 'init'\n", .{});
-                        std.process.exit(1);
-                    };
-                    if (format.? == .table) {
-                        std.debug.print("Error: --format must be json or plain for 'init'\n", .{});
-                        std.process.exit(1);
-                    }
-                }
+                const value = require_flag_value(args, &idx, flag);
+                if (std.mem.eql(u8, flag, "--project")) project = value else format = parse_format_arg(value, false, cmd);
             } else {
                 std.debug.print("Error: Unknown flag '{s}'\n", .{args[idx]});
                 std.process.exit(1);
@@ -675,33 +1230,20 @@ pub fn main(init: std.process.Init) !void {
             } else if (std.mem.eql(u8, arg, "--allow-duplicate")) {
                 allow_duplicate = true;
             } else if (std.mem.eql(u8, arg, "--project") or std.mem.eql(u8, arg, "--title") or std.mem.eql(u8, arg, "--tags") or std.mem.eql(u8, arg, "--kind") or std.mem.eql(u8, arg, "--priority") or std.mem.eql(u8, arg, "--format")) {
-                if (idx + 1 >= args.len) {
-                    std.debug.print("Error: {s} requires a value\n", .{arg});
-                    std.process.exit(1);
-                }
-                idx += 1;
-                if (std.mem.eql(u8, arg, "--project")) project = args[idx] else if (std.mem.eql(u8, arg, "--title")) title = args[idx] else if (std.mem.eql(u8, arg, "--tags")) tags = args[idx] else if (std.mem.eql(u8, arg, "--kind")) {
-                    if (!valid_kind(args[idx]) or std.mem.eql(u8, args[idx], "unspecified")) {
+                const value = require_flag_value(args, &idx, arg);
+                if (std.mem.eql(u8, arg, "--project")) project = value else if (std.mem.eql(u8, arg, "--title")) title = value else if (std.mem.eql(u8, arg, "--tags")) tags = value else if (std.mem.eql(u8, arg, "--kind")) {
+                    if (!valid_kind(value) or std.mem.eql(u8, value, "unspecified")) {
                         std.debug.print("Error: --kind must be technical, product, business, or project\n", .{});
                         std.process.exit(1);
                     }
-                    kind = args[idx];
+                    kind = value;
                 } else if (std.mem.eql(u8, arg, "--priority")) {
-                    if (!valid_priority(args[idx])) {
+                    if (!valid_priority(value)) {
                         std.debug.print("Error: --priority must be low, medium, or high\n", .{});
                         std.process.exit(1);
                     }
-                    priority = args[idx];
-                } else {
-                    format = parse_format(args[idx]) orelse {
-                        std.debug.print("Error: --format must be json or plain for 'add'\n", .{});
-                        std.process.exit(1);
-                    };
-                    if (format.? == .table) {
-                        std.debug.print("Error: --format must be json or plain for 'add'\n", .{});
-                        std.process.exit(1);
-                    }
-                }
+                    priority = value;
+                } else format = parse_format_arg(value, false, cmd);
             } else if (std.mem.startsWith(u8, arg, "--")) {
                 std.debug.print("Error: Unknown flag '{s}'\n", .{arg});
                 std.process.exit(1);
@@ -773,6 +1315,7 @@ pub fn main(init: std.process.Init) !void {
         const priority_line = if (priority) |value| try std.fmt.allocPrint(arena, "priority: \"{s}\"\n", .{value}) else "";
         const file_content = try std.fmt.allocPrint(arena,
             \\---
+            \\schema: 1
             \\id: "{s}"
             \\project: "{s}"
             \\kind: "{s}"
@@ -789,7 +1332,7 @@ pub fn main(init: std.process.Init) !void {
             std.process.exit(1);
         };
 
-        const meta = IdeaMeta{ .id = id, .filename = filename, .project = proj_name, .kind = kind_val, .timestamp = seconds, .created_at_ns = total_ns, .title = title_val, .tags = tags orelse "", .priority = priority orelse "" };
+        const meta = IdeaMeta{ .schema = 1, .has_schema = true, .has_id = true, .has_kind = true, .id = id, .filename = filename, .project = proj_name, .kind = kind_val, .timestamp = seconds, .created_at_ns = total_ns, .title = title_val, .tags = tags orelse "", .priority = priority orelse "", .archived_at = 0, .resolution = "", .resolution_note = "", .body = final_content, .score = 0 };
         var out_buf: [1024]u8 = undefined;
         var w = std.Io.File.stdout().writer(io, &out_buf);
         switch (format orelse default_format(io, .plain)) {
@@ -807,6 +1350,7 @@ pub fn main(init: std.process.Init) !void {
         var filter_project: ?[]const u8 = null;
         var filter_tag: ?[]const u8 = null;
         var filter_kind: ?[]const u8 = null;
+        var archive_filter: ArchiveFilter = .active;
         var format: ?OutputFormat = null;
 
         if (std.mem.eql(u8, cmd, "list-project")) {
@@ -819,22 +1363,19 @@ pub fn main(init: std.process.Init) !void {
         var idx: usize = 2;
         while (idx < args.len) : (idx += 1) {
             const arg = args[idx];
-            if (std.mem.eql(u8, arg, "--project") or std.mem.eql(u8, arg, "--tag") or std.mem.eql(u8, arg, "--kind") or std.mem.eql(u8, arg, "--format")) {
-                if (idx + 1 >= args.len) {
-                    std.debug.print("Error: {s} requires a value\n", .{arg});
-                    std.process.exit(1);
-                }
-                idx += 1;
-                if (std.mem.eql(u8, arg, "--project")) filter_project = args[idx] else if (std.mem.eql(u8, arg, "--tag")) filter_tag = args[idx] else if (std.mem.eql(u8, arg, "--kind")) {
-                    if (!valid_kind(args[idx])) {
+            if (std.mem.eql(u8, arg, "--archived")) {
+                archive_filter = .archived;
+            } else if (std.mem.eql(u8, arg, "--all")) {
+                archive_filter = .all;
+            } else if (std.mem.eql(u8, arg, "--project") or std.mem.eql(u8, arg, "--tag") or std.mem.eql(u8, arg, "--kind") or std.mem.eql(u8, arg, "--format")) {
+                const value = require_flag_value(args, &idx, arg);
+                if (std.mem.eql(u8, arg, "--project")) filter_project = value else if (std.mem.eql(u8, arg, "--tag")) filter_tag = value else if (std.mem.eql(u8, arg, "--kind")) {
+                    if (!valid_kind(value)) {
                         std.debug.print("Error: --kind must be technical, product, business, project, or unspecified\n", .{});
                         std.process.exit(1);
                     }
-                    filter_kind = args[idx];
-                } else format = parse_format(args[idx]) orelse {
-                    std.debug.print("Error: --format must be json, table, or plain\n", .{});
-                    std.process.exit(1);
-                };
+                    filter_kind = value;
+                } else format = parse_format_arg(value, true, cmd);
             } else {
                 std.debug.print("Error: Unknown flag '{s}'\n", .{arg});
                 std.process.exit(1);
@@ -851,7 +1392,7 @@ pub fn main(init: std.process.Init) !void {
         };
         defer dir.close(io);
 
-        const ideas = try collect_ideas(arena, io, dir, filter_project, null, filter_tag, filter_kind);
+        const ideas = try collect_ideas_filtered(arena, io, dir, filter_project, null, filter_tag, filter_kind, archive_filter);
 
         var out_buf: [4096]u8 = undefined;
         var w = std.Io.File.stdout().writer(io, &out_buf);
@@ -884,27 +1425,31 @@ pub fn main(init: std.process.Init) !void {
         var filter_project: ?[]const u8 = null;
         var filter_tag: ?[]const u8 = null;
         var filter_kind: ?[]const u8 = null;
+        var archive_filter: ArchiveFilter = .active;
+        var limit: usize = std.math.maxInt(usize);
         var format: ?OutputFormat = null;
 
         var idx: usize = 3;
         while (idx < args.len) : (idx += 1) {
             const arg = args[idx];
-            if (std.mem.eql(u8, arg, "--project") or std.mem.eql(u8, arg, "--tag") or std.mem.eql(u8, arg, "--kind") or std.mem.eql(u8, arg, "--format")) {
-                if (idx + 1 >= args.len) {
-                    std.debug.print("Error: {s} requires a value\n", .{arg});
-                    std.process.exit(1);
-                }
-                idx += 1;
-                if (std.mem.eql(u8, arg, "--project")) filter_project = args[idx] else if (std.mem.eql(u8, arg, "--tag")) filter_tag = args[idx] else if (std.mem.eql(u8, arg, "--kind")) {
-                    if (!valid_kind(args[idx])) {
+            if (std.mem.eql(u8, arg, "--archived")) {
+                archive_filter = .archived;
+            } else if (std.mem.eql(u8, arg, "--all")) {
+                archive_filter = .all;
+            } else if (std.mem.eql(u8, arg, "--project") or std.mem.eql(u8, arg, "--tag") or std.mem.eql(u8, arg, "--kind") or std.mem.eql(u8, arg, "--limit") or std.mem.eql(u8, arg, "--format")) {
+                const value = require_flag_value(args, &idx, arg);
+                if (std.mem.eql(u8, arg, "--project")) filter_project = value else if (std.mem.eql(u8, arg, "--tag")) filter_tag = value else if (std.mem.eql(u8, arg, "--kind")) {
+                    if (!valid_kind(value)) {
                         std.debug.print("Error: --kind must be technical, product, business, project, or unspecified\n", .{});
                         std.process.exit(1);
                     }
-                    filter_kind = args[idx];
-                } else format = parse_format(args[idx]) orelse {
-                    std.debug.print("Error: --format must be json, table, or plain\n", .{});
-                    std.process.exit(1);
-                };
+                    filter_kind = value;
+                } else if (std.mem.eql(u8, arg, "--limit")) {
+                    limit = std.fmt.parseInt(usize, value, 10) catch {
+                        std.debug.print("Error: --limit must be a non-negative integer\n", .{});
+                        std.process.exit(1);
+                    };
+                } else format = parse_format_arg(value, true, cmd);
             } else {
                 std.debug.print("Error: Unknown flag '{s}'\n", .{arg});
                 std.process.exit(1);
@@ -921,24 +1466,25 @@ pub fn main(init: std.process.Init) !void {
         };
         defer dir.close(io);
 
-        const ideas = try collect_ideas(arena, io, dir, filter_project, query, filter_tag, filter_kind);
+        const ideas = try collect_ideas_filtered(arena, io, dir, filter_project, query, filter_tag, filter_kind, archive_filter);
+        const selected = ideas[0..@min(limit, ideas.len)];
 
         var out_buf: [4096]u8 = undefined;
         var w = std.Io.File.stdout().writer(io, &out_buf);
 
         switch (output_format) {
-            .table => if (ideas.len == 0) {
+            .table => if (selected.len == 0) {
                 try w.interface.print("No results for \"{s}\".\n", .{query});
             } else {
                 try w.interface.writeAll("DATE        PROJECT           KIND         ID            TITLE\n");
                 try w.interface.writeAll("----------  ----------------  -----------  ------------  ----------------------------------------\n");
-                for (ideas) |meta| try emit_idea_table(&w.interface, meta);
-                try w.interface.print("\n{d} result(s) for \"{s}\"\n", .{ ideas.len, query });
+                for (selected) |meta| try emit_idea_table(&w.interface, meta);
+                try w.interface.print("\n{d} result(s) for \"{s}\"\n", .{ selected.len, query });
             },
-            .plain => for (ideas) |meta| try emit_idea_plain(&w.interface, meta),
+            .plain => for (selected) |meta| try emit_idea_plain(&w.interface, meta),
             .json => {
                 try w.interface.writeAll("[");
-                for (ideas, 0..) |meta, i| try emit_idea_json(&w.interface, meta, i == 0);
+                for (selected, 0..) |meta, i| try emit_idea_json(&w.interface, meta, i == 0);
                 try w.interface.writeAll("]\n");
             },
         }
@@ -948,45 +1494,37 @@ pub fn main(init: std.process.Init) !void {
     } else if (std.mem.eql(u8, cmd, "context")) {
         var filter_project: ?[]const u8 = null;
         var filter_kind: ?[]const u8 = null;
+        var archive_filter: ArchiveFilter = .active;
         var limit: usize = 10;
         var group_kind = false;
         var format: ?OutputFormat = null;
         var idx: usize = 2;
         while (idx < args.len) : (idx += 1) {
             const arg = args[idx];
-            if (std.mem.eql(u8, arg, "--project") or std.mem.eql(u8, arg, "--kind") or std.mem.eql(u8, arg, "--limit") or std.mem.eql(u8, arg, "--group") or std.mem.eql(u8, arg, "--format")) {
-                if (idx + 1 >= args.len) {
-                    std.debug.print("Error: {s} requires a value\n", .{arg});
-                    std.process.exit(1);
-                }
-                idx += 1;
-                if (std.mem.eql(u8, arg, "--project")) filter_project = args[idx] else if (std.mem.eql(u8, arg, "--kind")) {
-                    if (!valid_kind(args[idx])) {
+            if (std.mem.eql(u8, arg, "--archived")) {
+                archive_filter = .archived;
+            } else if (std.mem.eql(u8, arg, "--all")) {
+                archive_filter = .all;
+            } else if (std.mem.eql(u8, arg, "--project") or std.mem.eql(u8, arg, "--kind") or std.mem.eql(u8, arg, "--limit") or std.mem.eql(u8, arg, "--group") or std.mem.eql(u8, arg, "--format")) {
+                const value = require_flag_value(args, &idx, arg);
+                if (std.mem.eql(u8, arg, "--project")) filter_project = value else if (std.mem.eql(u8, arg, "--kind")) {
+                    if (!valid_kind(value)) {
                         std.debug.print("Error: --kind must be technical, product, business, project, or unspecified\n", .{});
                         std.process.exit(1);
                     }
-                    filter_kind = args[idx];
+                    filter_kind = value;
                 } else if (std.mem.eql(u8, arg, "--limit")) {
-                    limit = std.fmt.parseInt(usize, args[idx], 10) catch {
+                    limit = std.fmt.parseInt(usize, value, 10) catch {
                         std.debug.print("Error: --limit must be a non-negative integer\n", .{});
                         std.process.exit(1);
                     };
                 } else if (std.mem.eql(u8, arg, "--group")) {
-                    if (!std.mem.eql(u8, args[idx], "kind")) {
+                    if (!std.mem.eql(u8, value, "kind")) {
                         std.debug.print("Error: --group currently supports only 'kind'\n", .{});
                         std.process.exit(1);
                     }
                     group_kind = true;
-                } else {
-                    format = parse_format(args[idx]) orelse {
-                        std.debug.print("Error: --format must be json or plain for 'context'\n", .{});
-                        std.process.exit(1);
-                    };
-                    if (format.? == .table) {
-                        std.debug.print("Error: --format must be json or plain for 'context'\n", .{});
-                        std.process.exit(1);
-                    }
-                }
+                } else format = parse_format_arg(value, false, cmd);
             } else {
                 std.debug.print("Error: Unknown flag '{s}'\n", .{arg});
                 std.process.exit(1);
@@ -1007,7 +1545,7 @@ pub fn main(init: std.process.Init) !void {
             return;
         };
         defer dir.close(io);
-        const ideas = try collect_ideas(arena, io, dir, filter_project, null, null, filter_kind);
+        const ideas = try collect_ideas_filtered(arena, io, dir, filter_project, null, null, filter_kind, archive_filter);
         std.sort.block(IdeaMeta, ideas, {}, IdeaMeta.contextLessThan);
         const selected = ideas[0..@min(limit, ideas.len)];
         var out_buf: [4096]u8 = undefined;
@@ -1019,7 +1557,11 @@ pub fn main(init: std.process.Init) !void {
                 try w.interface.writeAll("]\n");
             },
             .plain => {
-                if (selected.len > 0) try w.interface.print("Active proposals for {s}:\n", .{filter_project.?});
+                if (selected.len > 0) try w.interface.print("{s} proposals for {s}:\n", .{ switch (archive_filter) {
+                    .active => "Active",
+                    .archived => "Archived",
+                    .all => "All",
+                }, filter_project.? });
                 if (group_kind) {
                     for (kind_names) |kind| {
                         var has_kind = false;
@@ -1049,6 +1591,123 @@ pub fn main(init: std.process.Init) !void {
         }
         try w.end();
 
+        // ── doctor ────────────────────────────────────────────────────────
+    } else if (std.mem.eql(u8, cmd, "doctor")) {
+        var repair = false;
+        var strict = false;
+        var format: ?OutputFormat = null;
+        var idx: usize = 2;
+        while (idx < args.len) : (idx += 1) {
+            const arg = args[idx];
+            if (std.mem.eql(u8, arg, "--repair")) {
+                repair = true;
+            } else if (std.mem.eql(u8, arg, "--strict")) {
+                strict = true;
+            } else if (std.mem.eql(u8, arg, "--format")) {
+                format = parse_format_arg(require_flag_value(args, &idx, arg), false, cmd);
+            } else {
+                std.debug.print("Error: Unknown flag '{s}'\n", .{arg});
+                std.process.exit(2);
+            }
+        }
+        const output_format = format orelse default_format(io, .plain);
+        var dir = open_vault_dir(io, vault_path, true) orelse {
+            const empty_scan = VaultScan{ .ideas = &.{}, .issues = &.{}, .files_scanned = 0 };
+            try emit_doctor_report(io, vault_path, empty_scan, 0, output_format);
+            return;
+        };
+        defer dir.close(io);
+        const repaired = if (repair) try repair_vault(arena, io, dir) else 0;
+        const scan = try scan_vault(arena, io, dir);
+        try emit_doctor_report(io, vault_path, scan, repaired, output_format);
+        if (scan_has_failures(scan, strict)) std.process.exit(1);
+
+        // ── archive / unarchive ───────────────────────────────────────────
+    } else if (std.mem.eql(u8, cmd, "archive") or std.mem.eql(u8, cmd, "unarchive")) {
+        if (args.len < 3) {
+            std.debug.print("Error: '{s}' requires an ID, ID prefix, or filename\n", .{cmd});
+            std.process.exit(1);
+        }
+        const selector = args[2];
+        const is_archive = std.mem.eql(u8, cmd, "archive");
+        var resolution: ?[]const u8 = null;
+        var note: ?[]const u8 = null;
+        var format: ?OutputFormat = null;
+        var idx: usize = 3;
+        while (idx < args.len) : (idx += 1) {
+            const arg = args[idx];
+            if (std.mem.eql(u8, arg, "--format")) {
+                format = parse_format_arg(require_flag_value(args, &idx, arg), false, cmd);
+            } else if (is_archive and std.mem.eql(u8, arg, "--resolution")) {
+                const value = require_flag_value(args, &idx, arg);
+                if (!valid_resolution(value)) {
+                    std.debug.print("Error: --resolution must be implemented, rejected, superseded, or stale\n", .{});
+                    std.process.exit(1);
+                }
+                resolution = value;
+            } else if (is_archive and std.mem.eql(u8, arg, "--note")) {
+                note = require_flag_value(args, &idx, arg);
+            } else {
+                std.debug.print("Error: Unknown flag '{s}'\n", .{arg});
+                std.process.exit(1);
+            }
+        }
+        if (!validate_filename(selector)) {
+            std.debug.print("Error: Invalid selector '{s}'\n", .{selector});
+            std.process.exit(1);
+        }
+        var dir = open_vault_or_exit(io, vault_path);
+        defer dir.close(io);
+        const filename = resolve_selector_or_exit(arena, io, dir, selector);
+        const content = try dir.readFileAlloc(io, filename, arena, .unlimited);
+        var validation_issues: std.ArrayList(Issue) = .empty;
+        const raw_meta = (try parse_front_matter_detailed(arena, content, filename, &validation_issues)) orelse {
+            std.debug.print("Error: Cannot {s} malformed pin '{s}'\n", .{ cmd, filename });
+            std.process.exit(1);
+        };
+        for (validation_issues.items) |issue| if (issue.severity == .err) {
+            std.debug.print("Error: Cannot {s} '{s}': {s}\n", .{ cmd, filename, issue.message });
+            std.process.exit(1);
+        };
+        if (is_archive and raw_meta.archived_at > 0) {
+            std.debug.print("Error: '{s}' is already archived\n", .{filename});
+            std.process.exit(1);
+        }
+        if (!is_archive and raw_meta.archived_at == 0) {
+            std.debug.print("Error: '{s}' is not archived\n", .{filename});
+            std.process.exit(1);
+        }
+
+        const idea_id = if (raw_meta.id.len > 0) raw_meta.id else try derive_id(arena, filename);
+        var updates: std.ArrayList(FieldUpdate) = .empty;
+        if (!raw_meta.has_schema) try updates.append(arena, .{ .key = "schema", .value = "1" });
+        if (!raw_meta.has_id) try updates.append(arena, .{ .key = "id", .value = try yaml_quoted(arena, idea_id) });
+        if (is_archive) {
+            const archived_value = try std.fmt.allocPrint(arena, "{d}", .{std.Io.Timestamp.now(io, .real).toSeconds()});
+            try updates.append(arena, .{ .key = "archived_at", .value = archived_value });
+            if (resolution) |value| try updates.append(arena, .{ .key = "resolution", .value = try yaml_quoted(arena, value) });
+            if (note) |value| try updates.append(arena, .{ .key = "resolution_note", .value = try yaml_quoted(arena, value) });
+        } else {
+            try updates.append(arena, .{ .key = "archived_at", .value = null });
+            try updates.append(arena, .{ .key = "resolution", .value = null });
+            try updates.append(arena, .{ .key = "resolution_note", .value = null });
+        }
+        const rewritten = try rewrite_front_matter(arena, content, updates.items);
+        try atomic_write(arena, io, dir, filename, rewritten);
+
+        var out_buf: [512]u8 = undefined;
+        var w = std.Io.File.stdout().writer(io, &out_buf);
+        if ((format orelse default_format(io, .plain)) == .json) {
+            try w.interface.print("{{\"{s}\":\"", .{if (is_archive) "archived" else "unarchived"});
+            try print_escaped_json(&w.interface, idea_id);
+            try w.interface.writeAll("\",\"filename\":\"");
+            try print_escaped_json(&w.interface, filename);
+            try w.interface.writeAll("\"}\n");
+        } else {
+            try w.interface.print("{s} {s}  {s}\n", .{ if (is_archive) "Archived" else "Unarchived", idea_id, filename });
+        }
+        try w.end();
+
         // ── import / export ───────────────────────────────────────────────
     } else if (std.mem.eql(u8, cmd, "import") or std.mem.eql(u8, cmd, "export")) {
         if (args.len < 3) {
@@ -1063,19 +1722,7 @@ pub fn main(init: std.process.Init) !void {
             if (std.mem.eql(u8, args[idx], "--force")) {
                 force = true;
             } else if (std.mem.eql(u8, args[idx], "--format")) {
-                if (idx + 1 >= args.len) {
-                    std.debug.print("Error: --format requires a value\n", .{});
-                    std.process.exit(1);
-                }
-                idx += 1;
-                format = parse_format(args[idx]) orelse {
-                    std.debug.print("Error: --format must be json or plain for '{s}'\n", .{cmd});
-                    std.process.exit(1);
-                };
-                if (format.? == .table) {
-                    std.debug.print("Error: --format must be json or plain for '{s}'\n", .{cmd});
-                    std.process.exit(1);
-                }
+                format = parse_format_arg(require_flag_value(args, &idx, "--format"), false, cmd);
             } else {
                 std.debug.print("Error: Unknown flag '{s}'\n", .{args[idx]});
                 std.process.exit(1);
@@ -1108,8 +1755,14 @@ pub fn main(init: std.process.Init) !void {
             while (try validation_iterator.next(io)) |entry| {
                 if (entry.kind != .file or !std.mem.endsWith(u8, entry.name, ".md")) continue;
                 const content = try source.readFileAlloc(io, entry.name, arena, .unlimited);
-                const meta = try parse_front_matter_from_buf(arena, content);
-                if (meta == null or meta.?.project.len == 0 or meta.?.title.len == 0) {
+                var import_issues: std.ArrayList(Issue) = .empty;
+                const meta = try parse_front_matter_detailed(arena, content, entry.name, &import_issues);
+                var invalid = meta == null;
+                for (import_issues.items) |issue| if (issue.severity == .err) {
+                    invalid = true;
+                    break;
+                };
+                if (invalid) {
                     std.debug.print("Error: '{s}' is not a valid pin file\n", .{entry.name});
                     std.process.exit(1);
                 }
@@ -1144,46 +1797,11 @@ pub fn main(init: std.process.Init) !void {
 
         // ── read ─────────────────────────────────────────────────────────
     } else if (std.mem.eql(u8, cmd, "read")) {
-        if (args.len < 3) {
-            std.debug.print("Error: 'read' requires an ID, ID prefix, or filename\n", .{});
-            std.process.exit(1);
-        }
-        const selector = args[2];
-        var format: OutputFormat = .plain;
-        var idx: usize = 3;
-        while (idx < args.len) : (idx += 1) {
-            if (!std.mem.eql(u8, args[idx], "--format")) {
-                std.debug.print("Error: Unexpected argument '{s}'\n", .{args[idx]});
-                std.process.exit(1);
-            }
-            if (idx + 1 >= args.len) {
-                std.debug.print("Error: --format requires a value\n", .{});
-                std.process.exit(1);
-            }
-            idx += 1;
-            format = parse_format(args[idx]) orelse {
-                std.debug.print("Error: --format must be json or plain for 'read'\n", .{});
-                std.process.exit(1);
-            };
-            if (format == .table) {
-                std.debug.print("Error: --format must be json or plain for 'read'\n", .{});
-                std.process.exit(1);
-            }
-        }
-        if (!validate_filename(selector)) {
-            std.debug.print("Error: Invalid selector '{s}'\n", .{selector});
-            std.process.exit(1);
-        }
-
-        var dir = std.Io.Dir.openDirAbsolute(io, vault_path, .{ .iterate = true }) catch |err| {
-            if (err == error.FileNotFound) std.debug.print("Error: Vault not found.\n", .{}) else std.debug.print("Error: Failed to open vault directory: {any}\n", .{err});
-            std.process.exit(1);
-        };
+        const selector_args = parse_selector_args(args, cmd);
+        const format = selector_args.format orelse .plain;
+        var dir = open_vault_or_exit(io, vault_path);
         defer dir.close(io);
-        const filename = resolve_selector(arena, io, dir, selector) catch |err| {
-            if (err == SelectorError.AmbiguousSelector) std.debug.print("Error: Selector '{s}' is ambiguous. Use more ID characters.\n", .{selector}) else if (err == SelectorError.SelectorNotFound) std.debug.print("Error: No idea matches '{s}'.\n", .{selector}) else std.debug.print("Error: Failed to resolve '{s}': {any}\n", .{ selector, err });
-            std.process.exit(1);
-        };
+        const filename = resolve_selector_or_exit(arena, io, dir, selector_args.selector);
 
         const content = dir.readFileAlloc(io, filename, arena, .unlimited) catch |err| {
             if (err == error.FileNotFound) {
@@ -1213,52 +1831,11 @@ pub fn main(init: std.process.Init) !void {
 
         // ── rm ───────────────────────────────────────────────────────────
     } else if (std.mem.eql(u8, cmd, "rm")) {
-        if (args.len < 3) {
-            std.debug.print("Error: 'rm' requires an ID, ID prefix, or filename\n", .{});
-            std.process.exit(1);
-        }
-        const selector = args[2];
-        var format: ?OutputFormat = null;
-        var idx: usize = 3;
-        while (idx < args.len) : (idx += 1) {
-            if (!std.mem.eql(u8, args[idx], "--format")) {
-                std.debug.print("Error: Unexpected argument '{s}'\n", .{args[idx]});
-                std.process.exit(1);
-            }
-            if (idx + 1 >= args.len) {
-                std.debug.print("Error: --format requires a value\n", .{});
-                std.process.exit(1);
-            }
-            idx += 1;
-            format = parse_format(args[idx]) orelse {
-                std.debug.print("Error: --format must be json or plain for 'rm'\n", .{});
-                std.process.exit(1);
-            };
-            if (format.? == .table) {
-                std.debug.print("Error: --format must be json or plain for 'rm'\n", .{});
-                std.process.exit(1);
-            }
-        }
-        if (!validate_filename(selector)) {
-            std.debug.print("Error: Invalid selector '{s}'\n", .{selector});
-            std.process.exit(1);
-        }
-
-        var dir = std.Io.Dir.openDirAbsolute(io, vault_path, .{ .iterate = true }) catch |err| {
-            if (err == error.FileNotFound) std.debug.print("Error: Vault not found.\n", .{}) else std.debug.print("Error: Failed to open vault directory: {any}\n", .{err});
-            std.process.exit(1);
-        };
+        const selector_args = parse_selector_args(args, cmd);
+        var dir = open_vault_or_exit(io, vault_path);
         defer dir.close(io);
-        const filename = resolve_selector(arena, io, dir, selector) catch |err| {
-            if (err == SelectorError.AmbiguousSelector) std.debug.print("Error: Selector '{s}' is ambiguous. Use more ID characters.\n", .{selector}) else if (err == SelectorError.SelectorNotFound) std.debug.print("Error: No idea matches '{s}'.\n", .{selector}) else std.debug.print("Error: Failed to resolve '{s}': {any}\n", .{ selector, err });
-            std.process.exit(1);
-        };
-        const removed_id = blk: {
-            const content = try dir.readFileAlloc(io, filename, arena, .unlimited);
-            const meta = try parse_front_matter_from_buf(arena, content);
-            if (meta) |value| if (value.id.len > 0) break :blk value.id;
-            break :blk try derive_id(arena, filename);
-        };
+        const filename = resolve_selector_or_exit(arena, io, dir, selector_args.selector);
+        const removed_id = try idea_id_for_file(arena, io, dir, filename);
         dir.deleteFile(io, filename) catch |err| {
             std.debug.print("Error: Failed to delete file '{s}': {any}\n", .{ filename, err });
             std.process.exit(1);
@@ -1266,7 +1843,7 @@ pub fn main(init: std.process.Init) !void {
 
         var out_buf: [256]u8 = undefined;
         var w = std.Io.File.stdout().writer(io, &out_buf);
-        if ((format orelse default_format(io, .plain)) == .json) {
+        if ((selector_args.format orelse default_format(io, .plain)) == .json) {
             try w.interface.writeAll("{\"removed\":\"");
             try print_escaped_json(&w.interface, removed_id);
             try w.interface.writeAll("\",\"filename\":\"");
@@ -1277,65 +1854,24 @@ pub fn main(init: std.process.Init) !void {
 
         // ── edit ─────────────────────────────────────────────────────────
     } else if (std.mem.eql(u8, cmd, "edit")) {
-        if (args.len < 3) {
-            std.debug.print("Error: 'edit' requires an ID, ID prefix, or filename\n", .{});
-            std.process.exit(1);
-        }
-        const selector = args[2];
-        var format: ?OutputFormat = null;
-        var idx: usize = 3;
-        while (idx < args.len) : (idx += 1) {
-            if (!std.mem.eql(u8, args[idx], "--format")) {
-                std.debug.print("Error: Unexpected argument '{s}'\n", .{args[idx]});
-                std.process.exit(1);
-            }
-            if (idx + 1 >= args.len) {
-                std.debug.print("Error: --format requires a value\n", .{});
-                std.process.exit(1);
-            }
-            idx += 1;
-            format = parse_format(args[idx]) orelse {
-                std.debug.print("Error: --format must be json or plain for 'edit'\n", .{});
-                std.process.exit(1);
-            };
-            if (format.? == .table) {
-                std.debug.print("Error: --format must be json or plain for 'edit'\n", .{});
-                std.process.exit(1);
-            }
-        }
-        if (!validate_filename(selector)) {
-            std.debug.print("Error: Invalid selector '{s}'\n", .{selector});
-            std.process.exit(1);
-        }
-
-        var dir = std.Io.Dir.openDirAbsolute(io, vault_path, .{ .iterate = true }) catch |err| {
-            if (err == error.FileNotFound) std.debug.print("Error: Vault not found.\n", .{}) else std.debug.print("Error: Failed to open vault directory: {any}\n", .{err});
-            std.process.exit(1);
-        };
-        const filename = resolve_selector(arena, io, dir, selector) catch |err| {
-            if (err == SelectorError.AmbiguousSelector) std.debug.print("Error: Selector '{s}' is ambiguous. Use more ID characters.\n", .{selector}) else if (err == SelectorError.SelectorNotFound) std.debug.print("Error: No idea matches '{s}'.\n", .{selector}) else std.debug.print("Error: Failed to resolve '{s}': {any}\n", .{ selector, err });
-            std.process.exit(1);
-        };
-        const edited_id = blk: {
-            const content = try dir.readFileAlloc(io, filename, arena, .unlimited);
-            const meta = try parse_front_matter_from_buf(arena, content);
-            if (meta) |value| {
-                if (value.id.len > 0) break :blk value.id;
-            }
-            break :blk try derive_id(arena, filename);
-        };
+        const selector_args = parse_selector_args(args, cmd);
+        var dir = open_vault_or_exit(io, vault_path);
+        const filename = resolve_selector_or_exit(arena, io, dir, selector_args.selector);
+        const original_content = try dir.readFileAlloc(io, filename, arena, .unlimited);
+        const edited_id = try idea_id_for_file(arena, io, dir, filename);
         dir.close(io);
 
         const full_path = try std.fs.path.join(arena, &.{ vault_path, filename });
 
+        const fallback_editor: []const u8 = if (builtin.os.tag == .windows) "notepad" else "vi";
         const editor = init.environ_map.get("EDITOR") orelse
             init.environ_map.get("VISUAL") orelse
-            "vi";
+            fallback_editor;
 
         var editor_args: std.ArrayList([]const u8) = .empty;
         var words = std.mem.tokenizeAny(u8, editor, " \t");
         while (words.next()) |word| try editor_args.append(arena, word);
-        if (editor_args.items.len == 0) try editor_args.append(arena, "vi");
+        if (editor_args.items.len == 0) try editor_args.append(arena, fallback_editor);
         try editor_args.append(arena, full_path);
 
         var child = std.process.spawn(io, .{
@@ -1362,9 +1898,31 @@ pub fn main(init: std.process.Init) !void {
             },
         }
 
+        var validation_dir = open_vault_or_exit(io, vault_path);
+        defer validation_dir.close(io);
+        const edited_content = validation_dir.readFileAlloc(io, filename, arena, .unlimited) catch |err| {
+            try atomic_write(arena, io, validation_dir, filename, original_content);
+            std.debug.print("Error: Editor removed or made '{s}' unreadable ({any}); original restored\n", .{ filename, err });
+            std.process.exit(1);
+        };
+        var edit_issues: std.ArrayList(Issue) = .empty;
+        const edited_meta = try parse_front_matter_detailed(arena, edited_content, filename, &edit_issues);
+        var invalid_edit = edited_meta == null;
+        for (edit_issues.items) |issue| if (issue.severity == .err) {
+            invalid_edit = true;
+            std.debug.print("Error: {s}: {s} [{s}]\n", .{ filename, issue.message, issue.code });
+        };
+        if (invalid_edit) {
+            const recovery_name = try std.fmt.allocPrint(arena, ".{s}.edit-recovery.tmp", .{edited_id});
+            try validation_dir.writeFile(io, .{ .sub_path = recovery_name, .data = edited_content });
+            try atomic_write(arena, io, validation_dir, filename, original_content);
+            std.debug.print("Error: Invalid edit was not applied. Recovery saved to {s}/{s}\n", .{ vault_path, recovery_name });
+            std.process.exit(1);
+        }
+
         var out_buf: [256]u8 = undefined;
         var w = std.Io.File.stdout().writer(io, &out_buf);
-        if ((format orelse default_format(io, .plain)) == .json) {
+        if ((selector_args.format orelse default_format(io, .plain)) == .json) {
             try w.interface.writeAll("{\"edited\":\"");
             try print_escaped_json(&w.interface, edited_id);
             try w.interface.writeAll("\",\"filename\":\"");
@@ -1376,21 +1934,12 @@ pub fn main(init: std.process.Init) !void {
         // ── stats ────────────────────────────────────────────────────────
     } else if (std.mem.eql(u8, cmd, "stats")) {
         var format: ?OutputFormat = null;
-        if (args.len != 2 and args.len != 4) {
-            std.debug.print("Error: 'stats' accepts only optional --format json|plain\n", .{});
-            std.process.exit(1);
-        }
-        if (args.len == 4) {
-            if (!std.mem.eql(u8, args[2], "--format")) {
-                std.debug.print("Error: Unexpected argument '{s}'\n", .{args[2]});
-                std.process.exit(1);
-            }
-            format = parse_format(args[3]) orelse {
-                std.debug.print("Error: --format must be json or plain for 'stats'\n", .{});
-                std.process.exit(1);
-            };
-            if (format.? == .table) {
-                std.debug.print("Error: --format must be json or plain for 'stats'\n", .{});
+        var idx: usize = 2;
+        while (idx < args.len) : (idx += 1) {
+            if (std.mem.eql(u8, args[idx], "--format")) {
+                format = parse_format_arg(require_flag_value(args, &idx, "--format"), false, cmd);
+            } else {
+                std.debug.print("Error: Unexpected argument '{s}'\n", .{args[idx]});
                 std.process.exit(1);
             }
         }
@@ -1401,16 +1950,20 @@ pub fn main(init: std.process.Init) !void {
             if (output_format == .json) {
                 try w.interface.writeAll("{\"vault\":\"");
                 try print_escaped_json(&w.interface, vault_path);
-                try w.interface.writeAll("\",\"ideas\":0,\"projects\":[],\"tags\":[],\"kinds\":{\"technical\":0,\"product\":0,\"business\":0,\"project\":0,\"unspecified\":0}}\n");
-            } else try w.interface.print("Vault:    {s}\nIdeas:    0\n", .{vault_path});
+                try w.interface.writeAll("\",\"ideas\":0,\"active\":0,\"archived\":0,\"invalid\":0,\"projects\":[],\"tags\":[],\"kinds\":{\"technical\":0,\"product\":0,\"business\":0,\"project\":0,\"unspecified\":0}}\n");
+            } else try w.interface.print("Vault:    {s}\nIdeas:    0\nActive:   0\nArchived: 0\nInvalid:  0\n", .{vault_path});
             try w.end();
             return;
         };
         defer dir.close(io);
 
-        const ideas = try collect_ideas(arena, io, dir, null, null, null, null);
+        const ideas = try collect_ideas_filtered(arena, io, dir, null, null, null, null, .all);
+        const scan = try scan_vault(arena, io, dir);
+        const invalid_count = scan.files_scanned - ideas.len;
 
         var total: usize = 0;
+        var active_count: usize = 0;
+        var archived_count: usize = 0;
         var oldest: i64 = std.math.maxInt(i64);
         var newest: i64 = 0;
         var kind_counts: [5]usize = .{0} ** 5;
@@ -1421,6 +1974,7 @@ pub fn main(init: std.process.Init) !void {
 
         for (ideas) |meta| {
             total += 1;
+            if (meta.archived_at > 0) archived_count += 1 else active_count += 1;
             kind_counts[kind_index(meta.kind)] += 1;
             if (meta.timestamp < oldest) oldest = meta.timestamp;
             if (meta.timestamp > newest) newest = meta.timestamp;
@@ -1465,7 +2019,7 @@ pub fn main(init: std.process.Init) !void {
         if (output_format == .json) {
             try w.interface.writeAll("{\"vault\":\"");
             try print_escaped_json(&w.interface, vault_path);
-            try w.interface.print("\",\"ideas\":{d},\"projects\":[", .{total});
+            try w.interface.print("\",\"ideas\":{d},\"active\":{d},\"archived\":{d},\"invalid\":{d},\"projects\":[", .{ total, active_count, archived_count, invalid_count });
             for (projects.items, 0..) |project, i| {
                 if (i > 0) try w.interface.writeAll(",");
                 try w.interface.writeAll("\"");
@@ -1490,6 +2044,7 @@ pub fn main(init: std.process.Init) !void {
         } else {
             try w.interface.print("Vault:    {s}\n", .{vault_path});
             try w.interface.print("Ideas:    {d}\n", .{total});
+            try w.interface.print("Active:   {d}\nArchived: {d}\nInvalid:  {d}\n", .{ active_count, archived_count, invalid_count });
             try w.interface.print("Projects: {d}\n", .{projects.items.len});
             if (projects.items.len > 0) {
                 try w.interface.writeAll("          ");
@@ -1528,4 +2083,63 @@ pub fn main(init: std.process.Init) !void {
         try print_usage(io);
         std.process.exit(1);
     }
+}
+
+test "front matter diagnostics reject malformed values" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const content =
+        "---\n" ++
+        "schema: 1\n" ++
+        "id: \"abcdef123456\"\n" ++
+        "project: \"example\"\n" ++
+        "kind: \"unknown\"\n" ++
+        "timestamp: nope\n" ++
+        "title: \"Broken\"\n" ++
+        "---\n" ++
+        "# Broken\n";
+    var issues: std.ArrayList(Issue) = .empty;
+    _ = try parse_front_matter_detailed(arena, content, "broken.md", &issues);
+    var saw_kind = false;
+    var saw_integer = false;
+    for (issues.items) |issue| {
+        if (std.mem.eql(u8, issue.code, "invalid_kind")) saw_kind = true;
+        if (std.mem.eql(u8, issue.code, "invalid_integer")) saw_integer = true;
+    }
+    try std.testing.expect(saw_kind);
+    try std.testing.expect(saw_integer);
+    try std.testing.expect((try parse_front_matter_from_buf(arena, content)) == null);
+}
+
+test "front matter rewrite preserves body and unknown fields" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const content =
+        "---\n" ++
+        "project: \"example\"\n" ++
+        "custom: \"keep me\"\n" ++
+        "title: \"Legacy\"\n" ++
+        "---\n" ++
+        "# Legacy\n\nBody.\n";
+    const rewritten = try rewrite_front_matter(arena, content, &.{
+        .{ .key = "schema", .value = "1" },
+        .{ .key = "id", .value = "\"abcdef123456\"" },
+    });
+    try std.testing.expect(std.mem.indexOf(u8, rewritten, "custom: \"keep me\"") != null);
+    try std.testing.expect(std.mem.endsWith(u8, rewritten, "# Legacy\n\nBody.\n"));
+}
+
+test "search ranks title matches above body matches" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const title_content =
+        "---\nproject: \"p\"\nkind: \"product\"\ntimestamp: 1\ntitle: \"Ranked results\"\n---\nBody.\n";
+    const body_content =
+        "---\nproject: \"p\"\nkind: \"technical\"\ntimestamp: 2\ntitle: \"Incidental\"\n---\nRanked results appear here.\n";
+    const title_meta = (try parse_front_matter_from_buf(arena, title_content)).?;
+    const body_meta = (try parse_front_matter_from_buf(arena, body_content)).?;
+    try std.testing.expect(search_score(title_meta, "ranked results").? > search_score(body_meta, "ranked results").?);
 }
