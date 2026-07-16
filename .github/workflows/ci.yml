@@ -70,7 +70,7 @@ jobs:
           $assets = Join-Path $env:RUNNER_TEMP "pin-assets"
           New-Item -ItemType Directory -Path $assets -Force | Out-Null
           $binary = Join-Path $assets "pin-windows-amd64.exe"
-          zig build-exe main.zig -target x86_64-windows -O Debug -femit-bin=$binary
+          zig build-exe main.zig -target x86_64-windows -O Debug "-femit-bin=$binary"
           $hash = (Get-FileHash -Algorithm SHA256 $binary).Hash.ToLowerInvariant()
           "$hash  pin-windows-amd64.exe" | Set-Content "$binary.sha256"
 
