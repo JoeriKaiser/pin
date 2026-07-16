@@ -1095,11 +1095,14 @@ fn resolve_selector_or_exit(arena: std.mem.Allocator, io: std.Io, dir: std.Io.Di
     };
 }
 
-fn idea_id_for_file(arena: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, filename: []const u8) ![]const u8 {
-    const content = try dir.readFileAlloc(io, filename, arena, .unlimited);
+fn idea_id_from_content(arena: std.mem.Allocator, filename: []const u8, content: []const u8) ![]const u8 {
     const meta = try parse_front_matter_from_buf(arena, content);
     if (meta) |value| if (value.id.len > 0) return value.id;
     return derive_id(arena, filename);
+}
+
+fn idea_id_for_file(arena: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, filename: []const u8) ![]const u8 {
+    return idea_id_from_content(arena, filename, try dir.readFileAlloc(io, filename, arena, .unlimited));
 }
 
 fn print_usage(io: std.Io) !void {
@@ -1855,7 +1858,7 @@ pub fn main(init: std.process.Init) !void {
         var dir = open_vault_or_exit(io, vault_path);
         const filename = resolve_selector_or_exit(arena, io, dir, selector_args.selector);
         const original_content = try dir.readFileAlloc(io, filename, arena, .unlimited);
-        const edited_id = try idea_id_for_file(arena, io, dir, filename);
+        const edited_id = try idea_id_from_content(arena, filename, original_content);
         dir.close(io);
 
         const full_path = try std.fs.path.join(arena, &.{ vault_path, filename });
@@ -1954,8 +1957,9 @@ pub fn main(init: std.process.Init) !void {
         };
         defer dir.close(io);
 
-        const ideas = try collect_ideas_filtered(arena, io, dir, null, null, null, null, .all);
         const scan = try scan_vault(arena, io, dir);
+        const ideas = scan.ideas;
+        std.sort.block(IdeaMeta, ideas, {}, IdeaMeta.lessThan);
         const invalid_count = scan.files_scanned - ideas.len;
 
         var total: usize = 0;
