@@ -6,11 +6,25 @@ A zero-runtime-dependency idea registry for humans and coding agents.
 
 ## Installation
 
+### Linux and macOS
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/JoeriKaiser/pin/main/install.sh | sh
 ```
 
-Supported Linux and macOS platforms use release binaries. The source fallback requires Zig 0.16.0.
+Supported platforms use checksum-verified release binaries. The source fallback requires Zig 0.16.0.
+
+### Windows
+
+From PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/JoeriKaiser/pin/main/install.ps1 | iex
+```
+
+The installer detects AMD64 or ARM64, verifies the release checksum, installs to `%LOCALAPPDATA%\Programs\pin`, and adds that directory to the user PATH. Open a new terminal after the first install.
+
+To install manually, download the matching `pin-windows-*.exe` and `.sha256` assets from the latest GitHub release, verify with `Get-FileHash -Algorithm SHA256`, rename the executable to `pin.exe`, and place it on your PATH.
 
 ## Agent integration
 
@@ -63,12 +77,19 @@ pin add <markdown> --kind technical|product|business|project
                      [--tags <csv>] [--priority low|medium|high]
                      [--allow-duplicate] [--format json|plain]
 pin list [--project <name>] [--tag <name>] [--kind <kind>]
-         [--format json|table|plain]
-pin list-project [--tag <name>] [--kind <kind>] [--format json|table|plain]
+         [--archived|--all] [--format json|table|plain]
+pin list-project [--tag <name>] [--kind <kind>] [--archived|--all]
+                 [--format json|table|plain]
 pin search <query> [--project <name>] [--tag <name>] [--kind <kind>]
+                   [--limit <n>] [--archived|--all]
                    [--format json|table|plain]
 pin context [--project <name>] [--kind <kind>] [--limit <n>]
-            [--group kind] [--format json|plain]
+            [--group kind] [--archived|--all] [--format json|plain]
+pin doctor [--repair] [--strict] [--format json|plain]
+pin archive <id|prefix|filename>
+            [--resolution implemented|rejected|superseded|stale]
+            [--note <text>] [--format json|plain]
+pin unarchive <id|prefix|filename> [--format json|plain]
 pin read <id|prefix|filename> [--format json|plain]
 pin edit <id|prefix|filename> [--format json|plain]
 pin rm <id|prefix|filename> [--format json|plain]
@@ -125,6 +146,32 @@ When `.pin_vault` exists at the repository root, `pin` discovers it automaticall
 
 Use `pin export <directory>` and `pin import <directory>` for backups or moving Markdown proposals between vaults. Existing filenames are skipped unless `--force` is supplied.
 
+## Integrity and lifecycle
+
+Inspect a vault without changing it:
+
+```bash
+pin doctor --format plain
+```
+
+`doctor` reports malformed or unreadable files, invalid metadata, duplicate IDs, and legacy fields. It exits non-zero for integrity errors; `--strict` also treats warnings as failures. `--repair` performs only conservative, atomic repairs such as adding schema/ID metadata and normalizing recognized values.
+
+Archive completed or rejected proposals without destroying their history:
+
+```bash
+pin archive a82f71 --resolution implemented --note "Shipped in v0.4.0"
+pin list-project --archived
+pin unarchive a82f71
+```
+
+Archived proposals are excluded from ordinary list, search, and context output. Use `--archived` for archived-only output or `--all` for both states. `rm` remains permanent deletion.
+
+`pin edit` validates front matter after the editor exits. An invalid edit is saved to a recovery file, while the last valid proposal is restored.
+
+## Search behavior
+
+Search uses deterministic multi-term AND matching. Title matches rank above tag matches, which rank above body-only matches; priority and recency break ties. Use `--limit` to bound agent output. JSON search records include an additive `score` field.
+
 ## Output contract
 
 - Interactive `list` and `search` output defaults to a table.
@@ -136,4 +183,4 @@ Use `pin export <directory>` and `pin import <directory>` for backups or moving 
 
 ## Storage compatibility
 
-New ideas use a 12-character stable ID as both metadata and filename. Older timestamp-named Markdown files remain readable and receive a deterministic derived ID when listed. The vault remains plain Markdown and does not require a database.
+New ideas use schema version `1` and a 12-character stable ID as both metadata and filename. Older timestamp-named Markdown files and metadata without `schema` remain readable and receive a deterministic derived ID when needed. Archive state is stored as ordinary `archived_at`, `resolution`, and `resolution_note` front-matter fields. The vault remains plain Markdown and does not require a database.

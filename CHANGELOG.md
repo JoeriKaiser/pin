@@ -4,6 +4,12 @@
 
 ### Added
 
+- Versioned front matter with structured integrity diagnostics and conservative atomic repairs through `pin doctor`.
+- Archive and unarchive lifecycle commands with resolution metadata and active/archived filters.
+- Deterministic tokenized search ranking, JSON scores, and `search --limit`.
+- Post-edit validation with rollback and recovery files for malformed edits.
+- A checksum-verifying Windows PowerShell installer and native editor fallback.
+- Shared CLI argument parsing helpers and Zig parser/search unit tests.
 - Repository-aware project resolution with `PIN_PROJECT` and `.pin-project` overrides.
 - Stable proposal IDs and unambiguous ID-prefix selectors.
 - `pin context --limit <n>` for compact agent session context, with domain filtering and `--group kind`.
@@ -18,6 +24,9 @@
 
 ### Changed
 
+- Version bumped to 0.4.0.
+- Statistics include active, archived, and invalid file counts.
+- Import validation rejects any front-matter integrity error before copying files.
 - JSON tags are emitted as arrays.
 - Markdown headings are used as default titles.
 - Legacy timestamp filenames receive deterministic derived IDs.

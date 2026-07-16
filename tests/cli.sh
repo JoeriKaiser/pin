@@ -23,7 +23,7 @@ assert_contains() {
 }
 
 "$PIN_BIN" --help >/dev/null 2>&1
-assert_contains "$("$PIN_BIN" --version)" "pin 0.3.0"
+assert_contains "$("$PIN_BIN" --version)" "pin 0.4.0"
 
 mkdir -p "$TMP/repo/packages/api" "$TMP/home"
 cd "$TMP/repo"
@@ -39,6 +39,7 @@ assert_contains "$created" '"kind":"technical"'
 assert_contains "$created" '"title":"Cache invalidation"'
 assert_contains "$created" '"tags":["perf","agents"]'
 assert_contains "$created" '"priority":"high"'
+HOME="$TMP/home" "$PIN_BIN" read "$(printf '%s' "$created" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')" | grep -q '^schema: 1$'
 
 if HOME="$TMP/home" "$PIN_BIN" add '# Missing kind' >/dev/null 2>&1; then
     fail "add accepted a proposal without --kind"
@@ -98,6 +99,17 @@ edited=$(HOME="$TMP/home" EDITOR="$TMP/editor --wait" "$PIN_BIN" edit "$id" --fo
 assert_contains "$edited" '"edited"'
 HOME="$TMP/home" "$PIN_BIN" read "$id" | grep -q 'Edited in test.'
 
+cat >"$TMP/bad-editor" <<'EOF'
+#!/bin/sh
+printf '%s\n' 'not valid front matter' >"$1"
+EOF
+chmod +x "$TMP/bad-editor"
+if HOME="$TMP/home" EDITOR="$TMP/bad-editor" "$PIN_BIN" edit "$id" >/dev/null 2>&1; then
+    fail "edit accepted malformed front matter"
+fi
+HOME="$TMP/home" "$PIN_BIN" read "$id" | grep -q 'Edited in test.' || fail "invalid edit was not restored"
+find "$TMP/repo/.pin_vault" -name '.*.edit-recovery.tmp' -type f | grep -q . || fail "invalid edit did not leave a recovery file"
+
 cat >"$TMP/repo/.pin_vault/legacy.md" <<'EOF'
 ---
 project: "example"
@@ -115,6 +127,22 @@ assert_contains "$stats" '"ideas":3'
 assert_contains "$stats" '"technical":1'
 assert_contains "$stats" '"product":1'
 assert_contains "$stats" '"unspecified":1'
+assert_contains "$stats" '"active":3'
+assert_contains "$stats" '"archived":0'
+if HOME="$TMP/home" "$PIN_BIN" stats unexpected >/dev/null 2>&1; then
+    fail "stats accepted an unexpected argument"
+fi
+
+health=$(HOME="$TMP/home" "$PIN_BIN" doctor --format json)
+assert_contains "$health" '"errors":0'
+assert_contains "$health" '"missing_id"'
+repaired=$(HOME="$TMP/home" "$PIN_BIN" doctor --repair --format json)
+assert_contains "$repaired" '"repaired":1'
+grep -q '^schema: 1$' "$TMP/repo/.pin_vault/legacy.md" || fail "doctor did not add schema"
+grep -q '^id:' "$TMP/repo/.pin_vault/legacy.md" || fail "doctor did not add an ID"
+second_repair=$(HOME="$TMP/home" "$PIN_BIN" doctor --repair --format json)
+assert_contains "$second_repair" '"repaired":0'
+
 HOME="$TMP/home" "$PIN_BIN" export "$TMP/export" --format json | grep -q '"operation":"export"'
 exported=$(find "$TMP/export" -name '*.md' -type f | wc -l | tr -d ' ')
 [ "$exported" -eq 3 ] || fail "expected three exported ideas, got $exported"
@@ -133,6 +161,39 @@ assert_contains "$import_error" 'is not a valid pin file'
 if find "$TMP/import-target" -name '*.md' -type f | grep -q .; then
     fail "failed import left the destination partially populated"
 fi
+
+archived=$(HOME="$TMP/home" "$PIN_BIN" archive "$id" --resolution implemented --note 'covered by tests' --format json)
+assert_contains "$archived" '"archived"'
+active_list=$(HOME="$TMP/home" "$PIN_BIN" list-project --format json)
+case "$active_list" in *"$id"*) fail "archived idea remained active" ;; esac
+archived_list=$(HOME="$TMP/home" "$PIN_BIN" list-project --archived --format json)
+assert_contains "$archived_list" "$id"
+assert_contains "$archived_list" '"resolution":"implemented"'
+all_stats=$(HOME="$TMP/home" "$PIN_BIN" stats --format json)
+assert_contains "$all_stats" '"archived":1'
+HOME="$TMP/home" "$PIN_BIN" unarchive "$id" --format json | grep -q '"unarchived"'
+HOME="$TMP/home" "$PIN_BIN" list-project --format json | grep -q "$id"
+
+mkdir -p "$TMP/search-vault"
+PIN_VAULT="$TMP/search-vault" PIN_PROJECT=search "$PIN_BIN" add '# Incidental note
+
+This body discusses ranked retrieval results.' --kind technical --format json >/dev/null
+PIN_VAULT="$TMP/search-vault" PIN_PROJECT=search "$PIN_BIN" add '# Ranked retrieval results
+
+Direct title match.' --kind product --format json >/dev/null
+ranked=$(PIN_VAULT="$TMP/search-vault" PIN_PROJECT=search "$PIN_BIN" search 'ranked results' --format json)
+first_title=$(printf '%s' "$ranked" | sed -n 's/^\[{[^}]*"title":"\([^"]*\)".*/\1/p')
+[ "$first_title" = "Ranked retrieval results" ] || fail "search did not rank the title match first: $ranked"
+assert_contains "$ranked" '"score":'
+limited=$(PIN_VAULT="$TMP/search-vault" PIN_PROJECT=search "$PIN_BIN" search 'ranked results' --limit 1 --format json)
+[ "$(printf '%s' "$limited" | grep -o '"id"' | wc -l | tr -d ' ')" -eq 1 ] || fail "search did not honor --limit"
+
+mkdir -p "$TMP/broken-vault"
+printf '%s\n' 'not a pin' >"$TMP/broken-vault/broken.md"
+if PIN_VAULT="$TMP/broken-vault" "$PIN_BIN" doctor --format json >"$TMP/doctor.json"; then
+    fail "doctor returned success for malformed front matter"
+fi
+assert_contains "$(cat "$TMP/doctor.json")" '"missing_front_matter"'
 
 HOME="$TMP/home" "$PIN_BIN" rm "$prefix" --format json | grep -q '"removed"'
 
