@@ -1153,10 +1153,7 @@ pub fn main(init: std.process.Init) !void {
         return;
     }
     if (std.mem.eql(u8, cmd, "--version") or std.mem.eql(u8, cmd, "-V")) {
-        var buf: [64]u8 = undefined;
-        var writer = std.Io.File.stdout().writer(io, &buf);
-        try writer.interface.print("pin {s}\n", .{version});
-        try writer.end();
+        try std.Io.File.stdout().writeStreamingAll(io, "pin " ++ version ++ "\n");
         return;
     }
     if (args.len > 2 and (std.mem.eql(u8, args[2], "--help") or std.mem.eql(u8, args[2], "-h"))) {
