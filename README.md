@@ -96,6 +96,8 @@ pin rm <id|prefix|filename> [--format json|plain]
 pin import <directory> [--force] [--format json|plain]
 pin export <directory> [--force] [--format json|plain]
 pin stats [--format json|plain]
+pin view [--project <name>] [--tag <name>] [--kind <kind>] [--archived|--all] [--port <n>] [--no-open] [--format json|plain]
+pin view-project [--tag <name>] [--kind <kind>] [--archived|--all] [--port <n>] [--no-open] [--format json|plain]
 pin --help
 pin --version
 ```

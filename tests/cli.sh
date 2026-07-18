@@ -197,4 +197,83 @@ assert_contains "$(cat "$TMP/doctor.json")" '"missing_front_matter"'
 
 HOME="$TMP/home" "$PIN_BIN" rm "$prefix" --format json | grep -q '"removed"'
 
+# ── view tests ──────────────────────────────────────────────────────────
+# 1. Non-TTY gate refusal
+if HOME="$TMP/home" "$PIN_BIN" view >/dev/null 2>&1; then
+    fail "view accepted non-TTY invocation without --no-open or explicit format"
+fi
+
+# 2. View launch with --no-open and plain format
+mkdir -p "$TMP/view-vault"
+PIN_VAULT="$TMP/view-vault" PIN_PROJECT=view "$PIN_BIN" add '# View test' --kind technical --priority low --format json >/dev/null
+
+view_out="$TMP/view.log"
+view_err="$TMP/view.err"
+# Launch in background
+PIN_VAULT="$TMP/view-vault" "$PIN_BIN" view --no-open --format plain >"$view_out" 2>"$view_err" &
+view_pid=$!
+
+# Wait/poll for stdout readiness
+url=""
+for i in 1 2 3 4 5 6 7 8 9 10; do
+    sleep 0.1
+    if [ -s "$view_out" ]; then
+        url=$(cat "$view_out" | tr -d '\r')
+        break
+    fi
+done
+
+[ -n "$url" ] || {
+    cat "$view_err" >&2
+    kill -9 $view_pid 2>/dev/null || true
+    fail "view server did not start or write URL to stdout"
+}
+
+# Assert URL structure
+assert_contains "$url" "http://127.0.0.1:"
+assert_contains "$url" "/"
+
+# Retrieve data.json and check headers and contents
+curl_out="$TMP/curl.json"
+curl_headers="$TMP/headers.txt"
+curl -s -S -D "$curl_headers" "$url"data.json >"$curl_out"
+
+# Assert response is valid JSON and contains the pin we added
+assert_contains "$(cat "$curl_out")" '"title":"View test"'
+assert_contains "$(cat "$curl_out")" '"kind":"technical"'
+
+# Assert security headers
+assert_contains "$(cat "$curl_headers")" "Content-Security-Policy:"
+assert_contains "$(cat "$curl_headers")" "default-src 'none'"
+assert_contains "$(cat "$curl_headers")" "X-Content-Type-Options: nosniff"
+assert_contains "$(cat "$curl_headers")" "X-Frame-Options: DENY"
+assert_contains "$(cat "$curl_headers")" "Cache-Control: no-store"
+
+# Try getting index.html
+curl_html="$TMP/index.html"
+curl -s -S "$url" >"$curl_html"
+assert_contains "$(cat "$curl_html")" '<title>pin</title>'
+assert_contains "$(cat "$curl_html")" 'id="filter-toggle"'
+assert_contains "$(cat "$curl_html")" 'id="proposal-more"'
+curl -s -S "$url"app.js >"$TMP/app.js"
+assert_contains "$(cat "$TMP/app.js")" 'DOMPurify.sanitize'
+assert_contains "$(cat "$TMP/app.js")" 'bodyWithoutDuplicateTitle'
+
+# Try getting file with wrong token
+bad_url=$(echo "$url" | sed 's/[a-f0-9]\{32\}/bad_token/')
+bad_code=$(curl -s -o /dev/null -w "%{http_code}" "${bad_url}data.json")
+[ "$bad_code" = "404" ] || {
+    kill -9 $view_pid 2>/dev/null || true
+    fail "expected 404 for bad token request, got $bad_code"
+}
+
+# Try POST method
+post_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${url}data.json")
+[ "$post_code" = "405" ] || {
+    kill -9 $view_pid 2>/dev/null || true
+    fail "expected 405 for POST request, got $post_code"
+}
+
+kill -9 $view_pid 2>/dev/null || true
+
 echo "CLI tests passed"

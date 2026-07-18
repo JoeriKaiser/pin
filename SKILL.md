@@ -195,5 +195,9 @@ Duplicate titles are rejected by default. Use `--allow-duplicate` only when the 
 - `pin stats [--format json|plain]`
 - `pin init --local [--project <name>]`
 - `pin import|export <directory> [--force]`
+- `pin view [--project <name>] [--tag <name>] [--kind <kind>] [--archived|--all] [--port <n>] [--no-open] [--format json|plain]`
+- `pin view-project [--tag <name>] [--kind <kind>] [--archived|--all] [--port <n>] [--no-open] [--format json|plain]`
+
+Agents must prefer `context`, `list`, or `read` for retrieving proposals. Do not call `view` or `view-project` in headless automated sessions unless explicitly parsing the loopback URL printed on stdout using `--no-open`.
 
 Project identity resolves from `--project`, `PIN_PROJECT`, repository-root `.pin-project`, repository name, then current directory name. Vault location resolves from `PIN_VAULT`, repository-root `.pin_vault`, then `~/.pin_vault`.
