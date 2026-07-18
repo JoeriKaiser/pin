@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- Interactively browse vault proposals via a localhost browser viewer (`pin view` / `pin view-project`) gated by a loopback URL token, featuring offline Markdown rendering, HTML sanitization, and strict CSP headers.
 
 - Versioned front matter with structured integrity diagnostics and conservative atomic repairs through `pin doctor`.
 - Archive and unarchive lifecycle commands with resolution metadata and active/archived filters.
