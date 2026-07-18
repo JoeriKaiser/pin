@@ -89,31 +89,50 @@ jobs:
           $install = Join-Path $env:RUNNER_TEMP "pin-install"
           $pin = Join-Path $install "pin.exe"
           $vault = Join-Path $env:RUNNER_TEMP "pin-vault-test"
+          New-Item -ItemType Directory -Path $vault -Force | Out-Null
+          @'
+          ---
+          schema: 1
+          id: "0123456789ab"
+          project: "ci"
+          kind: "technical"
+          timestamp: 1784380000
+          created_at_ns: 1784380000000000000
+          title: "CI Smoke Test"
+          priority: "low"
+          ---
+          # CI Smoke Test
+          '@ | Set-Content (Join-Path $vault "0123456789ab.md") -Encoding utf8
           $env:PIN_VAULT = $vault
-          & $pin add "# CI Smoke Test" --kind technical --priority low --format json | Out-Null
           $stdout_file = Join-Path $env:RUNNER_TEMP "view-stdout.log"
           $stderr_file = Join-Path $env:RUNNER_TEMP "view-stderr.log"
-          $process = Start-Process -FilePath $pin -ArgumentList "view", "--no-open", "--format", "json" -RedirectStandardOutput $stdout_file -RedirectStandardError $stderr_file -PassThru
-          $url = $null
-          for ($i = 0; $i -lt 30; $i++) {
-              Start-Sleep -Milliseconds 200
-              if (Test-Path $stdout_file) {
-                  $content = Get-Content $stdout_file -Raw
-                  if ($content -match 'url') {
-                      $meta = $content | ConvertFrom-Json
-                      $url = $meta.url
-                      break
+          $process = $null
+          try {
+              $process = Start-Process -FilePath $pin -ArgumentList "view", "--no-open", "--format", "json" -RedirectStandardOutput $stdout_file -RedirectStandardError $stderr_file -PassThru
+              $url = $null
+              for ($i = 0; $i -lt 30; $i++) {
+                  Start-Sleep -Milliseconds 200
+                  if (Test-Path $stdout_file) {
+                      $content = Get-Content $stdout_file -Raw
+                      if ($content -match 'url') {
+                          $meta = $content | ConvertFrom-Json
+                          $url = $meta.url
+                          break
+                      }
                   }
               }
+              if (-not $url) {
+                  if (Test-Path $stderr_file) { Get-Content $stderr_file }
+                  throw "View server did not start or print URL"
+              }
+              $response = Invoke-RestMethod -Uri "${url}data.json"
+              if ($response.count -ne 1) { throw "Expected 1 item, got $($response.count)" }
+              if ($response.items[0].title -ne "CI Smoke Test") { throw "Unexpected title: $($response.items[0].title)" }
+          } finally {
+              if ($null -ne $process -and -not $process.HasExited) {
+                  Stop-Process -Id $process.Id -Force
+              }
           }
-          if (-not $url) {
-              if (Test-Path $stderr_file) { Get-Content $stderr_file }
-              throw "View server did not start or print URL"
-          }
-          $response = Invoke-RestMethod -Uri "${url}data.json"
-          if ($response.count -ne 1) { throw "Expected 1 item, got $($response.count)" }
-          if ($response.items[0].title -ne "CI Smoke Test") { throw "Unexpected title: $($response.items[0].title)" }
-          Stop-Process -Id $process.Id -Force
 
       - name: Reject a bad checksum
         shell: pwsh

@@ -3,7 +3,15 @@ set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 TMP=$(mktemp -d)
-trap 'rm -rf "$TMP"' EXIT INT TERM
+view_pid=
+cleanup() {
+    if [ -n "$view_pid" ]; then
+        kill "$view_pid" 2>/dev/null || true
+        wait "$view_pid" 2>/dev/null || true
+    fi
+    rm -rf "$TMP"
+}
+trap cleanup EXIT INT TERM
 
 PIN_BIN=${PIN_BIN:-"$TMP/pin"}
 if [ ! -x "$PIN_BIN" ]; then
@@ -274,6 +282,8 @@ post_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${url}data.json")
     fail "expected 405 for POST request, got $post_code"
 }
 
-kill -9 $view_pid 2>/dev/null || true
+kill "$view_pid" 2>/dev/null || true
+wait "$view_pid" 2>/dev/null || true
+view_pid=
 
 echo "CLI tests passed"

@@ -1177,7 +1177,7 @@ fn format_iso8601_utc(writer: *std.Io.Writer, timestamp: i64) !void {
 
 fn generate_view_token(arena: std.mem.Allocator, io: std.Io) ![]const u8 {
     var bytes: [16]u8 = undefined;
-    io.randomSecure(&bytes) catch io.random(&bytes);
+    try io.randomSecure(&bytes);
     var hex_buf: [32]u8 = undefined;
     const hex_charset = "0123456789abcdef";
     for (bytes, 0..) |b, i| {
