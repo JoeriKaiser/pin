@@ -25,6 +25,7 @@
 
 ### Changed
 
+- Viewer rendering libraries bumped to marked 18.0.7 and DOMPurify 3.4.12; the marked browser build is now vendored from `lib/marked.umd.js` (upstream dropped the root `marked.min.js`).
 - Version bumped to 0.4.0.
 - Statistics include active, archived, and invalid file counts.
 - Import validation rejects any front-matter integrity error before copying files.
