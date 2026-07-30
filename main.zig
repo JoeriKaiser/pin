@@ -1,7 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-const version = "0.4.0";
+const version = "1.3.0";
 
 const OutputFormat = enum { json, table, plain };
 
