@@ -161,7 +161,7 @@ pin doctor --format plain
 Archive completed or rejected proposals without destroying their history:
 
 ```bash
-pin archive a82f71 --resolution implemented --note "Shipped in v0.4.0"
+pin archive a82f71 --resolution implemented --note "Shipped in v1.3.0"
 pin list-project --archived
 pin unarchive a82f71
 ```
