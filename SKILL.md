@@ -1,6 +1,6 @@
 ---
 name: pin
-description: Proactively curates substantial project-specific improvement proposals in a Markdown vault. Use at the start and end of every software project session, and whenever work reveals a meaningful out-of-scope technical, product, business, or project improvement. Load existing context first; capture justified, distinct, actionable ideas sparingly.
+description: Proactively curates substantial project-specific improvement proposals in a Markdown vault. Use during and at the end of software project sessions, and whenever work reveals a meaningful out-of-scope technical, product, business, or project improvement. Load context lazily; capture justified, distinct, actionable ideas sparingly.
 ---
 
 # Using Pin
@@ -11,19 +11,24 @@ Act as a curator, not an idea generator: notice continuously, evaluate strictly,
 
 Pins live as Markdown with YAML front matter in `~/.pin_vault`, a repository-local `.pin_vault`, or `PIN_VAULT`.
 
+## Mentioning pins
+
+Silence is the default. Never enumerate pins, and never note that a pin is "out of scope," "unrelated," or "not addressed." Mention a pin only when it is directly actionable in the current task — the user references it, or the task is implementing or refining it. Context loading exists for duplicate prevention and task-relevant awareness, not as a mandate to acknowledge or elaborate on every proposal.
+
+The one routine exception: when you add a pin, announce it once, briefly, in the final response (step 5).
+
 ## Session protocol
 
-### 1. Load context first
+### 1. Load context lazily
 
-At the beginning of every project session, run:
+Do not load the vault at the start of a session. Awareness is on-demand, not ambient. Run context or search only when you have a concrete reason:
 
-```bash
-pin context --limit 10 --group kind --format plain
-```
+- A pin candidate has emerged and you are checking for duplicates before writing (step 4).
+- The task explicitly involves existing pins — the user references one, or you are implementing or refining a proposal.
 
-Mention relevant existing pins briefly. Context provides awareness and prevents duplication; it is not a mandate to implement or elaborate on every proposal.
+Duplicate prevention happens before creation, via the search in step 4 — not via an upfront vault read.
 
-Before implementing an existing proposal, read it completely:
+When implementing or refining an existing proposal, read it completely:
 
 ```bash
 pin read <id-or-prefix>
