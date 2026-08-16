@@ -12,7 +12,7 @@ A zero-runtime-dependency idea registry for humans and coding agents.
 curl -fsSL https://raw.githubusercontent.com/JoeriKaiser/pin/main/install.sh | sh
 ```
 
-Supported platforms use checksum-verified release binaries. The source fallback requires Zig 0.16.0.
+Supported platforms use checksum-verified release binaries. The source fallback requires Rust 1.70+ (`cargo`).
 
 ### Windows
 

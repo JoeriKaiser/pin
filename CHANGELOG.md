@@ -32,5 +32,6 @@
 - JSON tags are emitted as arrays.
 - Markdown headings are used as default titles.
 - Legacy timestamp filenames receive deterministic derived IDs.
-- Nested repository directories resolve to the same project.
-- The source installer fallback is pinned to the latest release and Zig 0.16.0.
+- Ported entire codebase from Zig to a high-standard, modular Rust implementation with zero external runtime dependencies.
+- Replaced monolithic single-file build with a clean Cargo project structure and compile-time embedded static web assets.
+- The source installer fallback uses the Rust/Cargo toolchain.

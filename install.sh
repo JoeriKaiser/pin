@@ -64,34 +64,22 @@ if [ -n "$TARGET" ]; then
 fi
 
 if [ -z "$BINARY_NAME" ]; then
-    REQUIRED_ZIG="0.16.0"
-    LATEST_URL=$(curl -fsSL -o /dev/null -w '%{url_effective}' https://github.com/JoeriKaiser/pin/releases/latest || true)
-    RELEASE_TAG=${LATEST_URL##*/}
-    case "$RELEASE_TAG" in
-        ""|latest) RELEASE_TAG="main" ;;
-    esac
-
-    echo "==> Downloading main.zig from $RELEASE_TAG..."
-    curl -fsSL "https://raw.githubusercontent.com/JoeriKaiser/pin/$RELEASE_TAG/main.zig" -o "$TEMP_DIR/main.zig"
-
-    echo "==> Compiling pin CLI with Zig $REQUIRED_ZIG..."
-    if ! command -v zig >/dev/null 2>&1; then
-        echo "Error: Zig compiler not found and no pre-compiled binary available for $OS-$ARCH." >&2
-        echo "Install Zig $REQUIRED_ZIG (https://ziglang.org) or use a supported release binary." >&2
-        exit 1
-    fi
-    ACTUAL_ZIG=$(zig version)
-    if [ "$ACTUAL_ZIG" != "$REQUIRED_ZIG" ]; then
-        echo "Error: Source fallback requires Zig $REQUIRED_ZIG, but found $ACTUAL_ZIG." >&2
+    echo "==> Compiling pin CLI from source with Cargo..."
+    if ! command -v cargo >/dev/null 2>&1; then
+        echo "Error: Cargo/Rust toolchain not found and no pre-compiled binary available for $OS-$ARCH." >&2
+        echo "Install Rust (https://rustup.rs) or use a supported release binary." >&2
         exit 1
     fi
 
+    git clone --depth 1 https://github.com/JoeriKaiser/pin.git "$TEMP_DIR/pin-src"
     (
-        cd "$TEMP_DIR"
-        zig build-exe main.zig -O ReleaseSafe
+        cd "$TEMP_DIR/pin-src"
+        cargo build --release
     )
-    BINARY_NAME="main"
+    cp "$TEMP_DIR/pin-src/target/release/pin" "$TEMP_DIR/pin"
+    BINARY_NAME="pin"
 fi
+
 INSTALL_PATH="/usr/local/bin/pin"
 LOCAL_BIN_DIR="$HOME/.local/bin"
 
