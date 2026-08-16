@@ -32,7 +32,7 @@ assert_contains() {
 }
 
 "$PIN_BIN" --help >/dev/null 2>&1
-assert_contains "$("$PIN_BIN" --version)" "pin 1.3.0"
+assert_contains "$("$PIN_BIN" --version)" "pin 2.0.0"
 
 mkdir -p "$TMP/repo/packages/api" "$TMP/home"
 cd "$TMP/repo"
