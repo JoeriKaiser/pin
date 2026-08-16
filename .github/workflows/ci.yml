@@ -76,7 +76,7 @@ jobs:
           $install = Join-Path $env:RUNNER_TEMP "pin-install"
           ./install.ps1 -AssetDirectory $assets -InstallDir $install -NoPathUpdate
           $version = & (Join-Path $install "pin.exe") --version
-          if ($version -ne "pin 1.3.0") { throw "Unexpected version: $version" }
+          if ($version -ne "pin 2.0.0") { throw "Unexpected version: $version" }
 
       - name: Run Windows view command smoke test
         shell: pwsh

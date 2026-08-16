@@ -28,7 +28,7 @@ use std::io::{self, IsTerminal, Read};
 use std::path::{Path, PathBuf};
 use std::process::{self, Command};
 
-const VERSION: &str = "1.3.0";
+const VERSION: &str = "2.0.0";
 
 fn print_usage() {
     print!(
