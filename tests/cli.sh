@@ -15,7 +15,8 @@ trap cleanup EXIT INT TERM
 
 PIN_BIN=${PIN_BIN:-"$TMP/pin"}
 if [ ! -x "$PIN_BIN" ]; then
-    zig build-exe "$ROOT/main.zig" -O Debug -femit-bin="$PIN_BIN"
+    cargo build --manifest-path "$ROOT/Cargo.toml" --bin pin
+    cp "$ROOT/target/debug/pin" "$PIN_BIN"
 fi
 
 fail() {

@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en" data-base="">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>pin</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<a class="skip" href="#reader">Skip to proposal</a>
+<header class="topbar">
+  <div class="identity"><strong>pin</strong><span id="scope"></span></div>
+  <label class="search"><span class="visually-hidden">Search proposals</span><input id="search" type="search" placeholder="Search proposals" autocomplete="off" spellcheck="false"><kbd>/</kbd></label>
+  <div class="topbar-actions">
+    <button id="filter-toggle" class="control" type="button" aria-expanded="false" aria-controls="filters">Filters</button>
+    <span id="count" class="count" aria-live="polite">Loading…</span>
+  </div>
+</header>
+
+<div id="filters" class="filters" hidden>
+  <label>Kind<select id="kind-filter"><option value="">Any kind</option></select></label>
+  <label>Priority<select id="priority-filter"><option value="">Any priority</option></select></label>
+  <label id="project-wrap" hidden>Project<input id="project-filter" list="projects" placeholder="All projects" autocomplete="off"><datalist id="projects"></datalist></label>
+  <button id="clear-filters" class="text-button" type="button">Clear</button>
+</div>
+
+<main class="workspace">
+  <section id="index" class="index" aria-label="Proposals">
+    <div id="list-empty" class="empty" hidden></div>
+    <ul id="list" class="proposal-list"></ul>
+  </section>
+
+  <section id="reader" class="reader" tabindex="-1" aria-labelledby="proposal-title">
+    <button id="back" class="back control" type="button">← Proposals</button>
+    <div id="detail-empty" class="empty reader-empty"><p>Select a proposal to read it.</p></div>
+    <article id="proposal" hidden>
+      <header class="proposal-header">
+        <p id="proposal-context" class="proposal-context"></p>
+        <h1 id="proposal-title"></h1>
+        <div id="proposal-summary" class="proposal-summary"></div>
+        <details id="proposal-more" class="proposal-more">
+          <summary>More details</summary>
+          <dl id="proposal-meta"></dl>
+        </details>
+        <div id="resolution" class="resolution" hidden></div>
+      </header>
+      <div id="proposal-body" class="prose"></div>
+    </article>
+  </section>
+</main>
+
+<footer><span id="snapshot"></span><span>Read-only local snapshot</span></footer>
+<script src="marked.min.js"></script>
+<script src="purify.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

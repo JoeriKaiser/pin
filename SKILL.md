@@ -161,7 +161,7 @@ pin add --stdin --kind technical --title "Short title" \
 ...
 
 ## Evidence
-- `src/example.zig` silently ignores malformed records.
+- `src/example.rs` silently ignores malformed records.
 
 ## Why it Improves the Project
 ...

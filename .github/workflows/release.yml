@@ -10,38 +10,47 @@ permissions:
 jobs:
   build:
     name: Build for ${{ matrix.target }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - target: x86_64-linux
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
             output_name: pin-linux-amd64
-          - target: aarch64-linux
-            output_name: pin-linux-arm64
-          - target: x86_64-macos
+            binary_path: target/x86_64-unknown-linux-gnu/release/pin
+          - target: x86_64-apple-darwin
+            os: macos-latest
             output_name: pin-macos-amd64
-          - target: aarch64-macos
+            binary_path: target/x86_64-apple-darwin/release/pin
+          - target: aarch64-apple-darwin
+            os: macos-latest
             output_name: pin-macos-arm64
-          - target: x86_64-windows
+            binary_path: target/aarch64-apple-darwin/release/pin
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
             output_name: pin-windows-amd64.exe
-          - target: aarch64-windows
-            output_name: pin-windows-arm64.exe
+            binary_path: target/x86_64-pc-windows-msvc/release/pin.exe
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Zig
-        uses: mlugg/setup-zig@v2
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
-          version: 0.16.0
+          targets: ${{ matrix.target }}
 
       - name: Build binary
+        shell: bash
         run: |
-          zig build-exe main.zig -target ${{ matrix.target }} -O ReleaseSafe
-          mv main ${{ matrix.output_name }} || mv main.exe ${{ matrix.output_name }}
-          sha256sum ${{ matrix.output_name }} > ${{ matrix.output_name }}.sha256
+          cargo build --release --target ${{ matrix.target }}
+          cp ${{ matrix.binary_path }} ${{ matrix.output_name }}
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum ${{ matrix.output_name }} > ${{ matrix.output_name }}.sha256
+          elif command -v shasum >/dev/null 2>&1; then
+            shasum -a 256 ${{ matrix.output_name }} > ${{ matrix.output_name }}.sha256
+          fi
 
       - name: Upload Release Asset
         uses: softprops/action-gh-release@v2
