@@ -1,5 +1,5 @@
 use crate::doctor::scan_vault;
-use crate::model::{Kind, OutputFormat};
+use crate::model::{Kind, OutputFormat, Status};
 use serde::Serialize;
 use std::path::Path;
 
@@ -14,14 +14,23 @@ pub struct VaultStats {
     pub active: usize,
     pub archived: usize,
     pub invalid: usize,
+    pub captured: usize,
+    pub planned: usize,
+    pub in_progress: usize,
+    pub blocked: usize,
+    pub review: usize,
+    pub done: usize,
+    pub closed: usize,
+    pub cancelled: usize,
 }
 
 pub fn calculate_stats(vault_path: &Path) -> VaultStats {
     let scan = scan_vault(vault_path);
-    let mut stats = VaultStats::default();
-
-    stats.ideas = scan.metas.len();
-    stats.invalid = scan.files_scanned.saturating_sub(scan.valid_files);
+    let mut stats = VaultStats {
+        ideas: scan.metas.len(),
+        invalid: scan.files_scanned.saturating_sub(scan.valid_files),
+        ..VaultStats::default()
+    };
 
     for meta in scan.metas {
         if meta.is_archived() {
@@ -36,6 +45,17 @@ pub fn calculate_stats(vault_path: &Path) -> VaultStats {
             Kind::Business => stats.business += 1,
             Kind::Project => stats.project += 1,
             Kind::Unspecified => stats.unspecified += 1,
+        }
+
+        match meta.current_status() {
+            Status::Captured => stats.captured += 1,
+            Status::Planned => stats.planned += 1,
+            Status::InProgress => stats.in_progress += 1,
+            Status::Blocked => stats.blocked += 1,
+            Status::Review => stats.review += 1,
+            Status::Done => stats.done += 1,
+            Status::Closed => stats.closed += 1,
+            Status::Cancelled => stats.cancelled += 1,
         }
     }
 
@@ -57,6 +77,14 @@ pub fn emit_stats(stats: &VaultStats, format: OutputFormat) {
             println!("Business:    {}", stats.business);
             println!("Project:     {}", stats.project);
             println!("Unspecified: {}", stats.unspecified);
+            println!("Captured:    {}", stats.captured);
+            println!("Planned:     {}", stats.planned);
+            println!("In progress: {}", stats.in_progress);
+            println!("Blocked:     {}", stats.blocked);
+            println!("Review:      {}", stats.review);
+            println!("Done:        {}", stats.done);
+            println!("Closed:      {}", stats.closed);
+            println!("Cancelled:   {}", stats.cancelled);
         }
     }
 }

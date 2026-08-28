@@ -10,21 +10,28 @@
     FORBID_ATTR: ['style','src','srcdoc','onerror','onclick','onload','onfocus','onblur','onsubmit'],
     KEEP_CONTENT: true
   };
-  var ORDER = { kind: ['technical','product','business','project','unspecified'], priority: ['high','medium','low','unset'] };
+  var ORDER = {
+    kind: ['technical','product','business','project','unspecified'],
+    type: ['idea','task','bug','decision'],
+    status: ['captured','planned','in_progress','blocked','review','done','closed','cancelled'],
+    priority: ['high','medium','low','unset']
+  };
   var $ = function (id) { return document.getElementById(id); };
   var els = {
     scope: $('scope'), search: $('search'), count: $('count'), filterToggle: $('filter-toggle'), filters: $('filters'),
-    kind: $('kind-filter'), priority: $('priority-filter'), projectWrap: $('project-wrap'), project: $('project-filter'), projects: $('projects'), clear: $('clear-filters'),
+    kind: $('kind-filter'), type: $('type-filter'), status: $('status-filter'), priority: $('priority-filter'), projectWrap: $('project-wrap'), project: $('project-filter'), projects: $('projects'), clear: $('clear-filters'),
     list: $('list'), listEmpty: $('list-empty'), reader: $('reader'), detailEmpty: $('detail-empty'), proposal: $('proposal'), back: $('back'),
-    context: $('proposal-context'), title: $('proposal-title'), summary: $('proposal-summary'), more: $('proposal-more'), meta: $('proposal-meta'), resolution: $('resolution'), body: $('proposal-body'), snapshot: $('snapshot')
+    context: $('proposal-context'), title: $('proposal-title'), summary: $('proposal-summary'), actions: $('proposal-actions'), actor: $('actor'), claim: $('claim'), release: $('release'), statusAction: $('status-action'), applyStatus: $('apply-status'), handoffProgress: $('handoff-progress'), handoffNext: $('handoff-next'), handoffBlocker: $('handoff-blocker'), saveHandoff: $('save-handoff'), completionEvidence: $('completion-evidence'), complete: $('complete'), actionMessage: $('action-message'), more: $('proposal-more'), meta: $('proposal-meta'), resolution: $('resolution'), body: $('proposal-body'), activity: $('activity'), activityList: $('activity-list'), snapshot: $('snapshot')
   };
-  var state = { items: [], shown: [], selected: null, scope: '', archive: '', captured: '', filters: { text: '', kind: '', priority: '', project: '' } };
+  var state = { items: [], shown: [], selected: null, scope: '', archive: '', captured: '', filters: { text: '', kind: '', type: '', status: '', priority: '', project: '' } };
 
   function norm(value) { return String(value == null ? '' : value).toLowerCase(); }
   function text(node, value) { node.textContent = value == null ? '' : String(value); }
   function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
   function node(tag, className, value) { var n = document.createElement(tag); if (className) n.className = className; if (value != null) text(n, value); return n; }
   function kind(item) { return item.kind || 'unspecified'; }
+  function type(item) { return item.type || 'idea'; }
+  function status(item) { return item.status || 'captured'; }
   function priority(item) { return item.priority || 'unset'; }
   function tags(item) { return Array.isArray(item.tags) ? item.tags.map(String) : []; }
   function isNarrow() { return window.matchMedia('(max-width: 799.98px)').matches; }
@@ -61,7 +68,10 @@
   }
   function setupFilters() {
     fillSelect(els.kind, unique(kind), 'Any kind', ORDER.kind);
+    fillSelect(els.type, unique(type), 'Any type', ORDER.type);
+    fillSelect(els.status, unique(status), 'Any status', ORDER.status);
     fillSelect(els.priority, unique(priority), 'Any priority', ORDER.priority);
+    els.kind.value = state.filters.kind; els.type.value = state.filters.type; els.status.value = state.filters.status; els.priority.value = state.filters.priority;
     var projects = unique(function (item) { return item.project || ''; }).filter(Boolean).sort();
     clear(els.projects);
     projects.forEach(function (value) { var option = node('option'); option.value = value; els.projects.appendChild(option); });
@@ -70,12 +80,13 @@
   function matches(item) {
     var f = state.filters, q = norm(f.text).trim();
     if (f.kind && kind(item) !== f.kind) return false;
+    if (f.type && type(item) !== f.type) return false;
+    if (f.status && status(item) !== f.status) return false;
     if (f.priority && priority(item) !== f.priority) return false;
     if (f.project && norm(item.project) !== norm(f.project).trim()) return false;
     if (!q) return true;
     return norm([item.title, item.project, item.id, tags(item).join(' '), item.body].join('\n')).indexOf(q) !== -1;
   }
-  function filtersActive() { var f = state.filters; return !!(f.text || f.kind || f.priority || f.project); }
 
   function renderList() {
     state.shown = state.items.filter(matches);
@@ -96,7 +107,8 @@
       button.appendChild(node('strong', '', item.title || '(untitled)'));
       var meta = node('span');
       meta.appendChild(node('span', '', state.scope === 'all' && item.project ? item.project : kind(item)));
-      if (priority(item) !== 'unset') meta.appendChild(node('span', '', priority(item)));
+       meta.appendChild(node('span', '', status(item)));
+       if (priority(item) !== 'unset') meta.appendChild(node('span', '', priority(item)));
       var time = node('time', '', date(item.timestamp, false)); time.dateTime = String(item.timestamp || ''); meta.appendChild(time);
       button.appendChild(meta);
       button.addEventListener('click', function () { setRoute(item.id); });
@@ -105,7 +117,7 @@
   }
 
   function addSummary(value, className) { if (value) els.summary.appendChild(node('span', className || '', value)); }
-  function addMeta(label, value) { if (!value) return; els.meta.appendChild(node('dt', '', label)); els.meta.appendChild(node('dd', '', value)); }
+  function addMeta(label, value) { if (value == null || value === '') return; els.meta.appendChild(node('dt', '', label)); els.meta.appendChild(node('dd', '', value)); }
   function bodyWithoutDuplicateTitle(body, title) {
     var source = String(body || ''), match = source.match(/^\s*#\s+(.+?)\s*(?:\n|$)/);
     return match && norm(match[1].replace(/[*_`]/g, '').trim()) === norm(title).trim() ? source.slice(match[0].length).replace(/^\s+/, '') : source;
@@ -119,15 +131,30 @@
     var item = find(state.selected);
     document.body.classList.toggle('detail-open', !!item);
     els.proposal.hidden = !item; els.detailEmpty.hidden = !!item;
-    if (!item) { text(els.detailEmpty, state.selected ? 'This proposal is not in the snapshot.' : 'Select a proposal to read it.'); return; }
+    if (!item) { els.actions.hidden = true; text(els.detailEmpty, state.selected ? 'This proposal is not in the snapshot.' : 'Select a proposal to read it.'); return; }
     var context = [];
-    if (item.project) context.push(item.project); context.push(kind(item));
+    if (item.project) context.push(item.project); context.push(type(item)); context.push(kind(item));
     text(els.context, context.join(' · ')); text(els.title, item.title || '(untitled)');
-    clear(els.summary); addSummary(priority(item) === 'unset' ? '' : priority(item) + ' priority', 'priority-' + priority(item)); addSummary(date(item.timestamp, true)); addSummary(tags(item).join(' · '));
-    clear(els.meta); addMeta('ID', item.id); addMeta('File', item.filename); if (item.archived_at) addMeta('Archived', date(item.archived_at, true));
+    clear(els.summary); addSummary(status(item), 'status-' + status(item)); addSummary(priority(item) === 'unset' ? '' : priority(item) + ' priority', 'priority-' + priority(item)); addSummary(date(item.timestamp, true)); addSummary(tags(item).join(' · '));
+    clear(els.meta); addMeta('ID', item.id); addMeta('File', item.filename); addMeta('Type', type(item)); addMeta('Status', status(item)); addMeta('Revision', item.revision); addMeta('Created by', item.created_by); addMeta('Claimed by', item.claimed_by); addMeta('Parent', item.parent_id); addMeta('Depends on', (item.depends_on || []).join(', ')); addMeta('Related', (item.related || []).join(', ')); if (item.archived_at) addMeta('Archived', date(item.archived_at, true));
     els.more.hidden = !els.meta.children.length;
     clear(els.resolution); els.resolution.hidden = !(item.resolution || item.resolution_note);
     if (!els.resolution.hidden) { els.resolution.appendChild(node('strong', '', item.resolution ? 'Resolution: ' + item.resolution : 'Resolution')); if (item.resolution_note) els.resolution.appendChild(node('div', '', item.resolution_note)); }
+    els.actions.hidden = false;
+    var handoff = item.handoff || {};
+    els.handoffProgress.value = handoff.progress || ''; els.handoffNext.value = handoff.next || ''; els.handoffBlocker.value = handoff.blocker || ''; els.completionEvidence.value = handoff.verification || ''; els.statusAction.value = ''; text(els.actionMessage, '');
+    clear(els.activityList);
+    var activity = Array.isArray(item.activity) ? item.activity : [];
+    els.activity.hidden = !activity.length;
+    activity.slice().reverse().forEach(function (event) {
+      var entry = node('li');
+      entry.appendChild(node('time', '', date(event.at, true)));
+      entry.appendChild(node('strong', '', event.action || 'updated'));
+      entry.appendChild(node('span', '', event.actor || 'unknown actor'));
+      if (event.from || event.to) entry.appendChild(node('span', '', (event.from || '?') + ' → ' + (event.to || '?')));
+      if (event.note) entry.appendChild(node('p', '', event.note));
+      els.activityList.appendChild(entry);
+    });
     renderMarkdown(item);
   }
   function applyRoute() {
@@ -139,11 +166,23 @@
   function bind() {
     els.search.addEventListener('input', function () { state.filters.text = this.value; renderList(); });
     els.kind.addEventListener('change', function () { state.filters.kind = this.value; renderList(); });
+    els.type.addEventListener('change', function () { state.filters.type = this.value; renderList(); });
+    els.status.addEventListener('change', function () { state.filters.status = this.value; renderList(); });
     els.priority.addEventListener('change', function () { state.filters.priority = this.value; renderList(); });
     els.project.addEventListener('input', function () { state.filters.project = this.value; renderList(); });
     els.filterToggle.addEventListener('click', function () { var open = els.filters.hidden; els.filters.hidden = !open; this.setAttribute('aria-expanded', String(open)); });
-    els.clear.addEventListener('click', function () { state.filters = { text: '', kind: '', priority: '', project: '' }; els.search.value = els.kind.value = els.priority.value = els.project.value = ''; renderList(); });
+    els.clear.addEventListener('click', function () { state.filters = { text: '', kind: '', type: '', status: '', priority: '', project: '' }; els.search.value = els.kind.value = els.type.value = els.status.value = els.priority.value = els.project.value = ''; renderList(); });
     els.back.addEventListener('click', function () { setRoute(null); });
+    els.claim.addEventListener('click', function () { postAction({ action: 'claim' }); });
+    els.release.addEventListener('click', function () { postAction({ action: 'release' }); });
+    els.applyStatus.addEventListener('click', function () {
+      if (els.statusAction.value) {
+        var note = els.statusAction.value === 'blocked' ? els.handoffBlocker.value : els.completionEvidence.value;
+        postAction({ action: 'transition', to: els.statusAction.value, note: emptyToNull(note) });
+      }
+    });
+    els.saveHandoff.addEventListener('click', function () { postAction({ action: 'handoff', progress: emptyToNull(els.handoffProgress.value), next: emptyToNull(els.handoffNext.value), blocker: emptyToNull(els.handoffBlocker.value) }); });
+    els.complete.addEventListener('click', function () { postAction({ action: 'complete', evidence: els.completionEvidence.value }); });
     window.addEventListener('hashchange', applyRoute);
     document.addEventListener('keydown', function (event) {
       var input = /^(INPUT|SELECT|TEXTAREA)$/.test(event.target.tagName);
@@ -156,14 +195,24 @@
     });
   }
 
+  function emptyToNull(value) { var trimmed = String(value || '').trim(); return trimmed ? trimmed : null; }
+  function postAction(payload) {
+    var item = find(state.selected); if (!item) return;
+    payload.expect_revision = item.revision;
+    text(els.actionMessage, 'Saving...');
+    fetch(BASE + '/items/' + encodeURIComponent(item.id) + '/action', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-Pin-Action': 'true' }, body: JSON.stringify(payload) }).then(function (res) { return res.json().then(function (data) { if (!res.ok) throw new Error(data.error || 'Action failed.'); return data; }); }).then(function () { text(els.actionMessage, 'Saved.'); return loadData(); }).catch(function (error) { text(els.actionMessage, error.message || 'Action failed.'); });
+  }
+
   function ingest(data) {
     state.items = Array.isArray(data.items) ? data.items : []; state.scope = String(data.scope || 'all'); state.archive = String(data.archive_filter || ''); state.captured = String(data.captured_at || '');
     text(els.scope, state.scope === 'all' ? 'All projects' : state.scope); text(els.snapshot, 'Captured ' + captured(state.captured) + (state.archive ? ' · ' + state.archive : ''));
+    if (data.actor && els.actor) els.actor.value = data.actor;
     setupFilters();
     if (!route() && !isNarrow() && state.items.length) history.replaceState(null, '', '#/idea/' + encodeURIComponent(state.items[0].id));
     applyRoute();
   }
+  function loadData() { return fetch(BASE + '/data.json', { credentials: 'same-origin', cache: 'no-store' }).then(function (res) { if (!res.ok) throw new Error('Could not load snapshot (' + res.status + ')'); return res.json(); }).then(ingest); }
   function fatal(message) { text(els.count, 'Unavailable'); clear(els.listEmpty); els.listEmpty.hidden = false; els.listEmpty.appendChild(node('p', '', message)); }
-  function boot() { bind(); fetch(BASE + '/data.json', { credentials: 'same-origin', cache: 'no-store' }).then(function (res) { if (!res.ok) throw new Error('Could not load snapshot (' + res.status + ')'); return res.json(); }).then(ingest).catch(function (err) { fatal(err.message || 'Could not load snapshot.'); }); }
+  function boot() { bind(); loadData().catch(function (err) { fatal(err.message || 'Could not load snapshot.'); }); window.setInterval(function () { if (!document.hidden) loadData().catch(function () {}); }, 10000); }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();

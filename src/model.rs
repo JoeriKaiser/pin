@@ -42,6 +42,127 @@ pub enum Kind {
     Unspecified,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WorkType {
+    Idea,
+    Task,
+    Bug,
+    Decision,
+}
+
+impl WorkType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            WorkType::Idea => "idea",
+            WorkType::Task => "task",
+            WorkType::Bug => "bug",
+            WorkType::Decision => "decision",
+        }
+    }
+}
+
+impl FromStr for WorkType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "idea" => Ok(WorkType::Idea),
+            "task" => Ok(WorkType::Task),
+            "bug" => Ok(WorkType::Bug),
+            "decision" => Ok(WorkType::Decision),
+            _ => Err(format!("Invalid work type: {s}")),
+        }
+    }
+}
+
+impl fmt::Display for WorkType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Status {
+    Captured,
+    Planned,
+    InProgress,
+    Blocked,
+    Review,
+    Done,
+    Closed,
+    Cancelled,
+}
+
+impl Status {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Status::Captured => "captured",
+            Status::Planned => "planned",
+            Status::InProgress => "in_progress",
+            Status::Blocked => "blocked",
+            Status::Review => "review",
+            Status::Done => "done",
+            Status::Closed => "closed",
+            Status::Cancelled => "cancelled",
+        }
+    }
+
+    pub fn is_terminal(&self) -> bool {
+        matches!(self, Status::Closed | Status::Cancelled)
+    }
+}
+
+impl FromStr for Status {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "captured" => Ok(Status::Captured),
+            "planned" => Ok(Status::Planned),
+            "in_progress" | "in-progress" => Ok(Status::InProgress),
+            "blocked" => Ok(Status::Blocked),
+            "review" => Ok(Status::Review),
+            "done" => Ok(Status::Done),
+            "closed" => Ok(Status::Closed),
+            "cancelled" | "canceled" => Ok(Status::Cancelled),
+            _ => Err(format!("Invalid status: {s}")),
+        }
+    }
+}
+
+impl fmt::Display for Status {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Handoff {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blocker: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verification: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActivityEvent {
+    pub at: i64,
+    pub actor: String,
+    pub action: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from: Option<Status>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub to: Option<Status>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
 impl Kind {
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -178,8 +299,9 @@ impl fmt::Display for Resolution {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ArchiveFilter {
+    #[default]
     Active,
     Archived,
     All,
@@ -192,6 +314,10 @@ pub struct IdeaMeta {
     pub id: String,
     pub project: String,
     pub kind: Kind,
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    pub item_type: Option<WorkType>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<Status>,
     pub timestamp: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at_ns: Option<i64>,
@@ -200,6 +326,26 @@ pub struct IdeaMeta {
     pub tags: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub priority: Option<Priority>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revision: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_by: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub claimed_by: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub claim_expires_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub depends_on: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub related: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub handoff: Option<Handoff>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub activity: Vec<ActivityEvent>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub archived_at: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -219,6 +365,37 @@ pub struct IdeaMeta {
 }
 
 impl IdeaMeta {
+    pub fn work_type(&self) -> WorkType {
+        self.item_type.unwrap_or(WorkType::Idea)
+    }
+
+    pub fn current_status(&self) -> Status {
+        self.status.unwrap_or_else(|| {
+            if self.is_archived() {
+                match self.resolution {
+                    Some(Resolution::Rejected | Resolution::Superseded | Resolution::Stale) => {
+                        Status::Cancelled
+                    }
+                    _ => Status::Closed,
+                }
+            } else {
+                Status::Captured
+            }
+        })
+    }
+
+    pub fn current_revision(&self) -> u64 {
+        self.revision.unwrap_or(0)
+    }
+
+    pub fn has_active_claim(&self, now: i64) -> bool {
+        self.claimed_by.as_ref().is_some_and(|_| {
+            self.claim_expires_at
+                .map(|expires| expires > now)
+                .unwrap_or(true)
+        })
+    }
+
     pub fn is_archived(&self) -> bool {
         self.archived_at.is_some() || self.resolution.is_some()
     }

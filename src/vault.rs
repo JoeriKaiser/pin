@@ -1,9 +1,10 @@
 use crate::frontmatter::parse_front_matter_detailed;
-use crate::model::{ArchiveFilter, IdeaMeta, Kind};
+use crate::model::{ArchiveFilter, IdeaMeta, Kind, Status, WorkType};
+use fs2::FileExt;
 use rand::Rng;
 use std::env;
 use std::fmt;
-use std::fs;
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
@@ -149,6 +150,30 @@ pub fn atomic_write(path: &Path, content: &str) -> io::Result<()> {
     Ok(())
 }
 
+pub fn lock_item(path: &Path) -> io::Result<File> {
+    let lock_path = path.with_extension("md.lock");
+    let lock_file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(lock_path)?;
+    lock_file.lock_exclusive()?;
+    Ok(lock_file)
+}
+
+pub fn lock_vault(vault_path: &Path) -> io::Result<File> {
+    fs::create_dir_all(vault_path)?;
+    let lock_file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(vault_path.join(".pin.lock"))?;
+    lock_file.lock_exclusive()?;
+    Ok(lock_file)
+}
+
 pub fn collect_ideas(vault_path: &Path) -> io::Result<Vec<IdeaMeta>> {
     collect_ideas_filtered(vault_path, None, None, None, None, ArchiveFilter::All)
 }
@@ -160,6 +185,50 @@ pub fn collect_ideas_filtered(
     kind: Option<Kind>,
     query: Option<&str>,
     archive_filter: ArchiveFilter,
+) -> io::Result<Vec<IdeaMeta>> {
+    collect_work_items_filtered(
+        vault_path,
+        &WorkItemFilter {
+            project,
+            tag,
+            kind,
+            query,
+            archive_filter,
+            ..WorkItemFilter::default()
+        },
+    )
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct WorkItemFilter<'a> {
+    pub project: Option<&'a str>,
+    pub tag: Option<&'a str>,
+    pub kind: Option<Kind>,
+    pub item_type: Option<WorkType>,
+    pub status: Option<Status>,
+    pub claimed_by: Option<&'a str>,
+    pub query: Option<&'a str>,
+    pub archive_filter: ArchiveFilter,
+}
+
+impl Default for WorkItemFilter<'_> {
+    fn default() -> Self {
+        Self {
+            project: None,
+            tag: None,
+            kind: None,
+            item_type: None,
+            status: None,
+            claimed_by: None,
+            query: None,
+            archive_filter: ArchiveFilter::Active,
+        }
+    }
+}
+
+pub fn collect_work_items_filtered(
+    vault_path: &Path,
+    filter: &WorkItemFilter<'_>,
 ) -> io::Result<Vec<IdeaMeta>> {
     if !vault_path.is_dir() {
         return Ok(Vec::new());
@@ -183,20 +252,35 @@ pub fn collect_ideas_filtered(
             if let Ok(content) = fs::read_to_string(&path) {
                 let mut issues = Vec::new();
                 if let Some(meta) = parse_front_matter_detailed(&filename, &content, &mut issues) {
-                    if !meta.matches_archive_filter(archive_filter) {
+                    if !meta.matches_archive_filter(filter.archive_filter) {
                         continue;
                     }
-                    if let Some(p) = project {
+                    if let Some(p) = filter.project {
                         if !meta.project.eq_ignore_ascii_case(p.trim()) {
                             continue;
                         }
                     }
-                    if let Some(k) = kind {
+                    if let Some(k) = filter.kind {
                         if meta.kind != k {
                             continue;
                         }
                     }
-                    if let Some(t) = tag {
+                    if let Some(item_type) = filter.item_type {
+                        if meta.work_type() != item_type {
+                            continue;
+                        }
+                    }
+                    if let Some(status) = filter.status {
+                        if meta.current_status() != status {
+                            continue;
+                        }
+                    }
+                    if let Some(claimed_by) = filter.claimed_by {
+                        if meta.claimed_by.as_deref() != Some(claimed_by.trim()) {
+                            continue;
+                        }
+                    }
+                    if let Some(t) = filter.tag {
                         let t_norm = t.trim().to_ascii_lowercase();
                         let has_tag = meta
                             .tags_list()
@@ -206,7 +290,7 @@ pub fn collect_ideas_filtered(
                             continue;
                         }
                     }
-                    if let Some(q) = query {
+                    if let Some(q) = filter.query {
                         if let Some(score) = crate::search::calculate_search_score(&meta, q) {
                             let mut scored_meta = meta;
                             scored_meta.score = Some(score);
@@ -223,7 +307,7 @@ pub fn collect_ideas_filtered(
     }
 
     // Sort by timestamp descending by default
-    ideas.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+    ideas.sort_by_key(|b| std::cmp::Reverse(b.timestamp));
     Ok(ideas)
 }
 
@@ -241,12 +325,15 @@ pub fn resolve_selector(vault_path: &Path, selector: &str) -> Result<String, Vau
     }
 
     let all_ideas = collect_ideas(vault_path).map_err(VaultError::Io)?;
-    let mut prefix_match: Option<String> = None;
+    if let Some(exact) = all_ideas
+        .iter()
+        .find(|m| m.id.eq_ignore_ascii_case(selector))
+    {
+        return Ok(exact.filename.clone());
+    }
 
+    let mut prefix_match: Option<String> = None;
     for meta in all_ideas {
-        if meta.id.eq_ignore_ascii_case(selector) {
-            return Ok(meta.filename);
-        }
         if meta
             .id
             .to_ascii_lowercase()
@@ -258,10 +345,8 @@ pub fn resolve_selector(vault_path: &Path, selector: &str) -> Result<String, Vau
             prefix_match = Some(meta.filename);
         }
     }
-
     prefix_match.ok_or_else(|| VaultError::SelectorNotFound(selector.to_string()))
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -290,5 +375,54 @@ mod tests {
         let token = generate_token();
         assert_eq!(token.len(), 32);
         assert!(token.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+    #[test]
+    fn test_resolve_selector_prioritizes_exact_match_over_prefix_matches() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let vault_path = temp_dir.path();
+
+        let item_exact = r#"---
+schema: 2
+id: "abc"
+project: "test"
+kind: "technical"
+timestamp: 1
+title: "Exact"
+---
+# Exact
+"#;
+        let item_prefix1 = r#"---
+schema: 2
+id: "abc111111111"
+project: "test"
+kind: "technical"
+timestamp: 2
+title: "Prefix 1"
+---
+# Prefix 1
+"#;
+        let item_prefix2 = r#"---
+schema: 2
+id: "abc222222222"
+project: "test"
+kind: "technical"
+timestamp: 3
+title: "Prefix 2"
+---
+# Prefix 2
+"#;
+
+        fs::write(vault_path.join("prefix1.md"), item_prefix1).unwrap();
+        fs::write(vault_path.join("prefix2.md"), item_prefix2).unwrap();
+        fs::write(vault_path.join("exact.md"), item_exact).unwrap();
+
+        let resolved = resolve_selector(vault_path, "abc").unwrap();
+        assert_eq!(resolved, "exact.md");
+
+        let err = resolve_selector(vault_path, "abc1").unwrap();
+        assert_eq!(err, "prefix1.md");
+
+        let ambiguous = resolve_selector(vault_path, "ab").unwrap_err();
+        assert!(matches!(ambiguous, VaultError::AmbiguousSelector(_)));
     }
 }

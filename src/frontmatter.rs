@@ -1,4 +1,7 @@
-use crate::model::{IdeaMeta, Kind, Priority, Resolution};
+use crate::model::{
+    ActivityEvent, Handoff, IdeaMeta, Kind, Priority, Resolution, Status, WorkType,
+};
+use serde::Serialize;
 use serde_yaml::{Mapping, Value};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,13 +50,9 @@ pub fn split_front_matter(content: &str) -> Option<(&str, &str)> {
     }
 
     let rest = &trimmed_start[3..];
-    let rest = if let Some(stripped) = rest.strip_prefix("\r\n") {
-        stripped
-    } else if let Some(stripped) = rest.strip_prefix('\n') {
-        stripped
-    } else {
-        return None;
-    };
+    let rest = rest
+        .strip_prefix("\r\n")
+        .or_else(|| rest.strip_prefix('\n'))?;
 
     // Find ending "---"
     let mut offset = 0;
@@ -123,11 +122,23 @@ pub fn parse_front_matter_detailed(
     let mut id: Option<String> = None;
     let mut project: Option<String> = None;
     let mut kind: Option<Kind> = None;
+    let mut item_type: Option<WorkType> = None;
+    let mut status: Option<Status> = None;
     let mut timestamp: Option<i64> = None;
     let mut created_at_ns: Option<i64> = None;
     let mut title: Option<String> = None;
     let mut tags: Option<String> = None;
     let mut priority: Option<Priority> = None;
+    let mut updated_at: Option<i64> = None;
+    let mut revision: Option<u64> = None;
+    let mut created_by: Option<String> = None;
+    let mut claimed_by: Option<String> = None;
+    let mut claim_expires_at: Option<i64> = None;
+    let mut parent_id: Option<String> = None;
+    let mut depends_on: Vec<String> = Vec::new();
+    let mut related: Vec<String> = Vec::new();
+    let mut handoff: Option<Handoff> = None;
+    let mut activity: Vec<ActivityEvent> = Vec::new();
     let mut archived_at: Option<i64> = None;
     let mut resolution: Option<Resolution> = None;
     let mut resolution_note: Option<String> = None;
@@ -142,12 +153,12 @@ pub fn parse_front_matter_detailed(
             "schema" => {
                 if let Some(s) = v.as_u64() {
                     schema = Some(s as u32);
-                    if s != 1 {
+                    if s != 1 && s != 2 {
                         issues.push(Issue {
                             severity: Severity::Warning,
                             code: "invalid_schema".to_string(),
                             filename: filename.to_string(),
-                            message: format!("Unrecognized schema version '{s}' (expected 1)"),
+                            message: format!("Unrecognized schema version '{s}' (expected 1 or 2)"),
                             field: Some("schema".to_string()),
                         });
                     }
@@ -156,7 +167,7 @@ pub fn parse_front_matter_detailed(
                         severity: Severity::Warning,
                         code: "invalid_schema".to_string(),
                         filename: filename.to_string(),
-                        message: "Invalid schema value (expected integer 1)".to_string(),
+                        message: "Invalid schema value (expected integer 1 or 2)".to_string(),
                         field: Some("schema".to_string()),
                     });
                 }
@@ -232,6 +243,54 @@ pub fn parse_front_matter_detailed(
                     });
                 }
             }
+            "type" => {
+                if let Some(s) = v.as_str() {
+                    if let Ok(t) = s.parse::<WorkType>() {
+                        item_type = Some(t);
+                    } else {
+                        issues.push(Issue {
+                            severity: Severity::Warning,
+                            code: "invalid_type".to_string(),
+                            filename: filename.to_string(),
+                            message: format!(
+                                "Invalid work type '{s}' (expected idea, task, bug, or decision)"
+                            ),
+                            field: Some("type".to_string()),
+                        });
+                    }
+                } else {
+                    issues.push(Issue {
+                        severity: Severity::Warning,
+                        code: "invalid_type".to_string(),
+                        filename: filename.to_string(),
+                        message: "Work type must be a string".to_string(),
+                        field: Some("type".to_string()),
+                    });
+                }
+            }
+            "status" => {
+                if let Some(s) = v.as_str() {
+                    if let Ok(value) = s.parse::<Status>() {
+                        status = Some(value);
+                    } else {
+                        issues.push(Issue {
+                            severity: Severity::Warning,
+                            code: "invalid_status".to_string(),
+                            filename: filename.to_string(),
+                            message: format!("Invalid status '{s}'"),
+                            field: Some("status".to_string()),
+                        });
+                    }
+                } else {
+                    issues.push(Issue {
+                        severity: Severity::Warning,
+                        code: "invalid_status".to_string(),
+                        filename: filename.to_string(),
+                        message: "Status must be a string".to_string(),
+                        field: Some("status".to_string()),
+                    });
+                }
+            }
             "timestamp" => {
                 if let Some(t) = v.as_i64() {
                     timestamp = Some(t);
@@ -295,6 +354,80 @@ pub fn parse_front_matter_detailed(
                     });
                 }
             }
+            "updated_at" => {
+                if let Some(t) = v.as_i64() {
+                    updated_at = Some(t);
+                } else {
+                    issues.push(Issue {
+                        severity: Severity::Warning,
+                        code: "invalid_updated_at".to_string(),
+                        filename: filename.to_string(),
+                        message: "Updated timestamp must be an integer".to_string(),
+                        field: Some("updated_at".to_string()),
+                    });
+                }
+            }
+            "revision" => {
+                if let Some(r) = v.as_u64() {
+                    revision = Some(r);
+                } else {
+                    issues.push(Issue {
+                        severity: Severity::Warning,
+                        code: "invalid_revision".to_string(),
+                        filename: filename.to_string(),
+                        message: "Revision must be a non-negative integer".to_string(),
+                        field: Some("revision".to_string()),
+                    });
+                }
+            }
+            "created_by" => {
+                created_by = parse_optional_string(v, "created_by", filename, issues);
+            }
+            "claimed_by" => {
+                claimed_by = parse_optional_string(v, "claimed_by", filename, issues);
+            }
+            "claim_expires_at" => {
+                if let Some(t) = v.as_i64() {
+                    claim_expires_at = Some(t);
+                } else {
+                    issues.push(Issue {
+                        severity: Severity::Warning,
+                        code: "invalid_claim_expires_at".to_string(),
+                        filename: filename.to_string(),
+                        message: "Claim expiry must be an integer".to_string(),
+                        field: Some("claim_expires_at".to_string()),
+                    });
+                }
+            }
+            "parent_id" => {
+                parent_id = parse_optional_string(v, "parent_id", filename, issues);
+            }
+            "depends_on" => {
+                depends_on = parse_string_list(v, "depends_on", filename, issues);
+            }
+            "related" => {
+                related = parse_string_list(v, "related", filename, issues);
+            }
+            "handoff" => match serde_yaml::from_value::<Handoff>(v.clone()) {
+                Ok(value) => handoff = Some(value),
+                Err(_) => issues.push(Issue {
+                    severity: Severity::Warning,
+                    code: "invalid_handoff".to_string(),
+                    filename: filename.to_string(),
+                    message: "Handoff must be a mapping".to_string(),
+                    field: Some("handoff".to_string()),
+                }),
+            },
+            "activity" => match serde_yaml::from_value::<Vec<ActivityEvent>>(v.clone()) {
+                Ok(value) => activity = value,
+                Err(_) => issues.push(Issue {
+                    severity: Severity::Warning,
+                    code: "invalid_activity".to_string(),
+                    filename: filename.to_string(),
+                    message: "Activity must be a sequence of events".to_string(),
+                    field: Some("activity".to_string()),
+                }),
+            },
             "archived_at" => {
                 if let Some(t) = v.as_i64() {
                     archived_at = Some(t);
@@ -345,7 +478,7 @@ pub fn parse_front_matter_detailed(
             severity: Severity::Warning,
             code: "missing_schema".to_string(),
             filename: filename.to_string(),
-            message: "Missing schema version (recommended: 1)".to_string(),
+            message: "Missing schema version (recommended: 2)".to_string(),
             field: Some("schema".to_string()),
         });
     }
@@ -403,11 +536,23 @@ pub fn parse_front_matter_detailed(
         id: final_id,
         project: final_project,
         kind: final_kind,
+        item_type,
+        status,
         timestamp: final_timestamp,
         created_at_ns,
         title: final_title,
         tags,
         priority,
+        updated_at,
+        revision,
+        created_by,
+        claimed_by,
+        claim_expires_at,
+        parent_id,
+        depends_on,
+        related,
+        handoff,
+        activity,
         archived_at,
         resolution,
         resolution_note,
@@ -416,6 +561,68 @@ pub fn parse_front_matter_detailed(
         score: None,
         raw_frontmatter_map: mapping,
     })
+}
+
+fn parse_optional_string(
+    value: &Value,
+    field: &str,
+    filename: &str,
+    issues: &mut Vec<Issue>,
+) -> Option<String> {
+    if value.is_null() {
+        return None;
+    }
+
+    match value.as_str() {
+        Some(value) if !value.trim().is_empty() => Some(value.trim().to_string()),
+        Some(_) => None,
+        None => {
+            issues.push(Issue {
+                severity: Severity::Warning,
+                code: format!("invalid_{field}"),
+                filename: filename.to_string(),
+                message: format!("{field} must be a string"),
+                field: Some(field.to_string()),
+            });
+            None
+        }
+    }
+}
+
+fn parse_string_list(
+    value: &Value,
+    field: &str,
+    filename: &str,
+    issues: &mut Vec<Issue>,
+) -> Vec<String> {
+    let Some(items) = value.as_sequence() else {
+        issues.push(Issue {
+            severity: Severity::Warning,
+            code: format!("invalid_{field}"),
+            filename: filename.to_string(),
+            message: format!("{field} must be a sequence of strings"),
+            field: Some(field.to_string()),
+        });
+        return Vec::new();
+    };
+
+    let mut result = Vec::with_capacity(items.len());
+    for item in items {
+        if let Some(value) = item.as_str() {
+            if !value.trim().is_empty() {
+                result.push(value.trim().to_string());
+            }
+        } else {
+            issues.push(Issue {
+                severity: Severity::Warning,
+                code: format!("invalid_{field}"),
+                filename: filename.to_string(),
+                message: format!("Every {field} entry must be a string"),
+                field: Some(field.to_string()),
+            });
+        }
+    }
+    result
 }
 
 pub fn derive_deterministic_id(seed: &str) -> String {
@@ -444,6 +651,12 @@ pub fn serialize_front_matter(meta: &IdeaMeta) -> String {
         escape_yaml_string(&meta.project)
     ));
     out.push_str(&format!("kind: \"{}\"\n", meta.kind.as_str()));
+    if let Some(item_type) = meta.item_type {
+        out.push_str(&format!("type: \"{}\"\n", item_type.as_str()));
+    }
+    if let Some(status) = meta.status {
+        out.push_str(&format!("status: \"{}\"\n", status.as_str()));
+    }
     out.push_str(&format!("timestamp: {}\n", meta.timestamp));
     if let Some(ns) = meta.created_at_ns {
         out.push_str(&format!("created_at_ns: {ns}\n"));
@@ -457,6 +670,24 @@ pub fn serialize_front_matter(meta: &IdeaMeta) -> String {
     if let Some(priority) = meta.priority {
         out.push_str(&format!("priority: \"{}\"\n", priority.as_str()));
     }
+    if let Some(updated_at) = meta.updated_at {
+        out.push_str(&format!("updated_at: {updated_at}\n"));
+    }
+    if let Some(revision) = meta.revision {
+        out.push_str(&format!("revision: {revision}\n"));
+    }
+    append_quoted_field(&mut out, "created_by", meta.created_by.as_deref());
+    append_quoted_field(&mut out, "claimed_by", meta.claimed_by.as_deref());
+    if let Some(claim_expires_at) = meta.claim_expires_at {
+        out.push_str(&format!("claim_expires_at: {claim_expires_at}\n"));
+    }
+    append_quoted_field(&mut out, "parent_id", meta.parent_id.as_deref());
+    append_yaml_sequence(&mut out, "depends_on", &meta.depends_on);
+    append_yaml_sequence(&mut out, "related", &meta.related);
+    if let Some(handoff) = &meta.handoff {
+        append_yaml_value(&mut out, "handoff", handoff);
+    }
+    append_yaml_sequence(&mut out, "activity", &meta.activity);
     if let Some(archived_at) = meta.archived_at {
         out.push_str(&format!("archived_at: {archived_at}\n"));
     }
@@ -481,18 +712,32 @@ pub fn serialize_front_matter(meta: &IdeaMeta) -> String {
                     | "id"
                     | "project"
                     | "kind"
+                    | "type"
+                    | "status"
                     | "timestamp"
                     | "created_at_ns"
                     | "title"
                     | "tags"
                     | "priority"
+                    | "updated_at"
+                    | "revision"
+                    | "created_by"
+                    | "claimed_by"
+                    | "claim_expires_at"
+                    | "parent_id"
+                    | "depends_on"
+                    | "related"
+                    | "handoff"
+                    | "activity"
                     | "archived_at"
                     | "resolution"
                     | "resolution_note"
             ) {
                 continue;
             }
-            if let Ok(v_str) = serde_yaml::to_string(v) {
+            if v.is_mapping() || v.is_sequence() {
+                append_yaml_value(&mut out, key, v);
+            } else if let Ok(v_str) = serde_yaml::to_string(v) {
                 out.push_str(&format!("{key}: {v_str}"));
             }
         }
@@ -500,6 +745,36 @@ pub fn serialize_front_matter(meta: &IdeaMeta) -> String {
 
     out.push_str("---\n");
     out
+}
+
+fn append_quoted_field(out: &mut String, key: &str, value: Option<&str>) {
+    if let Some(value) = value {
+        if !value.trim().is_empty() {
+            out.push_str(&format!(
+                "{key}: \"{}\"\n",
+                escape_yaml_string(value.trim())
+            ));
+        }
+    }
+}
+
+fn append_yaml_sequence<T: Serialize>(out: &mut String, key: &str, value: &[T]) {
+    if !value.is_empty() {
+        append_yaml_value(out, key, value);
+    }
+}
+
+fn append_yaml_value<T: Serialize + ?Sized>(out: &mut String, key: &str, value: &T) {
+    let Ok(serialized) = serde_yaml::to_string(value) else {
+        return;
+    };
+
+    out.push_str(&format!("{key}:\n"));
+    for line in serialized.lines() {
+        out.push_str("  ");
+        out.push_str(line);
+        out.push('\n');
+    }
 }
 
 pub fn render_full_document(meta: &IdeaMeta) -> String {
@@ -514,6 +789,7 @@ pub fn render_full_document(meta: &IdeaMeta) -> String {
 fn escape_yaml_string(s: &str) -> String {
     s.replace('\\', "\\\\")
         .replace('"', "\\\"")
+        .replace('\r', "\\r")
         .replace('\n', "\\n")
 }
 
@@ -597,5 +873,76 @@ Body details.
         let mut issues = Vec::new();
         let meta = parse_front_matter_detailed("test.md", content, &mut issues).unwrap();
         assert_eq!(meta.title, "Automatic Title from Heading");
+    }
+
+    #[test]
+    fn test_work_item_fields_round_trip() {
+        let content = r#"---
+schema: 2
+id: "0123456789ab"
+project: "test"
+kind: "technical"
+type: "task"
+status: "in_progress"
+timestamp: 1700000000
+title: "Work item"
+updated_at: 1700000010
+revision: 2
+created_by: "agent:test"
+claimed_by: "agent:test"
+claim_expires_at: 1700003600
+parent_id: "abcdefabcdef"
+depends_on:
+  - "fedcbafedcba"
+related:
+  - "111111111111"
+handoff:
+  progress: "Half complete"
+  next: "Run tests"
+activity:
+  - at: 1700000010
+    actor: "agent:test"
+    action: "claimed"
+    to: "in_progress"
+---
+# Work item
+"#;
+        let mut issues = Vec::new();
+        let meta = parse_front_matter_detailed("0123456789ab.md", content, &mut issues).unwrap();
+        assert!(issues.is_empty());
+        assert_eq!(meta.work_type(), WorkType::Task);
+        assert_eq!(meta.current_status(), Status::InProgress);
+        assert_eq!(meta.current_revision(), 2);
+        assert_eq!(meta.depends_on, vec!["fedcbafedcba"]);
+        assert_eq!(
+            meta.handoff.as_ref().unwrap().next.as_deref(),
+            Some("Run tests")
+        );
+        assert_eq!(meta.activity.len(), 1);
+
+        let rendered = render_full_document(&meta);
+        let mut rendered_issues = Vec::new();
+        let parsed =
+            parse_front_matter_detailed("0123456789ab.md", &rendered, &mut rendered_issues)
+                .unwrap();
+        assert!(rendered_issues.is_empty());
+        assert_eq!(parsed.current_status(), Status::InProgress);
+        assert_eq!(parsed.activity, meta.activity);
+    }
+
+    #[test]
+    fn legacy_records_get_derived_work_defaults() {
+        let content = r#"---
+project: "test"
+timestamp: 1
+title: "Legacy"
+---
+# Legacy
+"#;
+        let mut issues = Vec::new();
+        let meta = parse_front_matter_detailed("legacy.md", content, &mut issues).unwrap();
+        assert_eq!(meta.work_type(), WorkType::Idea);
+        assert_eq!(meta.current_status(), Status::Captured);
+        assert_eq!(meta.current_revision(), 0);
     }
 }

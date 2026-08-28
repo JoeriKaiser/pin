@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- Agent-first work items with typed records, lifecycle states, claims, handoffs, dependencies, revisions, and activity history.
+- `next`, `transition`, `claim`, `release`, `handoff`, `complete`, `close`, and `depend` commands.
+- Status and work-type filters across list, search, context, and the local viewer.
+- Local viewer actions with token, same-origin, and JSON request checks.
+- Schema 2 records with legacy schema 1 compatibility and `doctor --upgrade`.
+
 ## [2.0.0]
 
 ### Changed

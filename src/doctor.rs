@@ -2,7 +2,8 @@ use crate::frontmatter::{
     derive_deterministic_id, parse_front_matter_detailed, render_full_document, Issue, Severity,
 };
 use crate::model::{IdeaMeta, OutputFormat};
-use crate::vault::atomic_write;
+use crate::vault::{atomic_write, lock_item};
+use crate::workflow::prepare_v2;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::fs;
@@ -125,7 +126,7 @@ pub fn scan_vault(vault_path: &Path) -> VaultScan {
     scan
 }
 
-pub fn repair_vault(vault_path: &Path) -> usize {
+pub fn repair_vault(vault_path: &Path, upgrade: bool) -> usize {
     if !vault_path.is_dir() {
         return 0;
     }
@@ -149,6 +150,11 @@ pub fn repair_vault(vault_path: &Path) -> usize {
             if filename.starts_with('.') {
                 continue;
             }
+            let _lock = match lock_item(&path) {
+                Ok(lock) => lock,
+                Err(_) => continue,
+            };
+
             let content = match fs::read_to_string(&path) {
                 Ok(c) => c,
                 Err(_) => continue,
@@ -158,7 +164,17 @@ pub fn repair_vault(vault_path: &Path) -> usize {
             if let Some(mut meta) = parse_front_matter_detailed(&filename, &content, &mut issues) {
                 let mut needs_repair = false;
 
-                if meta.schema != Some(1) {
+                if upgrade {
+                    if meta.schema != Some(2)
+                        || meta.item_type.is_none()
+                        || meta.status.is_none()
+                        || meta.updated_at.is_none()
+                        || meta.revision.is_none()
+                    {
+                        prepare_v2(&mut meta);
+                        needs_repair = true;
+                    }
+                } else if !matches!(meta.schema, Some(1) | Some(2)) {
                     meta.schema = Some(1);
                     needs_repair = true;
                 }
@@ -265,7 +281,10 @@ pub fn emit_doctor_report(
                     Severity::Warning => "warning",
                     Severity::Info => "info",
                 };
-                let rep_str = if issue.code == "missing_schema" || issue.code == "missing_id" {
+                let rep_str = if issue.code == "missing_schema"
+                    || issue.code == "missing_id"
+                    || issue.code == "invalid_schema"
+                {
                     " (repairable)"
                 } else {
                     ""

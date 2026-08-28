@@ -1,8 +1,10 @@
 # pin
 
-A zero-runtime-dependency idea registry for humans and coding agents.
+A local-first, Git-backed work ledger for humans and coding agents.
 
-`pin` saves forward-looking proposals and implementation roadmaps as Markdown with YAML front matter. It is intentionally smaller than a task tracker: capture what should improve, find it later, and give the next agent a compact project context.
+`pin` saves ideas, tasks, bugs, and decisions as Markdown with YAML front matter. A record can move from captured, to planned, to active work, to verified completion. Agents can claim work, leave handoffs, and report evidence. Humans can inspect and steer the same records in the local viewer.
+
+It remains smaller than a hosted issue tracker. The vault is plain Markdown, synchronized through Git, and does not require a server or external tracker.
 
 ## Installation
 
@@ -40,13 +42,28 @@ Pi discovers skill metadata automatically but loads full skill instructions on d
 - For every software project session, load the `pin` skill at the start and follow its proactive improvement-curation protocol throughout the session.
 ```
 
-At session start, agents can request compact proposals grouped by domain:
+At session start, agents can request compact work context grouped by domain:
 
 ```bash
 pin context --limit 10 --group kind --format plain
 ```
 
 The bundled skill also defines a proactive curation protocol: agents notice substantial out-of-scope improvements during normal work, apply strict evidence and quality gates, deduplicate them, and add at most one pin per ordinary session.
+
+For active work, agents should use this loop:
+
+```bash
+pin context --limit 10 --format plain
+pin next --limit 1 --format json
+pin claim <id> --actor agent:name
+# do the work
+pin handoff <id> --actor agent:name --progress "..." --next "..."
+pin complete <id> --actor agent:name --evidence "..."
+```
+
+Use `pin transition <id> --to blocked --note "..."` when work cannot continue. Claims have a one-hour lease by default and can be renewed with `pin claim`.
+
+Set `PIN_ACTOR` to provide the agent identity for commands that accept `--actor`. Set `PIN_VIEWER_ACTOR` when the local viewer should record a different human identity.
 
 ## Quick start
 
@@ -66,6 +83,7 @@ pin edit "$(printf %s "$id" | cut -c1-5)"
 
 pin search 'widget' --format table
 pin context --limit 10 --group kind --format plain
+pin next --limit 1 --format json
 ```
 
 ## Commands
@@ -74,18 +92,43 @@ pin context --limit 10 --group kind --format plain
 pin init --local [--project <name>] [--format json|plain]
 pin add <markdown> --kind technical|product|business|project
                      [--stdin] [--project <name>] [--title <title>]
-                     [--tags <csv>] [--priority low|medium|high]
+                      [--tags <csv>] [--priority low|medium|high]
+                      [--type idea|task|bug|decision]
                      [--allow-duplicate] [--format json|plain]
 pin list [--project <name>] [--tag <name>] [--kind <kind>]
-         [--archived|--all] [--format json|table|plain]
-pin list-project [--tag <name>] [--kind <kind>] [--archived|--all]
-                 [--format json|table|plain]
+          [--type <type>] [--status <status>] [--claimed-by <actor>] [--ready]
+          [--archived|--all] [--format json|table|plain]
+pin list-project [--tag <name>] [--kind <kind>] [--type <type>]
+                  [--status <status>] [--claimed-by <actor>] [--ready] [--archived|--all]
+                  [--format json|table|plain]
 pin search <query> [--project <name>] [--tag <name>] [--kind <kind>]
-                   [--limit <n>] [--archived|--all]
-                   [--format json|table|plain]
-pin context [--project <name>] [--kind <kind>] [--limit <n>]
-            [--group kind] [--archived|--all] [--format json|plain]
-pin doctor [--repair] [--strict] [--format json|plain]
+                    [--type <type>] [--status <status>] [--claimed-by <actor>]
+                    [--limit <n>] [--archived|--all]
+                    [--format json|table|plain]
+pin context [--project <name>] [--kind <kind>] [--type <type>]
+             [--status <status>] [--limit <n>]
+             [--group kind] [--archived|--all] [--format json|plain]
+pin next [--project <name>] [--limit <n>] [--format json|plain]
+pin transition <id|id-prefix|filename> --to <status> [--actor <name>]
+             [--note <text>] [--expect-revision <n>] [--format json|plain]
+pin claim <id|id-prefix|filename> [--actor <name>] [--lease <seconds>]
+             [--expect-revision <n>] [--format json|plain]
+pin release <id|id-prefix|filename> [--actor <name>] [--force]
+             [--expect-revision <n>] [--format json|plain]
+pin handoff <id|id-prefix|filename> [--actor <name>] [--progress <text>]
+             [--next <text>] [--blocker <text>] [--verification <text>]
+             [--expect-revision <n>] [--format json|plain]
+pin complete <id|id-prefix|filename> --evidence <text> [--actor <name>]
+             [--expect-revision <n>] [--format json|plain]
+pin close <id|id-prefix|filename> [--actor <name>] [--note <text>]
+             [--expect-revision <n>] [--format json|plain]
+pin depend <id|id-prefix|filename> <dependency-id> [--actor <name>]
+             [--expect-revision <n>] [--format json|plain]
+pin parent <id|id-prefix|filename> <parent-id> [--actor <name>]
+             [--expect-revision <n>] [--format json|plain]
+pin relate <id|id-prefix|filename> <related-id> [--actor <name>]
+             [--expect-revision <n>] [--format json|plain]
+pin doctor [--repair] [--upgrade] [--strict] [--format json|plain]
 pin archive <id|prefix|filename>
             [--resolution implemented|rejected|superseded|stale]
             [--note <text>] [--format json|plain]
@@ -96,13 +139,21 @@ pin rm <id|prefix|filename> [--format json|plain]
 pin import <directory> [--force] [--format json|plain]
 pin export <directory> [--force] [--format json|plain]
 pin stats [--format json|plain]
-pin view [--project <name>] [--tag <name>] [--kind <kind>] [--archived|--all] [--port <n>] [--no-open] [--format json|plain]
-pin view-project [--tag <name>] [--kind <kind>] [--archived|--all] [--port <n>] [--no-open] [--format json|plain]
+pin view [--project <name>] [--tag <name>] [--kind <kind>] [--type <type>] [--status <status>] [--archived|--all] [--port <n>] [--no-open] [--format json|plain]
+pin view-project [--tag <name>] [--kind <kind>] [--type <type>] [--status <status>] [--archived|--all] [--port <n>] [--no-open] [--format json|plain]
 pin --help
 pin --version
 ```
 
-`add` requires one primary domain and rejects duplicate titles within a project by default. Use `--allow-duplicate` when the repetition is intentional.
+`add` requires one primary domain and rejects duplicate titles within a project by default. Use `--allow-duplicate` when the repetition is intentional. New records start as `captured` work items.
+
+## Work lifecycle
+
+Work states are `captured`, `planned`, `in_progress`, `blocked`, `review`, `done`, `closed`, and `cancelled`. `captured` means an idea has not been planned yet. `done` requires completion evidence. `closed` records acceptance and is separate from archive visibility.
+
+`pin next` returns planned work whose dependencies are complete and whose claim is available. `pin claim` moves planned work to `in_progress`. Releasing an in-progress claim returns it to `planned` so another agent can pick it up.
+
+Each mutation records an activity event in the Markdown file. The file also stores the current handoff, claim lease, revision, and dependency links.
 
 ## Proposal domains
 
@@ -156,7 +207,7 @@ Inspect a vault without changing it:
 pin doctor --format plain
 ```
 
-`doctor` reports malformed or unreadable files, invalid metadata, duplicate IDs, and legacy fields. It exits non-zero for integrity errors; `--strict` also treats warnings as failures. `--repair` performs only conservative, atomic repairs such as adding schema/ID metadata and normalizing recognized values.
+`doctor` reports malformed or unreadable files, invalid metadata, duplicate IDs, and legacy fields. It exits non-zero for integrity errors; `--strict` also treats warnings as failures. `--repair` performs conservative repairs such as adding schema/ID metadata. `--upgrade` converts readable legacy records to schema 2 and adds work-item defaults.
 
 Archive completed or rejected proposals without destroying their history:
 
@@ -172,7 +223,7 @@ Archived proposals are excluded from ordinary list, search, and context output. 
 
 ## Search behavior
 
-Search uses deterministic multi-term AND matching. Title matches rank above tag matches, which rank above body-only matches; priority and recency break ties. Use `--limit` to bound agent output. JSON search records include an additive `score` field.
+Search uses deterministic multi-term AND matching. Title matches rank above tag matches, which rank above body-only matches; priority and recency break ties. Use `--limit` to bound agent output. JSON search records include an additive `score` field and work-item state.
 
 ## Output contract
 
@@ -185,4 +236,4 @@ Search uses deterministic multi-term AND matching. Title matches rank above tag 
 
 ## Storage compatibility
 
-New ideas use schema version `1` and a 12-character stable ID as both metadata and filename. Older timestamp-named Markdown files and metadata without `schema` remain readable and receive a deterministic derived ID when needed. Archive state is stored as ordinary `archived_at`, `resolution`, and `resolution_note` front-matter fields. The vault remains plain Markdown and does not require a database.
+New work items use schema version `2` and a 12-character stable ID as both metadata and filename. Older timestamp-named Markdown files and metadata without `schema` remain readable, receive a deterministic derived ID when needed, and appear as captured ideas until upgraded. Archive state is stored as ordinary `archived_at`, `resolution`, and `resolution_note` front-matter fields. The vault remains plain Markdown and does not require a database.

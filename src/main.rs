@@ -7,20 +7,24 @@ mod search;
 mod stats;
 mod vault;
 mod viewer;
+mod workflow;
 
 use doctor::{emit_doctor_report, repair_vault, scan_vault};
 use frontmatter::{
     get_default_title, parse_front_matter_detailed, render_full_document, truncate_title, Severity,
 };
-use model::{ArchiveFilter, IdeaMeta, Kind, OutputFormat, Priority, Resolution};
-use output::{default_format, emit_context, emit_ideas, emit_single_idea};
+use model::{
+    ArchiveFilter, Handoff, IdeaMeta, Kind, OutputFormat, Priority, Resolution, Status, WorkType,
+};
+use output::{default_format, emit_context, emit_ideas, emit_mutation, emit_single_idea};
 use search::sort_search_results;
 use stats::{calculate_stats, emit_stats};
 use vault::{
-    atomic_write, collect_ideas_filtered, generate_id, resolve_project, resolve_selector,
-    resolve_vault_path,
+    atomic_write, collect_ideas_filtered, generate_id, lock_item, lock_vault, resolve_project,
+    resolve_selector, resolve_vault_path, WorkItemFilter,
 };
-use viewer::{create_snapshot, serve_view};
+use viewer::{create_snapshot, serve_view, ViewConfig};
+use workflow::{actor_from_env, append_activity};
 
 use std::env;
 use std::fs;
@@ -37,18 +41,42 @@ fn print_usage() {
          init --local [--project <name>] [--format json|plain]\n  \
          add <markdown> --kind technical|product|business|project\n                 \
          [--stdin] [--project <name>] [--title <title>]\n                 \
-         [--tags <csv>] [--priority low|medium|high]\n                 \
+         [--tags <csv>] [--priority low|medium|high] [--type idea|task|bug|decision]\n                 \
          [--allow-duplicate] [--format json|plain]\n  \
-         list [--project <name>] [--tag <name>] [--kind <kind>]\n       \
-         [--archived|--all] [--format json|table|plain]\n  \
-         list-project [--tag <name>] [--kind <kind>] [--archived|--all]\n               \
+         list [--project <name>] [--tag <name>] [--kind <kind>] [--type <type>]\n       \
+          [--status <status>] [--claimed-by <actor>] [--ready] [--archived|--all]\n       \
+         [--format json|table|plain]\n  \
+         list-project [--tag <name>] [--kind <kind>] [--type <type>]\n               \
+          [--status <status>] [--claimed-by <actor>] [--ready] [--archived|--all]\n               \
          [--format json|table|plain]\n  \
          search <query> [--project <name>] [--tag <name>] [--kind <kind>]\n                 \
+         [--type <type>] [--status <status>] [--claimed-by <actor>]\n                 \
          [--limit <n>] [--archived|--all]\n                 \
          [--format json|table|plain]\n  \
-         context [--project <name>] [--kind <kind>] [--limit <n>]\n          \
-         [--group kind] [--archived|--all] [--format json|plain]\n  \
-         doctor [--repair] [--strict] [--format json|plain]\n  \
+         context [--project <name>] [--kind <kind>] [--type <type>]\n          \
+         [--status <status>] [--limit <n>] [--group kind]\n          \
+         [--archived|--all] [--format json|plain]\n  \
+         next [--project <name>] [--limit <n>] [--format json|plain]\n  \
+         transition <id|id-prefix|filename> --to <status> [--actor <name>]\n          \
+         [--note <text>] [--expect-revision <n>] [--format json|plain]\n  \
+         claim <id|id-prefix|filename> [--actor <name>] [--lease <seconds>]\n          \
+         [--expect-revision <n>] [--format json|plain]\n  \
+         release <id|id-prefix|filename> [--actor <name>] [--force]\n          \
+         [--expect-revision <n>] [--format json|plain]\n  \
+         handoff <id|id-prefix|filename> [--actor <name>] [--progress <text>]\n          \
+         [--next <text>] [--blocker <text>] [--verification <text>]\n          \
+         [--expect-revision <n>] [--format json|plain]\n  \
+         complete <id|id-prefix|filename> --evidence <text> [--actor <name>]\n          \
+         [--expect-revision <n>] [--format json|plain]\n  \
+         close <id|id-prefix|filename> [--actor <name>] [--note <text>]\n          \
+         [--expect-revision <n>] [--format json|plain]\n  \
+         depend <id|id-prefix|filename> <dependency-id> [--actor <name>]\n          \
+         [--expect-revision <n>] [--format json|plain]\n  \
+         parent <id|id-prefix|filename> <parent-id> [--actor <name>]\n          \
+         [--expect-revision <n>] [--format json|plain]\n  \
+         relate <id|id-prefix|filename> <related-id> [--actor <name>]\n          \
+         [--expect-revision <n>] [--format json|plain]\n  \
+         doctor [--repair] [--upgrade] [--strict] [--format json|plain]\n  \
          archive <id|prefix|filename>\n          \
          [--resolution implemented|rejected|superseded|stale]\n          \
          [--note <text>] [--format json|plain]\n  \
@@ -59,9 +87,9 @@ fn print_usage() {
          import <directory> [--force] [--format json|plain]\n  \
          export <directory> [--force] [--format json|plain]\n  \
          stats [--format json|plain]\n  \
-         view [--project <name>] [--tag <name>] [--kind <kind>]\n       \
+          view [--project <name>] [--tag <name>] [--kind <kind>] [--type <type>] [--status <status>]\n       \
          [--archived|--all] [--port <n>] [--no-open] [--format json|plain]\n  \
-         view-project [--tag <name>] [--kind <kind>] [--archived|--all]\n               \
+          view-project [--tag <name>] [--kind <kind>] [--type <type>] [--status <status>] [--archived|--all]\n               \
          [--port <n>] [--no-open] [--format json|plain]\n  \
          --help\n  \
          --version\n"
@@ -151,6 +179,149 @@ fn read_stdin_content() -> Option<String> {
     }
 }
 
+fn parse_status_value(value: &str) -> Status {
+    value.parse::<Status>().unwrap_or_else(|_| {
+        eprintln!("Error: Unknown status '{value}'");
+        process::exit(1);
+    })
+}
+
+fn parse_work_type_value(value: &str) -> WorkType {
+    value.parse::<WorkType>().unwrap_or_else(|_| {
+        eprintln!("Error: Unknown work type '{value}'");
+        process::exit(1);
+    })
+}
+
+fn parse_revision_value(value: &str) -> u64 {
+    value.parse::<u64>().unwrap_or_else(|_| {
+        eprintln!("Error: --expect-revision requires a non-negative integer");
+        process::exit(1);
+    })
+}
+
+fn emit_workflow_error(error: workflow::WorkflowError) -> ! {
+    eprintln!("Error: {error}");
+    process::exit(1);
+}
+
+#[derive(Default)]
+struct FilterFlags {
+    project: Option<String>,
+    tag: Option<String>,
+    kind: Option<Kind>,
+    item_type: Option<WorkType>,
+    status: Option<Status>,
+    claimed_by: Option<String>,
+    archive_filter: ArchiveFilter,
+    format: Option<OutputFormat>,
+}
+
+impl FilterFlags {
+    fn parse_flag(&mut self, arg: &str, reader: &mut ArgReader, allow_table: bool) -> bool {
+        match arg {
+            "--archived" => {
+                self.archive_filter = ArchiveFilter::Archived;
+                true
+            }
+            "--all" => {
+                self.archive_filter = ArchiveFilter::All;
+                true
+            }
+            "--project" => {
+                self.project = Some(reader.next_val("--project").to_string());
+                true
+            }
+            "--tag" => {
+                self.tag = Some(reader.next_val("--tag").to_string());
+                true
+            }
+            "--kind" => {
+                let val = reader.next_val("--kind");
+                self.kind = Some(val.parse::<Kind>().unwrap_or_else(|_| {
+                    eprintln!("Error: Unknown kind '{val}'");
+                    process::exit(1);
+                }));
+                true
+            }
+            "--type" => {
+                let val = reader.next_val("--type");
+                self.item_type = Some(parse_work_type_value(val));
+                true
+            }
+            "--status" => {
+                let val = reader.next_val("--status");
+                self.status = Some(parse_status_value(val));
+                true
+            }
+            "--claimed-by" => {
+                self.claimed_by = Some(reader.next_val("--claimed-by").to_string());
+                true
+            }
+            "--format" => {
+                self.format = Some(reader.parse_format(allow_table));
+                true
+            }
+            _ => false,
+        }
+    }
+}
+
+#[derive(Default)]
+struct MutationFlags {
+    actor: Option<String>,
+    expect_revision: Option<u64>,
+    format: Option<OutputFormat>,
+}
+
+impl MutationFlags {
+    fn parse_flag(&mut self, arg: &str, reader: &mut ArgReader) -> bool {
+        match arg {
+            "--actor" => {
+                self.actor = Some(reader.next_val("--actor").to_string());
+                true
+            }
+            "--expect-revision" => {
+                self.expect_revision =
+                    Some(parse_revision_value(reader.next_val("--expect-revision")));
+                true
+            }
+            "--format" => {
+                self.format = Some(reader.parse_format(false));
+                true
+            }
+            _ => false,
+        }
+    }
+}
+
+fn run_mutation(
+    vault_path: &Path,
+    selector: &str,
+    expected_revision: Option<u64>,
+    action_label: &str,
+    format: Option<OutputFormat>,
+    action: workflow::MutationAction,
+) {
+    let meta = workflow::execute_mutation(vault_path, selector, expected_revision, action)
+        .unwrap_or_else(|error| emit_workflow_error(error));
+    let fmt = format.unwrap_or_else(|| default_format(OutputFormat::Plain));
+    emit_mutation(&meta, action_label, fmt);
+}
+
+fn is_ready(item: &IdeaMeta, all_items: &[IdeaMeta], now: i64) -> bool {
+    if item.current_status() != Status::Planned || item.has_active_claim(now) {
+        return false;
+    }
+
+    item.depends_on.iter().all(|dependency| {
+        all_items.iter().any(|candidate| {
+            candidate.id == *dependency
+                && matches!(candidate.current_status(), Status::Done | Status::Closed)
+        })
+    })
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
@@ -203,6 +374,7 @@ fn main() {
                 process::exit(1);
             }
             let _ = fs::write(local_vault.join(".gitkeep"), "");
+            let _ = fs::write(local_vault.join(".gitignore"), "*.lock\n.*.tmp\n");
 
             let config_path = root.join(".pin-project");
             if !config_path.exists() {
@@ -227,7 +399,7 @@ fn main() {
 
         "add" => {
             let (mut content, mut project, mut title, mut tags) = (None, None, None, None);
-            let (mut kind, mut priority, mut format) = (None, None, None);
+            let (mut kind, mut priority, mut item_type, mut format) = (None, None, None, None);
             let (mut use_stdin, mut allow_duplicate) = (false, false);
 
             while let Some(arg) = reader.peek() {
@@ -256,6 +428,10 @@ fn main() {
                                 process::exit(1);
                             }
                         }
+                    }
+                    "--type" => {
+                        let val = reader.next_val("--type");
+                        item_type = Some(parse_work_type_value(val));
                     }
                     "--format" => format = Some(reader.parse_format(false)),
                     _ if arg.starts_with("--") => {
@@ -297,6 +473,11 @@ fn main() {
                 }
             };
 
+            let _vault_lock = lock_vault(&vault_path).unwrap_or_else(|e| {
+                eprintln!("Error: Could not lock vault: {e}");
+                process::exit(1);
+            });
+
             let proj_name = resolve_project(project);
             let title_val = match title {
                 Some(t) => truncate_title(t),
@@ -334,16 +515,29 @@ fn main() {
             let filename = format!("{id}.md");
             let file_path = vault_path.join(&filename);
 
-            let idea = IdeaMeta {
-                schema: Some(1),
+            let actor = actor_from_env();
+            let mut idea = IdeaMeta {
+                schema: Some(2),
                 id: id.clone(),
                 project: proj_name,
                 kind: final_kind,
+                item_type: Some(item_type.unwrap_or(WorkType::Idea)),
+                status: Some(Status::Captured),
                 timestamp: now.timestamp(),
                 created_at_ns: now.timestamp_nanos_opt(),
                 title: title_val,
                 tags: tags.map(|s| s.to_string()),
                 priority,
+                updated_at: Some(now.timestamp()),
+                revision: Some(0),
+                created_by: Some(actor.clone()),
+                claimed_by: None,
+                claim_expires_at: None,
+                parent_id: None,
+                depends_on: Vec::new(),
+                related: Vec::new(),
+                handoff: None,
+                activity: Vec::new(),
                 archived_at: None,
                 resolution: None,
                 resolution_note: None,
@@ -352,6 +546,14 @@ fn main() {
                 score: None,
                 raw_frontmatter_map: serde_yaml::Mapping::new(),
             };
+            append_activity(
+                &mut idea,
+                &actor,
+                "created",
+                None,
+                Some(Status::Captured),
+                None,
+            );
 
             if let Err(e) = atomic_write(&file_path, &render_full_document(&idea)) {
                 eprintln!("Error: Failed to save idea: {e}");
@@ -364,53 +566,59 @@ fn main() {
 
         "list" | "list-project" => {
             let project_scoped = cmd == "list-project";
-            let mut filter_project = if project_scoped {
-                Some(resolve_project(None))
-            } else {
-                None
-            };
-            let (mut filter_tag, mut filter_kind) = (None, None);
-            let (mut archive_filter, mut format) = (ArchiveFilter::Active, None);
+            let mut flags = FilterFlags::default();
+            if project_scoped {
+                flags.project = Some(resolve_project(None));
+            }
+            let mut ready_only = false;
 
             while let Some(arg) = reader.peek() {
-                match arg {
-                    "--archived" => archive_filter = ArchiveFilter::Archived,
-                    "--all" => archive_filter = ArchiveFilter::All,
-                    "--project" => {
-                        if project_scoped {
-                            eprintln!("Error: 'list-project' does not accept --project");
-                            process::exit(1);
-                        }
-                        filter_project = Some(reader.next_val("--project").to_string());
-                    }
-                    "--tag" => filter_tag = Some(reader.next_val("--tag").to_string()),
-                    "--kind" => {
-                        let val = reader.next_val("--kind");
-                        filter_kind = Some(val.parse::<Kind>().unwrap_or_else(|_| {
-                            eprintln!("Error: Unknown kind '{val}'");
-                            process::exit(1);
-                        }));
-                    }
-                    "--format" => format = Some(reader.parse_format(true)),
-                    _ => {
-                        eprintln!("Error: Unknown flag '{arg}'");
-                        process::exit(1);
-                    }
+                if arg == "--project" && project_scoped {
+                    eprintln!("Error: 'list-project' does not accept --project");
+                    process::exit(1);
+                }
+                if flags.parse_flag(arg, &mut reader, true) {
+                    // handled
+                } else if arg == "--ready" {
+                    ready_only = true;
+                } else {
+                    eprintln!("Error: Unknown flag '{arg}'");
+                    process::exit(1);
                 }
                 reader.idx += 1;
             }
 
-            let ideas = collect_ideas_filtered(
+            let mut ideas = vault::collect_work_items_filtered(
                 &vault_path,
-                filter_project.as_deref(),
-                filter_tag.as_deref(),
-                filter_kind,
-                None,
-                archive_filter,
+                &WorkItemFilter {
+                    project: flags.project.as_deref(),
+                    tag: flags.tag.as_deref(),
+                    kind: flags.kind,
+                    item_type: flags.item_type,
+                    status: flags.status,
+                    claimed_by: flags.claimed_by.as_deref(),
+                    archive_filter: flags.archive_filter,
+                    ..WorkItemFilter::default()
+                },
             )
             .unwrap_or_default();
 
-            let fmt = format.unwrap_or_else(|| default_format(OutputFormat::Table));
+            if ready_only {
+                let all_items = vault::collect_work_items_filtered(
+                    &vault_path,
+                    &WorkItemFilter {
+                        archive_filter: ArchiveFilter::All,
+                        ..WorkItemFilter::default()
+                    },
+                )
+                .unwrap_or_default();
+                let now = chrono::Utc::now().timestamp();
+                ideas.retain(|item| is_ready(item, &all_items, now));
+            }
+
+            let fmt = flags
+                .format
+                .unwrap_or_else(|| default_format(OutputFormat::Table));
             emit_ideas(&ideas, fmt);
         }
 
@@ -422,45 +630,37 @@ fn main() {
             let query = &args[2];
             reader.idx = 3;
 
-            let (mut filter_project, mut filter_tag, mut filter_kind) = (None, None, None);
-            let (mut archive_filter, mut limit, mut format) = (ArchiveFilter::Active, None, None);
+            let mut flags = FilterFlags::default();
+            let mut limit = None;
 
             while let Some(arg) = reader.peek() {
-                match arg {
-                    "--archived" => archive_filter = ArchiveFilter::Archived,
-                    "--all" => archive_filter = ArchiveFilter::All,
-                    "--project" => filter_project = Some(reader.next_val("--project").to_string()),
-                    "--tag" => filter_tag = Some(reader.next_val("--tag").to_string()),
-                    "--kind" => {
-                        let val = reader.next_val("--kind");
-                        filter_kind = Some(val.parse::<Kind>().unwrap_or_else(|_| {
-                            eprintln!("Error: Unknown kind '{val}'");
-                            process::exit(1);
-                        }));
-                    }
-                    "--limit" => {
-                        let val = reader.next_val("--limit");
-                        limit = Some(val.parse::<usize>().unwrap_or_else(|_| {
-                            eprintln!("Error: --limit requires a positive integer");
-                            process::exit(1);
-                        }));
-                    }
-                    "--format" => format = Some(reader.parse_format(true)),
-                    _ => {
-                        eprintln!("Error: Unknown flag '{arg}'");
+                if flags.parse_flag(arg, &mut reader, true) {
+                    // handled
+                } else if arg == "--limit" {
+                    let val = reader.next_val("--limit");
+                    limit = Some(val.parse::<usize>().unwrap_or_else(|_| {
+                        eprintln!("Error: --limit requires a positive integer");
                         process::exit(1);
-                    }
+                    }));
+                } else {
+                    eprintln!("Error: Unknown flag '{arg}'");
+                    process::exit(1);
                 }
                 reader.idx += 1;
             }
 
-            let mut ideas = collect_ideas_filtered(
+            let mut ideas = vault::collect_work_items_filtered(
                 &vault_path,
-                filter_project.as_deref(),
-                filter_tag.as_deref(),
-                filter_kind,
-                Some(query),
-                archive_filter,
+                &WorkItemFilter {
+                    project: flags.project.as_deref(),
+                    tag: flags.tag.as_deref(),
+                    kind: flags.kind,
+                    item_type: flags.item_type,
+                    status: flags.status,
+                    claimed_by: flags.claimed_by.as_deref(),
+                    query: Some(query),
+                    archive_filter: flags.archive_filter,
+                },
             )
             .unwrap_or_default();
 
@@ -469,60 +669,52 @@ fn main() {
                 ideas.truncate(lim);
             }
 
-            let fmt = format.unwrap_or_else(|| default_format(OutputFormat::Table));
+            let fmt = flags
+                .format
+                .unwrap_or_else(|| default_format(OutputFormat::Table));
             emit_ideas(&ideas, fmt);
         }
 
         "context" => {
-            let (mut filter_project, mut filter_kind, mut limit) = (None, None, None);
-            let (mut archive_filter, mut group_kind, mut format) =
-                (ArchiveFilter::Active, false, None);
+            let mut flags = FilterFlags::default();
+            let mut limit = None;
+            let mut group_kind = false;
 
             while let Some(arg) = reader.peek() {
-                match arg {
-                    "--archived" => archive_filter = ArchiveFilter::Archived,
-                    "--all" => archive_filter = ArchiveFilter::All,
-                    "--project" => filter_project = Some(reader.next_val("--project").to_string()),
-                    "--kind" => {
-                        let val = reader.next_val("--kind");
-                        filter_kind = Some(val.parse::<Kind>().unwrap_or_else(|_| {
-                            eprintln!("Error: Unknown kind '{val}'");
-                            process::exit(1);
-                        }));
-                    }
-                    "--limit" => {
-                        let val = reader.next_val("--limit");
-                        limit = Some(val.parse::<usize>().unwrap_or_else(|_| {
-                            eprintln!("Error: --limit requires a positive integer");
-                            process::exit(1);
-                        }));
-                    }
-                    "--group" => {
-                        let val = reader.next_val("--group");
-                        if val == "kind" {
-                            group_kind = true;
-                        } else {
-                            eprintln!("Error: --group only supports 'kind'");
-                            process::exit(1);
-                        }
-                    }
-                    "--format" => format = Some(reader.parse_format(false)),
-                    _ => {
-                        eprintln!("Error: Unknown flag '{arg}'");
+                if flags.parse_flag(arg, &mut reader, false) {
+                    // handled
+                } else if arg == "--limit" {
+                    let val = reader.next_val("--limit");
+                    limit = Some(val.parse::<usize>().unwrap_or_else(|_| {
+                        eprintln!("Error: --limit requires a positive integer");
+                        process::exit(1);
+                    }));
+                } else if arg == "--group" {
+                    let val = reader.next_val("--group");
+                    if val == "kind" {
+                        group_kind = true;
+                    } else {
+                        eprintln!("Error: --group only supports 'kind'");
                         process::exit(1);
                     }
+                } else {
+                    eprintln!("Error: Unknown flag '{arg}'");
+                    process::exit(1);
                 }
                 reader.idx += 1;
             }
 
-            let project = resolve_project(filter_project.as_deref());
-            let mut ideas = collect_ideas_filtered(
+            let project = resolve_project(flags.project.as_deref());
+            let mut ideas = vault::collect_work_items_filtered(
                 &vault_path,
-                Some(&project),
-                None,
-                filter_kind,
-                None,
-                archive_filter,
+                &WorkItemFilter {
+                    project: Some(&project),
+                    kind: flags.kind,
+                    item_type: flags.item_type,
+                    status: flags.status,
+                    archive_filter: flags.archive_filter,
+                    ..WorkItemFilter::default()
+                },
             )
             .unwrap_or_default();
 
@@ -535,16 +727,33 @@ fn main() {
                 }
             });
 
-            let fmt = format.unwrap_or_else(|| default_format(OutputFormat::Plain));
-            emit_context(&ideas, &project, group_kind, archive_filter, limit, fmt);
+            let fmt = flags
+                .format
+                .unwrap_or_else(|| default_format(OutputFormat::Plain));
+            emit_context(
+                &ideas,
+                &project,
+                group_kind,
+                flags.archive_filter,
+                limit,
+                fmt,
+            );
         }
 
-        "doctor" => {
-            let (mut repair, mut strict, mut format) = (false, false, None);
+        "next" => {
+            let mut filter_project = None;
+            let mut limit = None;
+            let mut format = None;
             while let Some(arg) = reader.peek() {
                 match arg {
-                    "--repair" => repair = true,
-                    "--strict" => strict = true,
+                    "--project" => filter_project = Some(reader.next_val("--project").to_string()),
+                    "--limit" => {
+                        let val = reader.next_val("--limit");
+                        limit = Some(val.parse::<usize>().unwrap_or_else(|_| {
+                            eprintln!("Error: --limit requires a positive integer");
+                            process::exit(1);
+                        }));
+                    }
                     "--format" => format = Some(reader.parse_format(false)),
                     _ => {
                         eprintln!("Error: Unknown flag '{arg}'");
@@ -554,11 +763,308 @@ fn main() {
                 reader.idx += 1;
             }
 
-            let repaired_count = if repair { repair_vault(&vault_path) } else { 0 };
+            let project = resolve_project(filter_project.as_deref());
+            let mut items = vault::collect_work_items_filtered(
+                &vault_path,
+                &WorkItemFilter {
+                    project: Some(&project),
+                    status: Some(Status::Planned),
+                    ..WorkItemFilter::default()
+                },
+            )
+            .unwrap_or_default();
+            let all_items = vault::collect_work_items_filtered(
+                &vault_path,
+                &WorkItemFilter {
+                    archive_filter: ArchiveFilter::All,
+                    ..WorkItemFilter::default()
+                },
+            )
+            .unwrap_or_default();
+            let now = chrono::Utc::now().timestamp();
+            items.retain(|item| is_ready(item, &all_items, now));
+            items.sort_by(|a, b| {
+                let priority = b.priority_rank().cmp(&a.priority_rank());
+                if priority == std::cmp::Ordering::Equal {
+                    a.timestamp.cmp(&b.timestamp)
+                } else {
+                    priority
+                }
+            });
+            if let Some(limit) = limit {
+                items.truncate(limit);
+            }
+            let fmt = format.unwrap_or_else(|| default_format(OutputFormat::Plain));
+            emit_ideas(&items, fmt);
+        }
+
+        "transition" => {
+            let selector = reader.parse_selector();
+            let mut target = None;
+            let mut note = None;
+            let mut flags = MutationFlags::default();
+            while let Some(arg) = reader.peek() {
+                if flags.parse_flag(arg, &mut reader) {
+                    // handled
+                } else if arg == "--to" {
+                    target = Some(parse_status_value(reader.next_val("--to")));
+                } else if arg == "--note" {
+                    note = Some(reader.next_val("--note").to_string());
+                } else {
+                    eprintln!("Error: Unknown flag '{arg}'");
+                    process::exit(1);
+                }
+                reader.idx += 1;
+            }
+            let target = target.unwrap_or_else(|| {
+                eprintln!("Error: '--to' is required for 'transition'");
+                process::exit(1);
+            });
+            let actor = flags.actor.unwrap_or_else(actor_from_env);
+            run_mutation(
+                &vault_path,
+                selector,
+                flags.expect_revision,
+                "transitioned",
+                flags.format,
+                workflow::MutationAction::Transition {
+                    target,
+                    actor,
+                    note,
+                },
+            );
+        }
+
+        "claim" => {
+            let selector = reader.parse_selector();
+            let mut lease = workflow::DEFAULT_CLAIM_SECONDS;
+            let mut flags = MutationFlags::default();
+            while let Some(arg) = reader.peek() {
+                if flags.parse_flag(arg, &mut reader) {
+                    // handled
+                } else if arg == "--lease" {
+                    let value = reader.next_val("--lease");
+                    lease = value.parse::<i64>().unwrap_or_else(|_| {
+                        eprintln!("Error: --lease requires a positive integer");
+                        process::exit(1);
+                    });
+                } else {
+                    eprintln!("Error: Unknown flag '{arg}'");
+                    process::exit(1);
+                }
+                reader.idx += 1;
+            }
+            let actor = flags.actor.unwrap_or_else(actor_from_env);
+            run_mutation(
+                &vault_path,
+                selector,
+                flags.expect_revision,
+                "claimed",
+                flags.format,
+                workflow::MutationAction::Claim { actor, lease },
+            );
+        }
+
+        "release" => {
+            let selector = reader.parse_selector();
+            let mut force = false;
+            let mut flags = MutationFlags::default();
+            while let Some(arg) = reader.peek() {
+                if flags.parse_flag(arg, &mut reader) {
+                    // handled
+                } else if arg == "--force" {
+                    force = true;
+                } else {
+                    eprintln!("Error: Unknown flag '{arg}'");
+                    process::exit(1);
+                }
+                reader.idx += 1;
+            }
+            let actor = flags.actor.unwrap_or_else(actor_from_env);
+            run_mutation(
+                &vault_path,
+                selector,
+                flags.expect_revision,
+                "released",
+                flags.format,
+                workflow::MutationAction::Release { actor, force },
+            );
+        }
+
+        "handoff" => {
+            let selector = reader.parse_selector();
+            let (mut progress, mut next, mut blocker, mut verification) = (None, None, None, None);
+            let mut flags = MutationFlags::default();
+            while let Some(arg) = reader.peek() {
+                if flags.parse_flag(arg, &mut reader) {
+                    // handled
+                } else {
+                    match arg {
+                        "--progress" => progress = Some(reader.next_val("--progress").to_string()),
+                        "--next" => next = Some(reader.next_val("--next").to_string()),
+                        "--blocker" => blocker = Some(reader.next_val("--blocker").to_string()),
+                        "--verification" => {
+                            verification = Some(reader.next_val("--verification").to_string())
+                        }
+                        _ => {
+                            eprintln!("Error: Unknown flag '{arg}'");
+                            process::exit(1);
+                        }
+                    }
+                }
+                reader.idx += 1;
+            }
+            let actor = flags.actor.unwrap_or_else(actor_from_env);
+            let handoff = Handoff {
+                progress,
+                next,
+                blocker,
+                verification,
+            };
+            run_mutation(
+                &vault_path,
+                selector,
+                flags.expect_revision,
+                "handoff_updated",
+                flags.format,
+                workflow::MutationAction::Handoff { actor, handoff },
+            );
+        }
+
+        "complete" => {
+            let selector = reader.parse_selector();
+            let mut evidence = None;
+            let mut flags = MutationFlags::default();
+            while let Some(arg) = reader.peek() {
+                if flags.parse_flag(arg, &mut reader) {
+                    // handled
+                } else if arg == "--evidence" {
+                    evidence = Some(reader.next_val("--evidence").to_string());
+                } else {
+                    eprintln!("Error: Unknown flag '{arg}'");
+                    process::exit(1);
+                }
+                reader.idx += 1;
+            }
+            let evidence = evidence.unwrap_or_else(|| {
+                eprintln!("Error: '--evidence' is required for 'complete'");
+                process::exit(1);
+            });
+            let actor = flags.actor.unwrap_or_else(actor_from_env);
+            run_mutation(
+                &vault_path,
+                selector,
+                flags.expect_revision,
+                "completed",
+                flags.format,
+                workflow::MutationAction::Complete { actor, evidence },
+            );
+        }
+
+        "close" => {
+            let selector = reader.parse_selector();
+            let mut note = None;
+            let mut flags = MutationFlags::default();
+            while let Some(arg) = reader.peek() {
+                if flags.parse_flag(arg, &mut reader) {
+                    // handled
+                } else if arg == "--note" {
+                    note = Some(reader.next_val("--note").to_string());
+                } else {
+                    eprintln!("Error: Unknown flag '{arg}'");
+                    process::exit(1);
+                }
+                reader.idx += 1;
+            }
+            let actor = flags.actor.unwrap_or_else(actor_from_env);
+            run_mutation(
+                &vault_path,
+                selector,
+                flags.expect_revision,
+                "closed",
+                flags.format,
+                workflow::MutationAction::Close { actor, note },
+            );
+        }
+
+        "depend" | "parent" | "relate" => {
+            let selector = reader.parse_selector();
+            if args.len() < 4 {
+                eprintln!("Error: '{cmd}' requires a target item ID or selector");
+                process::exit(1);
+            }
+            let target_selector = args[3].clone();
+            reader.idx = 4;
+            let mut flags = MutationFlags::default();
+            while let Some(arg) = reader.peek() {
+                if !flags.parse_flag(arg, &mut reader) {
+                    eprintln!("Error: Unknown flag '{arg}'");
+                    process::exit(1);
+                }
+                reader.idx += 1;
+            }
+            let actor = flags.actor.unwrap_or_else(actor_from_env);
+            let (label, action) = match cmd.as_str() {
+                "depend" => (
+                    "dependency_added",
+                    workflow::MutationAction::Depend {
+                        actor,
+                        dependency_selector: target_selector,
+                    },
+                ),
+                "parent" => (
+                    "parent_set",
+                    workflow::MutationAction::Parent {
+                        actor,
+                        parent_selector: target_selector,
+                    },
+                ),
+                _ => (
+                    "related_item_added",
+                    workflow::MutationAction::Relate {
+                        actor,
+                        related_selector: target_selector,
+                    },
+                ),
+            };
+            run_mutation(
+                &vault_path,
+                selector,
+                flags.expect_revision,
+                label,
+                flags.format,
+                action,
+            );
+        }
+
+        "doctor" => {
+            let (mut repair, mut upgrade, mut strict, mut format) = (false, false, false, None);
+            while let Some(arg) = reader.peek() {
+                match arg {
+                    "--repair" => repair = true,
+                    "--upgrade" => upgrade = true,
+                    "--strict" => strict = true,
+                    "--format" => format = Some(reader.parse_format(false)),
+                    _ => {
+                        eprintln!("Error: Unknown flag '{arg}'");
+                        process::exit(1);
+                    }
+                }
+                reader.idx += 1;
+            }
+            let _vault_lock = lock_vault(&vault_path).unwrap_or_else(|e| {
+                eprintln!("Error: Could not lock vault: {e}");
+                process::exit(1);
+            });
+
+            let repaired_count = if repair || upgrade {
+                repair_vault(&vault_path, upgrade)
+            } else {
+                0
+            };
             let scan = scan_vault(&vault_path);
             let fmt = format.unwrap_or_else(|| default_format(OutputFormat::Plain));
             emit_doctor_report(&vault_path, &scan, repaired_count, fmt);
-
             let error_count = scan
                 .issues
                 .iter()
@@ -598,47 +1104,35 @@ fn main() {
                 reader.idx += 1;
             }
 
-            let filename = resolve_selector(&vault_path, selector).unwrap_or_else(|e| {
-                eprintln!("Error: {e}");
-                process::exit(1);
-            });
-            let path = vault_path.join(&filename);
-            let content = fs::read_to_string(&path).unwrap_or_else(|e| {
-                eprintln!("Error: Could not read file: {e}");
-                process::exit(1);
-            });
+            let actor = actor_from_env();
+            let meta = workflow::execute_mutation(
+                &vault_path,
+                selector,
+                None,
+                workflow::MutationAction::Archive {
+                    actor,
+                    resolution,
+                    note,
+                },
+            )
+            .unwrap_or_else(|error| emit_workflow_error(error));
 
-            let mut issues = Vec::new();
-            if let Some(mut meta) = parse_front_matter_detailed(&filename, &content, &mut issues) {
-                meta.archived_at = Some(chrono::Utc::now().timestamp());
-                meta.resolution = Some(resolution);
-                meta.resolution_note = note;
-
-                if let Err(e) = atomic_write(&path, &render_full_document(&meta)) {
-                    eprintln!("Error: Failed to save archived idea: {e}");
-                    process::exit(1);
+            let fmt = format.unwrap_or_else(|| default_format(OutputFormat::Plain));
+            if fmt == OutputFormat::Json {
+                #[derive(serde::Serialize)]
+                struct ArchiveJson<'a> {
+                    archived: &'a str,
+                    filename: &'a str,
+                    resolution: &'a str,
                 }
-
-                let fmt = format.unwrap_or_else(|| default_format(OutputFormat::Plain));
-                if fmt == OutputFormat::Json {
-                    #[derive(serde::Serialize)]
-                    struct ArchiveJson<'a> {
-                        archived: &'a str,
-                        filename: &'a str,
-                        resolution: &'a str,
-                    }
-                    let res = ArchiveJson {
-                        archived: &meta.id,
-                        filename: &filename,
-                        resolution: resolution.as_str(),
-                    };
-                    println!("{}", serde_json::to_string(&res).unwrap_or_default());
-                } else {
-                    println!("Archived {}  {}", meta.id, filename);
-                }
+                let res = ArchiveJson {
+                    archived: &meta.id,
+                    filename: &meta.filename,
+                    resolution: resolution.as_str(),
+                };
+                println!("{}", serde_json::to_string(&res).unwrap_or_default());
             } else {
-                eprintln!("Error: Invalid front matter in file");
-                process::exit(1);
+                println!("Archived {}  {}", meta.id, meta.filename);
             }
         }
 
@@ -657,45 +1151,29 @@ fn main() {
                 reader.idx += 1;
             }
 
-            let filename = resolve_selector(&vault_path, selector).unwrap_or_else(|e| {
-                eprintln!("Error: {e}");
-                process::exit(1);
-            });
-            let path = vault_path.join(&filename);
-            let content = fs::read_to_string(&path).unwrap_or_else(|e| {
-                eprintln!("Error: Could not read file: {e}");
-                process::exit(1);
-            });
+            let actor = actor_from_env();
+            let meta = workflow::execute_mutation(
+                &vault_path,
+                selector,
+                None,
+                workflow::MutationAction::Unarchive { actor },
+            )
+            .unwrap_or_else(|error| emit_workflow_error(error));
 
-            let mut issues = Vec::new();
-            if let Some(mut meta) = parse_front_matter_detailed(&filename, &content, &mut issues) {
-                meta.archived_at = None;
-                meta.resolution = None;
-                meta.resolution_note = None;
-
-                if let Err(e) = atomic_write(&path, &render_full_document(&meta)) {
-                    eprintln!("Error: Failed to save unarchived idea: {e}");
-                    process::exit(1);
+            let fmt = format.unwrap_or_else(|| default_format(OutputFormat::Plain));
+            if fmt == OutputFormat::Json {
+                #[derive(serde::Serialize)]
+                struct UnarchiveJson<'a> {
+                    unarchived: &'a str,
+                    filename: &'a str,
                 }
-
-                let fmt = format.unwrap_or_else(|| default_format(OutputFormat::Plain));
-                if fmt == OutputFormat::Json {
-                    #[derive(serde::Serialize)]
-                    struct UnarchiveJson<'a> {
-                        unarchived: &'a str,
-                        filename: &'a str,
-                    }
-                    let res = UnarchiveJson {
-                        unarchived: &meta.id,
-                        filename: &filename,
-                    };
-                    println!("{}", serde_json::to_string(&res).unwrap_or_default());
-                } else {
-                    println!("Unarchived {}  {}", meta.id, filename);
-                }
+                let res = UnarchiveJson {
+                    unarchived: &meta.id,
+                    filename: &meta.filename,
+                };
+                println!("{}", serde_json::to_string(&res).unwrap_or_default());
             } else {
-                eprintln!("Error: Invalid front matter in file");
-                process::exit(1);
+                println!("Unarchived {}  {}", meta.id, meta.filename);
             }
         }
 
@@ -773,8 +1251,13 @@ fn main() {
             let original_meta =
                 parse_front_matter_detailed(&filename, &original_content, &mut temp_issues);
             let edited_id = original_meta
-                .map(|m| m.id)
+                .as_ref()
+                .map(|m| m.id.clone())
                 .unwrap_or_else(|| filename.clone());
+            let original_revision = original_meta
+                .as_ref()
+                .map(IdeaMeta::current_revision)
+                .unwrap_or(0);
 
             let temp_edit_file = tempfile::Builder::new()
                 .prefix("pin-edit-")
@@ -801,12 +1284,21 @@ fn main() {
                 });
 
             let edit_path_str = temp_edit_file.path().to_string_lossy().to_string();
-            let mut editor_parts = editor.split_whitespace();
-            let editor_cmd = editor_parts.next().unwrap_or("nano");
-            let mut editor_args: Vec<&str> = editor_parts.collect();
-            editor_args.push(&edit_path_str);
+            let default_editor = if cfg!(target_os = "windows") {
+                "notepad.exe"
+            } else {
+                "nano"
+            };
+            let mut editor_parts = parse_command_line(&editor);
+            let editor_cmd = if editor_parts.is_empty() {
+                default_editor.to_string()
+            } else {
+                editor_parts.remove(0)
+            };
+            let mut editor_args = editor_parts;
+            editor_args.push(edit_path_str);
 
-            let status = Command::new(editor_cmd).args(&editor_args).status();
+            let status = Command::new(&editor_cmd).args(&editor_args).status();
             match status {
                 Ok(s) if s.success() => {}
                 _ => {
@@ -828,12 +1320,94 @@ fn main() {
                 let recovery_filename = format!(".{edited_id}.edit-recovery.tmp");
                 let recovery_path = vault_path.join(&recovery_filename);
                 let _ = fs::write(&recovery_path, &edited_content);
-                let _ = atomic_write(&path, &original_content);
                 eprintln!("Error: Front matter is invalid after editing. Saved recovery to '{recovery_filename}'");
                 process::exit(1);
             }
 
-            if let Err(e) = atomic_write(&path, &edited_content) {
+            let _lock = lock_item(&path).unwrap_or_else(|e| {
+                eprintln!("Error: Could not lock file for editing: {e}");
+                process::exit(1);
+            });
+            let current_content = fs::read_to_string(&path).unwrap_or_else(|e| {
+                eprintln!("Error: Could not re-read file after editing: {e}");
+                process::exit(1);
+            });
+            let mut current_issues = Vec::new();
+            let current_meta =
+                parse_front_matter_detailed(&filename, &current_content, &mut current_issues);
+            let current_revision = current_meta
+                .as_ref()
+                .map(IdeaMeta::current_revision)
+                .unwrap_or(0);
+            if current_content != original_content
+                || current_revision != original_revision
+                || current_meta.is_none()
+            {
+                let recovery_filename = format!(".{edited_id}.edit-recovery.tmp");
+                let recovery_path = vault_path.join(&recovery_filename);
+                let _ = fs::write(&recovery_path, &edited_content);
+                eprintln!(
+                    "Error: File changed while editing. Saved recovery to '{recovery_filename}'"
+                );
+                process::exit(1);
+            }
+
+            let current_meta = current_meta.unwrap();
+            let mut edited_meta = parsed.unwrap();
+            if edited_meta.id != current_meta.id || edited_meta.project != current_meta.project {
+                let recovery_filename = format!(".{edited_id}.edit-recovery.tmp");
+                let recovery_path = vault_path.join(&recovery_filename);
+                let _ = fs::write(&recovery_path, &edited_content);
+                eprintln!(
+                    "Error: Editing cannot change the item ID or project. Saved recovery to '{recovery_filename}'"
+                );
+                process::exit(1);
+            }
+
+            let previous_status = current_meta.current_status();
+            let edited_status = edited_meta.status.unwrap_or(previous_status);
+            if edited_status != previous_status
+                && !workflow::can_transition(previous_status, edited_status)
+            {
+                let recovery_filename = format!(".{edited_id}.edit-recovery.tmp");
+                let recovery_path = vault_path.join(&recovery_filename);
+                let _ = fs::write(&recovery_path, &edited_content);
+                eprintln!(
+                    "Error: Invalid status transition from '{previous_status}' to '{edited_status}'. Saved recovery to '{recovery_filename}'"
+                );
+                process::exit(1);
+            }
+
+            edited_meta.status = Some(previous_status);
+            edited_meta.item_type = edited_meta.item_type.or(current_meta.item_type);
+            edited_meta.revision = Some(current_meta.current_revision());
+            edited_meta.updated_at = current_meta.updated_at;
+            edited_meta.created_by = current_meta.created_by.clone();
+            edited_meta.claimed_by = current_meta.claimed_by.clone();
+            edited_meta.claim_expires_at = current_meta.claim_expires_at;
+            edited_meta.activity = current_meta.activity.clone();
+            let actor = actor_from_env();
+            if edited_status != previous_status {
+                if let Err(error) = workflow::transition(
+                    &mut edited_meta,
+                    edited_status,
+                    &actor,
+                    Some("Status changed while editing".to_string()),
+                ) {
+                    let recovery_filename = format!(".{edited_id}.edit-recovery.tmp");
+                    let recovery_path = vault_path.join(&recovery_filename);
+                    let _ = fs::write(&recovery_path, &edited_content);
+                    eprintln!("Error: {error}. Saved recovery to '{recovery_filename}'");
+                    process::exit(1);
+                }
+            } else {
+                workflow::append_activity(&mut edited_meta, &actor, "edited", None, None, None);
+            }
+            workflow::prepare_v2(&mut edited_meta);
+            edited_meta.revision = Some(current_meta.current_revision().saturating_add(1));
+            edited_meta.updated_at = Some(chrono::Utc::now().timestamp());
+
+            if let Err(e) = atomic_write(&path, &render_full_document(&edited_meta)) {
                 eprintln!("Error: Failed to save edited proposal: {e}");
                 process::exit(1);
             }
@@ -869,6 +1443,10 @@ fn main() {
                 }
                 reader.idx += 1;
             }
+            let _vault_lock = lock_vault(&vault_path).unwrap_or_else(|e| {
+                eprintln!("Error: Could not lock vault: {e}");
+                process::exit(1);
+            });
 
             let filename = resolve_selector(&vault_path, selector).unwrap_or_else(|e| {
                 eprintln!("Error: {e}");
@@ -883,11 +1461,19 @@ fn main() {
                 }
             }
 
-            if let Err(e) = fs::remove_file(&path) {
-                eprintln!("Error: Failed to delete idea: {e}");
-                process::exit(1);
-            }
+            let lock_path = path.with_extension("md.lock");
+            {
+                let _item_lock = lock_item(&path).unwrap_or_else(|e| {
+                    eprintln!("Error: Could not lock item for deletion: {e}");
+                    process::exit(1);
+                });
 
+                if let Err(e) = fs::remove_file(&path) {
+                    eprintln!("Error: Failed to delete idea: {e}");
+                    process::exit(1);
+                }
+            }
+            let _ = fs::remove_file(&lock_path);
             let fmt = format.unwrap_or_else(|| default_format(OutputFormat::Plain));
             if fmt == OutputFormat::Json {
                 #[derive(serde::Serialize)]
@@ -969,10 +1555,10 @@ fn main() {
                     }
                 }
 
-                if let Err(e) = fs::create_dir_all(&vault_path) {
-                    eprintln!("Error: Failed to create vault directory: {e}");
+                let _vault_lock = lock_vault(&vault_path).unwrap_or_else(|e| {
+                    eprintln!("Error: Could not lock vault: {e}");
                     process::exit(1);
-                }
+                });
 
                 let (mut copied, mut skipped) = (0, 0);
                 for (src_path, filename) in valid_entries {
@@ -981,11 +1567,11 @@ fn main() {
                         skipped += 1;
                         continue;
                     }
+                    let _item_lock = lock_item(&dest_path).ok();
                     if fs::copy(&src_path, &dest_path).is_ok() {
                         copied += 1;
                     }
                 }
-
                 let fmt = format.unwrap_or_else(|| default_format(OutputFormat::Plain));
                 if fmt == OutputFormat::Json {
                     #[derive(serde::Serialize)]
@@ -1004,6 +1590,11 @@ fn main() {
                     println!("import: {copied} copied, {skipped} skipped");
                 }
             } else {
+                let _vault_lock = lock_vault(&vault_path).unwrap_or_else(|e| {
+                    eprintln!("Error: Could not lock vault: {e}");
+                    process::exit(1);
+                });
+
                 if let Err(e) = fs::create_dir_all(target_dir) {
                     eprintln!("Error: Failed to create export directory: {e}");
                     process::exit(1);
@@ -1029,7 +1620,6 @@ fn main() {
                         }
                     }
                 }
-
                 let fmt = format.unwrap_or_else(|| default_format(OutputFormat::Plain));
                 if fmt == OutputFormat::Json {
                     #[derive(serde::Serialize)]
@@ -1070,69 +1660,51 @@ fn main() {
 
         "view" | "view-project" => {
             let project_scoped = cmd == "view-project";
-            let mut filter_project = if project_scoped {
-                Some(resolve_project(None))
-            } else {
-                None
-            };
-            let (mut filter_tag, mut filter_kind) = (None, None);
-            let (mut archive_filter, mut port, mut no_open, mut format) =
-                (ArchiveFilter::Active, 0, false, None);
+            let mut flags = FilterFlags::default();
+            if project_scoped {
+                flags.project = Some(resolve_project(None));
+            }
+            let (mut port, mut no_open) = (0, false);
 
             while let Some(arg) = reader.peek() {
-                match arg {
-                    "--archived" => archive_filter = ArchiveFilter::Archived,
-                    "--all" => archive_filter = ArchiveFilter::All,
-                    "--no-open" => no_open = true,
-                    "--project" => {
-                        if project_scoped {
-                            eprintln!("Error: 'view-project' does not accept --project");
-                            process::exit(1);
-                        }
-                        filter_project = Some(reader.next_val("--project").to_string());
-                    }
-                    "--tag" => filter_tag = Some(reader.next_val("--tag").to_string()),
-                    "--kind" => {
-                        let val = reader.next_val("--kind");
-                        filter_kind = Some(val.parse::<Kind>().unwrap_or_else(|_| {
-                            eprintln!("Error: Unknown kind '{val}'");
-                            process::exit(1);
-                        }));
-                    }
-                    "--port" => {
-                        let val = reader.next_val("--port");
-                        port = val.parse::<u16>().unwrap_or_else(|_| {
-                            eprintln!("Error: --port requires an integer port (0-65535)");
-                            process::exit(1);
-                        });
-                    }
-                    "--format" => format = Some(reader.parse_format(false)),
-                    _ => {
-                        eprintln!("Error: Unknown flag '{arg}'");
+                if arg == "--project" && project_scoped {
+                    eprintln!("Error: 'view-project' does not accept --project");
+                    process::exit(1);
+                }
+                if flags.parse_flag(arg, &mut reader, false) {
+                    // handled
+                } else if arg == "--no-open" {
+                    no_open = true;
+                } else if arg == "--port" {
+                    let val = reader.next_val("--port");
+                    port = val.parse::<u16>().unwrap_or_else(|_| {
+                        eprintln!("Error: --port requires an integer port (0-65535)");
                         process::exit(1);
-                    }
+                    });
+                } else {
+                    eprintln!("Error: Unknown flag '{arg}'");
+                    process::exit(1);
                 }
                 reader.idx += 1;
             }
 
-            if !io::stdout().is_terminal() && !no_open && format.is_none() {
+            if !io::stdout().is_terminal() && !no_open && flags.format.is_none() {
                 eprintln!("Error: 'view' must be run in an interactive terminal, or with --no-open and an explicit format");
                 process::exit(1);
             }
 
-            let scope_label = filter_project.as_deref().unwrap_or("all");
-            let ideas = collect_ideas_filtered(
-                &vault_path,
-                filter_project.as_deref(),
-                filter_tag.as_deref(),
-                filter_kind,
-                None,
-                archive_filter,
-            )
-            .unwrap_or_default();
-
-            let snapshot = create_snapshot(&ideas, scope_label, archive_filter);
-            let fmt = format.unwrap_or(OutputFormat::Plain);
+            let scope_label = flags.project.as_deref().unwrap_or("all");
+            let snapshot = create_snapshot(ViewConfig {
+                vault_path: vault_path.clone(),
+                scope_label: scope_label.to_string(),
+                project: flags.project,
+                tag: flags.tag,
+                kind: flags.kind,
+                item_type: flags.item_type,
+                status: flags.status,
+                archive_filter: flags.archive_filter,
+            });
+            let fmt = flags.format.unwrap_or(OutputFormat::Plain);
 
             if let Err(e) = serve_view(snapshot, port, no_open, fmt) {
                 eprintln!("Error: Failed to serve view: {e}");
@@ -1145,5 +1717,124 @@ fn main() {
             print_usage();
             process::exit(1);
         }
+    }
+}
+
+pub fn parse_command_line(input: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut in_single_quote = false;
+    let mut in_double_quote = false;
+    let mut in_token = false;
+
+    let chars: Vec<char> = input.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if in_single_quote {
+            if c == '\'' {
+                in_single_quote = false;
+            } else {
+                current.push(c);
+            }
+            in_token = true;
+        } else if in_double_quote {
+            if c == '"' {
+                in_double_quote = false;
+            } else if c == '\\' {
+                if i + 1 < chars.len() && (chars[i + 1] == '"' || chars[i + 1] == '\\') {
+                    i += 1;
+                    current.push(chars[i]);
+                } else {
+                    current.push('\\');
+                }
+            } else {
+                current.push(c);
+            }
+            in_token = true;
+        } else if c == '\'' {
+            in_single_quote = true;
+            in_token = true;
+        } else if c == '"' {
+            in_double_quote = true;
+            in_token = true;
+        } else if c == '\\' {
+            if i + 1 < chars.len() {
+                i += 1;
+                current.push(chars[i]);
+            } else {
+                current.push('\\');
+            }
+            in_token = true;
+        } else if c.is_whitespace() {
+            if in_token {
+                tokens.push(current);
+                current = String::new();
+                in_token = false;
+            }
+        } else {
+            current.push(c);
+            in_token = true;
+        }
+        i += 1;
+    }
+
+    if in_token {
+        tokens.push(current);
+    }
+
+    tokens
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_command_line_simple() {
+        assert_eq!(parse_command_line("nano"), vec!["nano"]);
+        assert_eq!(parse_command_line("code --wait"), vec!["code", "--wait"]);
+    }
+
+    #[test]
+    fn test_parse_command_line_quoted_spaces() {
+        assert_eq!(
+            parse_command_line(r#""/path with spaces/editor" --wait"#),
+            vec!["/path with spaces/editor", "--wait"]
+        );
+        assert_eq!(
+            parse_command_line(r#"'/path with spaces/editor' --wait"#),
+            vec!["/path with spaces/editor", "--wait"]
+        );
+    }
+
+    #[test]
+    fn test_parse_command_line_windows_paths() {
+        assert_eq!(
+            parse_command_line(r#""C:\Program Files\Editor\editor.exe" --wait"#),
+            vec![r#"C:\Program Files\Editor\editor.exe"#, "--wait"]
+        );
+        assert_eq!(
+            parse_command_line(r#""C:\\Program Files\\Editor\\editor.exe" --wait"#),
+            vec![r#"C:\Program Files\Editor\editor.exe"#, "--wait"]
+        );
+        assert_eq!(
+            parse_command_line(r#"'C:\Program Files\Editor\editor.exe' --wait"#),
+            vec![r#"C:\Program Files\Editor\editor.exe"#, "--wait"]
+        );
+    }
+
+    #[test]
+    fn test_parse_command_line_escaped_spaces() {
+        assert_eq!(
+            parse_command_line(r#"path\ with\ spaces --wait"#),
+            vec!["path with spaces", "--wait"]
+        );
+    }
+
+    #[test]
+    fn test_parse_command_line_empty_and_whitespace() {
+        assert_eq!(parse_command_line(""), Vec::<String>::new());
+        assert_eq!(parse_command_line("   "), Vec::<String>::new());
     }
 }

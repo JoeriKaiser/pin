@@ -18,8 +18,10 @@
 </header>
 
 <div id="filters" class="filters" hidden>
-  <label>Kind<select id="kind-filter"><option value="">Any kind</option></select></label>
-  <label>Priority<select id="priority-filter"><option value="">Any priority</option></select></label>
+ <label>Kind<select id="kind-filter"><option value="">Any kind</option></select></label>
+   <label>Type<select id="type-filter"><option value="">Any type</option></select></label>
+   <label>Status<select id="status-filter"><option value="">Any status</option></select></label>
+   <label>Priority<select id="priority-filter"><option value="">Any priority</option></select></label>
   <label id="project-wrap" hidden>Project<input id="project-filter" list="projects" placeholder="All projects" autocomplete="off"><datalist id="projects"></datalist></label>
   <button id="clear-filters" class="text-button" type="button">Clear</button>
 </div>
@@ -37,19 +39,48 @@
       <header class="proposal-header">
         <p id="proposal-context" class="proposal-context"></p>
         <h1 id="proposal-title"></h1>
-        <div id="proposal-summary" class="proposal-summary"></div>
+       <div id="proposal-summary" class="proposal-summary"></div>
+        <div id="proposal-actions" class="proposal-actions" hidden>
+          <label>Actor<input id="actor" type="text" value="human:viewer" autocomplete="off" readonly></label>
+          <div class="action-row">
+            <button id="claim" class="control" type="button">Claim</button>
+            <button id="release" class="control" type="button">Release</button>
+            <select id="status-action" aria-label="New status">
+              <option value="">Change status</option>
+              <option value="captured">Captured</option>
+              <option value="planned">Planned</option>
+              <option value="in_progress">In progress</option>
+              <option value="blocked">Blocked</option>
+              <option value="review">Review</option>
+              <option value="closed">Closed</option>
+              <option value="cancelled">Cancelled</option>
+            </select>
+            <button id="apply-status" class="control" type="button">Apply</button>
+          </div>
+          <label>Progress<textarea id="handoff-progress" rows="2"></textarea></label>
+          <label>Next action<textarea id="handoff-next" rows="2"></textarea></label>
+          <label>Blocker<textarea id="handoff-blocker" rows="2"></textarea></label>
+          <button id="save-handoff" class="control" type="button">Save handoff</button>
+          <label>Completion evidence<textarea id="completion-evidence" rows="2"></textarea></label>
+          <button id="complete" class="control" type="button">Mark done</button>
+          <p id="action-message" class="action-message" role="status" aria-live="polite"></p>
+        </div>
         <details id="proposal-more" class="proposal-more">
           <summary>More details</summary>
           <dl id="proposal-meta"></dl>
         </details>
         <div id="resolution" class="resolution" hidden></div>
-      </header>
-      <div id="proposal-body" class="prose"></div>
-    </article>
+       </header>
+       <div id="proposal-body" class="prose"></div>
+       <section id="activity" class="activity" aria-labelledby="activity-title">
+         <h2 id="activity-title">Activity</h2>
+         <ol id="activity-list"></ol>
+       </section>
+     </article>
   </section>
 </main>
 
-<footer><span id="snapshot"></span><span>Read-only local snapshot</span></footer>
+<footer><span id="snapshot"></span><span>Local work view</span></footer>
 <script src="marked.min.js"></script>
 <script src="purify.min.js"></script>
 <script src="app.js"></script>

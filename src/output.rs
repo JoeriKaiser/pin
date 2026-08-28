@@ -1,4 +1,4 @@
-use crate::model::{ArchiveFilter, IdeaMeta, Kind, OutputFormat};
+use crate::model::{ActivityEvent, ArchiveFilter, Handoff, IdeaMeta, Kind, OutputFormat};
 use chrono::DateTime;
 use serde::Serialize;
 use std::io::IsTerminal;
@@ -9,6 +9,9 @@ pub struct JsonIdeaOutput<'a> {
     pub filename: &'a str,
     pub project: &'a str,
     pub kind: &'a str,
+    #[serde(rename = "type")]
+    pub item_type: &'a str,
+    pub status: &'a str,
     pub title: &'a str,
     pub timestamp: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -16,6 +19,23 @@ pub struct JsonIdeaOutput<'a> {
     pub tags: Vec<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub priority: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<i64>,
+    pub revision: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_by: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub claimed_by: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub claim_expires_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<&'a str>,
+    pub depends_on: Vec<&'a str>,
+    pub related: Vec<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub handoff: Option<&'a Handoff>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub activity: Option<&'a [ActivityEvent]>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub archived_at: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -44,11 +64,23 @@ impl<'a> From<&'a IdeaMeta> for JsonIdeaOutput<'a> {
             filename: &meta.filename,
             project: &meta.project,
             kind: meta.kind.as_str(),
+            item_type: meta.work_type().as_str(),
+            status: meta.current_status().as_str(),
             title: &meta.title,
             timestamp: meta.timestamp,
             created_at_ns: meta.created_at_ns,
             tags: tag_slices,
             priority: meta.priority.map(|p| p.as_str()),
+            updated_at: meta.updated_at,
+            revision: meta.current_revision(),
+            created_by: meta.created_by.as_deref(),
+            claimed_by: meta.claimed_by.as_deref(),
+            claim_expires_at: meta.claim_expires_at,
+            parent_id: meta.parent_id.as_deref(),
+            depends_on: meta.depends_on.iter().map(String::as_str).collect(),
+            related: meta.related.iter().map(String::as_str).collect(),
+            handoff: meta.handoff.as_ref(),
+            activity: (!meta.activity.is_empty()).then_some(meta.activity.as_slice()),
             archived_at: meta.archived_at,
             resolution: meta.resolution.map(|r| r.as_str()),
             resolution_note: meta.resolution_note.as_deref(),
@@ -93,6 +125,7 @@ pub fn emit_ideas(ideas: &[IdeaMeta], format: OutputFormat) {
 
 pub fn emit_idea_plain(meta: &IdeaMeta) {
     let mut line = format!("{}  {:<11}  {}", meta.id, meta.kind.as_str(), meta.title);
+    line.push_str(&format!("  [{}]", meta.current_status().as_str()));
     if let Some(tags) = &meta.tags {
         if !tags.trim().is_empty() {
             line.push_str(&format!("  [{tags}]"));
@@ -119,14 +152,37 @@ pub fn emit_single_idea(meta: &IdeaMeta, format: OutputFormat) {
     }
 }
 
+pub fn emit_mutation(meta: &IdeaMeta, action: &str, format: OutputFormat) {
+    match format {
+        OutputFormat::Json => {
+            let json_item = JsonIdeaOutput::from(meta);
+            println!(
+                "{}",
+                serde_json::json!({
+                    "action": action,
+                    "item": json_item,
+                })
+            );
+        }
+        OutputFormat::Plain | OutputFormat::Table => {
+            println!(
+                "{action} {}  {}  ({})",
+                meta.id,
+                meta.title,
+                meta.current_status().as_str()
+            );
+        }
+    }
+}
+
 fn emit_table(ideas: &[IdeaMeta]) {
     if ideas.is_empty() {
         println!("No ideas found.");
         return;
     }
 
-    println!("DATE        PROJECT           KIND         ID            TITLE");
-    println!("----------  ----------------  -----------  ------------  ----------------------------------------");
+    println!("DATE        PROJECT           STATUS       KIND         ID            TITLE");
+    println!("----------  ----------------  -----------  -----------  ------------  ----------------------------------------");
 
     for idea in ideas {
         let date_str = if idea.timestamp > 0 {
@@ -144,12 +200,13 @@ fn emit_table(ideas: &[IdeaMeta]) {
         };
 
         println!(
-            "{date_str}  {:<16}  {:<11}  {:<12}  {display_title}{ellipsis}",
+            "{date_str}  {:<16}  {:<11}  {:<11}  {:<12}  {display_title}{ellipsis}",
             if idea.project.len() > 16 {
                 &idea.project[..16]
             } else {
                 &idea.project
             },
+            idea.current_status().as_str(),
             idea.kind.as_str(),
             idea.id,
         );
@@ -205,6 +262,9 @@ pub fn emit_context(
                     println!("\n{}:", k.label());
                     for idea in matching {
                         let mut line = format!("- [{}] {}", idea.id, idea.title);
+                        if idea.work_type() != crate::model::WorkType::Idea {
+                            line.push_str(&format!(" <{}>", idea.work_type().as_str()));
+                        }
                         if let Some(tags) = &idea.tags {
                             if !tags.trim().is_empty() {
                                 line.push_str(&format!(" [{tags}]"));
@@ -213,6 +273,17 @@ pub fn emit_context(
                         if let Some(priority) = idea.priority {
                             line.push_str(&format!(" ({})", priority.as_str()));
                         }
+                        if let Some(claimed_by) = &idea.claimed_by {
+                            line.push_str(&format!(" {{{claimed_by}}}"));
+                        }
+                        if let Some(next) = idea
+                            .handoff
+                            .as_ref()
+                            .and_then(|handoff| handoff.next.as_deref())
+                        {
+                            line.push_str(&format!(" next: {next}"));
+                        }
+                        line.push_str(&format!(" [{}]", idea.current_status().as_str()));
                         println!("{line}");
                     }
                 }
@@ -220,6 +291,9 @@ pub fn emit_context(
                 for idea in bounded_ideas {
                     let mut line =
                         format!("- [{}] [{}] {}", idea.id, idea.kind.as_str(), idea.title);
+                    if idea.work_type() != crate::model::WorkType::Idea {
+                        line.push_str(&format!(" <{}>", idea.work_type().as_str()));
+                    }
                     if let Some(tags) = &idea.tags {
                         if !tags.trim().is_empty() {
                             line.push_str(&format!(" [{tags}]"));
@@ -228,6 +302,17 @@ pub fn emit_context(
                     if let Some(priority) = idea.priority {
                         line.push_str(&format!(" ({})", priority.as_str()));
                     }
+                    if let Some(claimed_by) = &idea.claimed_by {
+                        line.push_str(&format!(" {{{claimed_by}}}"));
+                    }
+                    if let Some(next) = idea
+                        .handoff
+                        .as_ref()
+                        .and_then(|handoff| handoff.next.as_deref())
+                    {
+                        line.push_str(&format!(" next: {next}"));
+                    }
+                    line.push_str(&format!(" [{}]", idea.current_status().as_str()));
                     println!("{line}");
                 }
             }
