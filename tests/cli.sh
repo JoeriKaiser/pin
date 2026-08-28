@@ -408,6 +408,7 @@ assert_contains "$(cat "$curl_headers")" "Cache-Control: no-store"
 curl_html="$TMP/index.html"
 curl -s -S "$url" >"$curl_html"
 assert_contains "$(cat "$curl_html")" '<title>pin</title>'
+assert_contains "$(cat "$curl_html")" 'data-base="/'
 assert_contains "$(cat "$curl_html")" 'id="filter-toggle"'
 assert_contains "$(cat "$curl_html")" 'id="proposal-more"'
 assert_contains "$(cat "$curl_html")" 'id="proposal-actions"'

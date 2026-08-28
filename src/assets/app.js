@@ -1,7 +1,12 @@
 (function () {
   'use strict';
 
-  var BASE = document.documentElement.dataset.base || '';
+  var BASE = (function () {
+    var raw = document.documentElement.dataset.base;
+    if (raw) return raw.replace(/\/+$/, '');
+    var path = location.pathname || '';
+    return path.replace(/\/(index\.html)?$/, '').replace(/\/+$/, '');
+  })();
   var PURIFY_CONFIG = {
     ALLOWED_TAGS: ['p','br','strong','em','b','i','code','pre','blockquote','h1','h2','h3','h4','h5','h6','ul','ol','li','a','hr','table','thead','tbody','tr','th','td','del','ins','sub','sup'],
     ALLOWED_ATTR: ['href','title','class'],

@@ -430,7 +430,13 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>) {
     }
 
     let (content_type, body) = match subpath {
-        "" | "index.html" => ("text/html; charset=utf-8", INDEX_HTML.as_bytes().to_vec()),
+        "" | "index.html" => {
+            let html = INDEX_HTML.replace(
+                "data-base=\"\"",
+                &format!("data-base=\"/{}\"", snapshot.token),
+            );
+            ("text/html; charset=utf-8", html.into_bytes())
+        }
         "app.css" => ("text/css; charset=utf-8", APP_CSS.as_bytes().to_vec()),
         "app.js" => ("text/javascript; charset=utf-8", APP_JS.as_bytes().to_vec()),
         "marked.min.js" => (
