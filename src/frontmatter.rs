@@ -1,4 +1,6 @@
-use crate::model::{IdeaMeta, Kind, Priority, Resolution};
+use crate::model::{
+    ActivityEvent, Handoff, IdeaMeta, Kind, Priority, Resolution, Status, WorkType,
+};
 use serde_yaml::{Mapping, Value};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -123,11 +125,23 @@ pub fn parse_front_matter_detailed(
     let mut id: Option<String> = None;
     let mut project: Option<String> = None;
     let mut kind: Option<Kind> = None;
+    let mut item_type: Option<WorkType> = None;
+    let mut status: Option<Status> = None;
     let mut timestamp: Option<i64> = None;
     let mut created_at_ns: Option<i64> = None;
+    let mut updated_at: Option<i64> = None;
+    let mut revision: Option<u64> = None;
+    let mut created_by: Option<String> = None;
+    let mut claimed_by: Option<String> = None;
+    let mut claim_expires_at: Option<i64> = None;
+    let mut parent_id: Option<String> = None;
+    let mut depends_on: Vec<String> = Vec::new();
+    let mut related: Vec<String> = Vec::new();
     let mut title: Option<String> = None;
     let mut tags: Option<String> = None;
     let mut priority: Option<Priority> = None;
+    let mut handoff: Option<Handoff> = None;
+    let mut activity: Vec<ActivityEvent> = Vec::new();
     let mut archived_at: Option<i64> = None;
     let mut resolution: Option<Resolution> = None;
     let mut resolution_note: Option<String> = None;
@@ -142,12 +156,12 @@ pub fn parse_front_matter_detailed(
             "schema" => {
                 if let Some(s) = v.as_u64() {
                     schema = Some(s as u32);
-                    if s != 1 {
+                    if s != 1 && s != 2 {
                         issues.push(Issue {
                             severity: Severity::Warning,
                             code: "invalid_schema".to_string(),
                             filename: filename.to_string(),
-                            message: format!("Unrecognized schema version '{s}' (expected 1)"),
+                            message: format!("Unrecognized schema version '{s}' (expected 1 or 2)"),
                             field: Some("schema".to_string()),
                         });
                     }
@@ -156,7 +170,7 @@ pub fn parse_front_matter_detailed(
                         severity: Severity::Warning,
                         code: "invalid_schema".to_string(),
                         filename: filename.to_string(),
-                        message: "Invalid schema value (expected integer 1)".to_string(),
+                        message: "Invalid schema value (expected integer 1 or 2)".to_string(),
                         field: Some("schema".to_string()),
                     });
                 }
@@ -218,7 +232,9 @@ pub fn parse_front_matter_detailed(
                             severity: Severity::Warning,
                             code: "invalid_kind".to_string(),
                             filename: filename.to_string(),
-                            message: format!("Invalid kind '{s}' (expected technical, product, business, or project)"),
+                            message: format!(
+                                "Invalid kind '{s}' (expected technical, product, business, or project)"
+                            ),
                             field: Some("kind".to_string()),
                         });
                     }
@@ -230,6 +246,38 @@ pub fn parse_front_matter_detailed(
                         message: "Kind must be a string".to_string(),
                         field: Some("kind".to_string()),
                     });
+                }
+            }
+            "type" => {
+                if let Some(s) = v.as_str() {
+                    if let Ok(t) = s.parse::<WorkType>() {
+                        item_type = Some(t);
+                    } else {
+                        issues.push(Issue {
+                            severity: Severity::Warning,
+                            code: "invalid_type".to_string(),
+                            filename: filename.to_string(),
+                            message: format!(
+                                "Invalid type '{s}' (expected task, bug, idea, or decision)"
+                            ),
+                            field: Some("type".to_string()),
+                        });
+                    }
+                }
+            }
+            "status" => {
+                if let Some(s) = v.as_str() {
+                    if let Ok(st) = s.parse::<Status>() {
+                        status = Some(st);
+                    } else {
+                        issues.push(Issue {
+                            severity: Severity::Warning,
+                            code: "invalid_status".to_string(),
+                            filename: filename.to_string(),
+                            message: format!("Invalid status '{s}'"),
+                            field: Some("status".to_string()),
+                        });
+                    }
                 }
             }
             "timestamp" => {
@@ -248,6 +296,64 @@ pub fn parse_front_matter_detailed(
             "created_at_ns" => {
                 if let Some(t) = v.as_i64() {
                     created_at_ns = Some(t);
+                }
+            }
+            "updated_at" => {
+                if let Some(t) = v.as_i64() {
+                    updated_at = Some(t);
+                }
+            }
+            "revision" => {
+                if let Some(r) = v.as_u64() {
+                    revision = Some(r);
+                }
+            }
+            "created_by" => {
+                if let Some(s) = v.as_str() {
+                    created_by = Some(s.to_string());
+                }
+            }
+            "claimed_by" => {
+                if let Some(s) = v.as_str() {
+                    claimed_by = Some(s.to_string());
+                }
+            }
+            "claim_expires_at" => {
+                if let Some(t) = v.as_i64() {
+                    claim_expires_at = Some(t);
+                }
+            }
+            "parent_id" => {
+                if let Some(s) = v.as_str() {
+                    parent_id = Some(s.to_string());
+                }
+            }
+            "depends_on" => {
+                if let Some(seq) = v.as_sequence() {
+                    depends_on = seq
+                        .iter()
+                        .filter_map(|item| item.as_str().map(|s| s.trim().to_string()))
+                        .filter(|s| !s.is_empty())
+                        .collect();
+                } else if let Some(s) = v.as_str() {
+                    let trimmed = s.trim();
+                    if !trimmed.is_empty() {
+                        depends_on = vec![trimmed.to_string()];
+                    }
+                }
+            }
+            "related" => {
+                if let Some(seq) = v.as_sequence() {
+                    related = seq
+                        .iter()
+                        .filter_map(|item| item.as_str().map(|s| s.trim().to_string()))
+                        .filter(|s| !s.is_empty())
+                        .collect();
+                } else if let Some(s) = v.as_str() {
+                    let trimmed = s.trim();
+                    if !trimmed.is_empty() {
+                        related = vec![trimmed.to_string()];
+                    }
                 }
             }
             "title" => {
@@ -293,6 +399,16 @@ pub fn parse_front_matter_detailed(
                         message: "Priority must be a string".to_string(),
                         field: Some("priority".to_string()),
                     });
+                }
+            }
+            "handoff" => {
+                if let Ok(h) = serde_yaml::from_value::<Handoff>(v.clone()) {
+                    handoff = Some(h);
+                }
+            }
+            "activity" => {
+                if let Ok(events) = serde_yaml::from_value::<Vec<ActivityEvent>>(v.clone()) {
+                    activity = events;
                 }
             }
             "archived_at" => {
@@ -345,7 +461,7 @@ pub fn parse_front_matter_detailed(
             severity: Severity::Warning,
             code: "missing_schema".to_string(),
             filename: filename.to_string(),
-            message: "Missing schema version (recommended: 1)".to_string(),
+            message: "Missing schema version (recommended: 2)".to_string(),
             field: Some("schema".to_string()),
         });
     }
@@ -403,11 +519,23 @@ pub fn parse_front_matter_detailed(
         id: final_id,
         project: final_project,
         kind: final_kind,
+        item_type,
+        status,
         timestamp: final_timestamp,
         created_at_ns,
         title: final_title,
         tags,
         priority,
+        updated_at,
+        revision,
+        created_by,
+        claimed_by,
+        claim_expires_at,
+        parent_id,
+        depends_on,
+        related,
+        handoff,
+        activity,
         archived_at,
         resolution,
         resolution_note,
@@ -444,9 +572,45 @@ pub fn serialize_front_matter(meta: &IdeaMeta) -> String {
         escape_yaml_string(&meta.project)
     ));
     out.push_str(&format!("kind: \"{}\"\n", meta.kind.as_str()));
+    if let Some(t) = meta.item_type {
+        out.push_str(&format!("type: \"{}\"\n", t.as_str()));
+    }
+    if let Some(s) = meta.status {
+        out.push_str(&format!("status: \"{}\"\n", s.as_str()));
+    }
     out.push_str(&format!("timestamp: {}\n", meta.timestamp));
     if let Some(ns) = meta.created_at_ns {
         out.push_str(&format!("created_at_ns: {ns}\n"));
+    }
+    if let Some(up) = meta.updated_at {
+        out.push_str(&format!("updated_at: {up}\n"));
+    }
+    if let Some(rev) = meta.revision {
+        out.push_str(&format!("revision: {rev}\n"));
+    }
+    if let Some(cb) = &meta.created_by {
+        out.push_str(&format!("created_by: \"{}\"\n", escape_yaml_string(cb)));
+    }
+    if let Some(cl) = &meta.claimed_by {
+        out.push_str(&format!("claimed_by: \"{}\"\n", escape_yaml_string(cl)));
+    }
+    if let Some(exp) = meta.claim_expires_at {
+        out.push_str(&format!("claim_expires_at: {exp}\n"));
+    }
+    if let Some(pid) = &meta.parent_id {
+        out.push_str(&format!("parent_id: \"{}\"\n", escape_yaml_string(pid)));
+    }
+    if !meta.depends_on.is_empty() {
+        out.push_str("depends_on:\n");
+        for dep in &meta.depends_on {
+            out.push_str(&format!("  - \"{}\"\n", escape_yaml_string(dep)));
+        }
+    }
+    if !meta.related.is_empty() {
+        out.push_str("related:\n");
+        for rel in &meta.related {
+            out.push_str(&format!("  - \"{}\"\n", escape_yaml_string(rel)));
+        }
     }
     out.push_str(&format!("title: \"{}\"\n", escape_yaml_string(&meta.title)));
     if let Some(tags) = &meta.tags {
@@ -456,6 +620,50 @@ pub fn serialize_front_matter(meta: &IdeaMeta) -> String {
     }
     if let Some(priority) = meta.priority {
         out.push_str(&format!("priority: \"{}\"\n", priority.as_str()));
+    }
+    if let Some(h) = &meta.handoff {
+        let has_any = h.progress.is_some()
+            || h.next.is_some()
+            || h.blocker.is_some()
+            || h.verification.is_some();
+        if has_any {
+            out.push_str("handoff:\n");
+            if let Some(p) = &h.progress {
+                out.push_str(&format!("  progress: \"{}\"\n", escape_yaml_string(p)));
+            }
+            if let Some(n) = &h.next {
+                out.push_str(&format!("  next: \"{}\"\n", escape_yaml_string(n)));
+            }
+            if let Some(b) = &h.blocker {
+                out.push_str(&format!("  blocker: \"{}\"\n", escape_yaml_string(b)));
+            }
+            if let Some(v) = &h.verification {
+                out.push_str(&format!("  verification: \"{}\"\n", escape_yaml_string(v)));
+            }
+        }
+    }
+    if !meta.activity.is_empty() {
+        out.push_str("activity:\n");
+        for ev in &meta.activity {
+            out.push_str(&format!("  - at: {}\n", ev.at));
+            out.push_str(&format!(
+                "    actor: \"{}\"\n",
+                escape_yaml_string(&ev.actor)
+            ));
+            out.push_str(&format!(
+                "    action: \"{}\"\n",
+                escape_yaml_string(&ev.action)
+            ));
+            if let Some(from) = ev.from {
+                out.push_str(&format!("    from: \"{}\"\n", from.as_str()));
+            }
+            if let Some(to) = ev.to {
+                out.push_str(&format!("    to: \"{}\"\n", to.as_str()));
+            }
+            if let Some(note) = &ev.note {
+                out.push_str(&format!("    note: \"{}\"\n", escape_yaml_string(note)));
+            }
+        }
     }
     if let Some(archived_at) = meta.archived_at {
         out.push_str(&format!("archived_at: {archived_at}\n"));
@@ -481,11 +689,23 @@ pub fn serialize_front_matter(meta: &IdeaMeta) -> String {
                     | "id"
                     | "project"
                     | "kind"
+                    | "type"
+                    | "status"
                     | "timestamp"
                     | "created_at_ns"
+                    | "updated_at"
+                    | "revision"
+                    | "created_by"
+                    | "claimed_by"
+                    | "claim_expires_at"
+                    | "parent_id"
+                    | "depends_on"
+                    | "related"
                     | "title"
                     | "tags"
                     | "priority"
+                    | "handoff"
+                    | "activity"
                     | "archived_at"
                     | "resolution"
                     | "resolution_note"
@@ -597,5 +817,66 @@ Body details.
         let mut issues = Vec::new();
         let meta = parse_front_matter_detailed("test.md", content, &mut issues).unwrap();
         assert_eq!(meta.title, "Automatic Title from Heading");
+    }
+
+    #[test]
+    fn test_schema_2_roundtrip_with_work_item_fields() {
+        let content = r#"---
+schema: 2
+id: "0123456789ab"
+project: "test"
+kind: "technical"
+type: "task"
+status: "in_progress"
+timestamp: 1700000000
+updated_at: 1700000100
+revision: 3
+created_by: "human:joeri"
+claimed_by: "agent:worker1"
+claim_expires_at: 1700003600
+depends_on:
+  - "dep012345678"
+title: "Implement feature"
+handoff:
+  progress: "Step 1 done"
+  next: "Run tests"
+activity:
+  - at: 1700000000
+    actor: "agent:worker1"
+    action: "claimed"
+    from: "planned"
+    to: "in_progress"
+---
+# Implement feature
+
+Work details here.
+"#;
+        let mut issues = Vec::new();
+        let meta =
+            parse_front_matter_detailed("0123456789ab.md", content, &mut issues).unwrap();
+        assert_eq!(meta.schema, Some(2));
+        assert_eq!(meta.item_type, Some(WorkType::Task));
+        assert_eq!(meta.status, Some(Status::InProgress));
+        assert_eq!(meta.revision, Some(3));
+        assert_eq!(meta.claimed_by.as_deref(), Some("agent:worker1"));
+        assert_eq!(meta.depends_on, vec!["dep012345678"]);
+        assert_eq!(
+            meta.handoff
+                .as_ref()
+                .and_then(|h| h.progress.as_deref()),
+            Some("Step 1 done")
+        );
+        assert_eq!(meta.activity.len(), 1);
+        assert_eq!(meta.activity[0].action, "claimed");
+
+        let rendered = render_full_document(&meta);
+        assert!(rendered.contains("schema: 2"));
+        assert!(rendered.contains("type: \"task\""));
+        assert!(rendered.contains("status: \"in_progress\""));
+        assert!(rendered.contains("revision: 3"));
+        assert!(rendered.contains("claimed_by: \"agent:worker1\""));
+        assert!(rendered.contains("dep012345678"));
+        assert!(rendered.contains("progress: \"Step 1 done\""));
+        assert!(rendered.contains("Work details here."));
     }
 }

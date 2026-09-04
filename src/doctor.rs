@@ -158,7 +158,7 @@ pub fn repair_vault(vault_path: &Path) -> usize {
             if let Some(mut meta) = parse_front_matter_detailed(&filename, &content, &mut issues) {
                 let mut needs_repair = false;
 
-                if meta.schema != Some(1) {
+                if meta.schema != Some(1) && meta.schema != Some(2) {
                     meta.schema = Some(1);
                     needs_repair = true;
                 }
@@ -181,6 +181,74 @@ pub fn repair_vault(vault_path: &Path) -> usize {
     }
 
     repaired_count
+}
+
+pub fn upgrade_vault(vault_path: &Path) -> usize {
+    if !vault_path.is_dir() {
+        return 0;
+    }
+
+    let mut upgraded_count = 0;
+    let entries = match fs::read_dir(vault_path) {
+        Ok(e) => e,
+        Err(_) => return 0,
+    };
+
+    let mut paths: Vec<_> = entries.flatten().map(|e| e.path()).collect();
+    paths.sort();
+
+    for path in paths {
+        if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("md") {
+            let filename = path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
+            if filename.starts_with('.') {
+                continue;
+            }
+            let content = match fs::read_to_string(&path) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+
+            let mut issues = Vec::new();
+            if let Some(mut meta) = parse_front_matter_detailed(&filename, &content, &mut issues) {
+                let mut needs_upgrade = false;
+
+                if meta.schema != Some(2) {
+                    meta.schema = Some(2);
+                    needs_upgrade = true;
+                }
+
+                if meta.status.is_none() {
+                    meta.status = Some(crate::model::Status::Created);
+                    needs_upgrade = true;
+                }
+
+                if meta.revision.is_none() {
+                    meta.revision = Some(1);
+                    needs_upgrade = true;
+                }
+
+                let is_valid_hex_id =
+                    meta.id.len() == 12 && meta.id.chars().all(|c| c.is_ascii_hexdigit());
+                if !is_valid_hex_id || issues.iter().any(|i| i.code == "missing_id") {
+                    meta.id = derive_deterministic_id(&filename);
+                    needs_upgrade = true;
+                }
+
+                if needs_upgrade {
+                    let new_doc = render_full_document(&meta);
+                    if atomic_write(&path, &new_doc).is_ok() {
+                        upgraded_count += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    upgraded_count
 }
 
 pub fn emit_doctor_report(

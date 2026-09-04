@@ -10,7 +10,7 @@
 <a class="skip" href="#reader">Skip to proposal</a>
 <header class="topbar">
   <div class="identity"><strong>pin</strong><span id="scope"></span></div>
-  <label class="search"><span class="visually-hidden">Search proposals</span><input id="search" type="search" placeholder="Search proposals" autocomplete="off" spellcheck="false"><kbd>/</kbd></label>
+  <label class="search"><span class="visually-hidden">Search items</span><input id="search" type="search" placeholder="Search items" autocomplete="off" spellcheck="false"><kbd>/</kbd></label>
   <div class="topbar-actions">
     <button id="filter-toggle" class="control" type="button" aria-expanded="false" aria-controls="filters">Filters</button>
     <span id="count" class="count" aria-live="polite">Loading…</span>
@@ -18,6 +18,8 @@
 </header>
 
 <div id="filters" class="filters" hidden>
+  <label>Status<select id="status-filter"><option value="">Any status</option></select></label>
+  <label>Type<select id="type-filter"><option value="">Any type</option></select></label>
   <label>Kind<select id="kind-filter"><option value="">Any kind</option></select></label>
   <label>Priority<select id="priority-filter"><option value="">Any priority</option></select></label>
   <label id="project-wrap" hidden>Project<input id="project-filter" list="projects" placeholder="All projects" autocomplete="off"><datalist id="projects"></datalist></label>
@@ -25,19 +27,21 @@
 </div>
 
 <main class="workspace">
-  <section id="index" class="index" aria-label="Proposals">
+  <section id="index" class="index" aria-label="Work items">
     <div id="list-empty" class="empty" hidden></div>
     <ul id="list" class="proposal-list"></ul>
   </section>
 
   <section id="reader" class="reader" tabindex="-1" aria-labelledby="proposal-title">
-    <button id="back" class="back control" type="button">← Proposals</button>
-    <div id="detail-empty" class="empty reader-empty"><p>Select a proposal to read it.</p></div>
+    <button id="back" class="back control" type="button">← Work items</button>
+    <div id="detail-empty" class="empty reader-empty"><p>Select an item to view it.</p></div>
     <article id="proposal" hidden>
       <header class="proposal-header">
         <p id="proposal-context" class="proposal-context"></p>
         <h1 id="proposal-title"></h1>
         <div id="proposal-summary" class="proposal-summary"></div>
+        <div id="handoff-card" class="handoff-card" hidden></div>
+        <div id="proposal-actions" class="proposal-actions" hidden></div>
         <details id="proposal-more" class="proposal-more">
           <summary>More details</summary>
           <dl id="proposal-meta"></dl>
@@ -45,11 +49,15 @@
         <div id="resolution" class="resolution" hidden></div>
       </header>
       <div id="proposal-body" class="prose"></div>
+      <section id="activity-section" class="activity-section" hidden>
+        <h2>Activity History</h2>
+        <ol id="activity-list" class="activity-list"></ol>
+      </section>
     </article>
   </section>
 </main>
 
-<footer><span id="snapshot"></span><span>Read-only local snapshot</span></footer>
+<footer><span id="snapshot"></span><span id="live-status">● Live viewer</span></footer>
 <script src="marked.min.js"></script>
 <script src="purify.min.js"></script>
 <script src="app.js"></script>
