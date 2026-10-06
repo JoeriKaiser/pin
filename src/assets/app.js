@@ -22,30 +22,54 @@
 
   var $ = function (id) { return document.getElementById(id); };
   var els = {
+    workspace: $('workspace'),
+    viewBoardBtn: $('view-board-btn'),
+    viewDetailBtn: $('view-detail-btn'),
+    board: $('board'),
+    countCreated: $('count-created'),
+    countPlanned: $('count-planned'),
+    countInProgress: $('count-in_progress'),
+    countBlocked: $('count-blocked'),
+    countDoneReview: $('count-done_review'),
+    countClosed: $('count-closed'),
+    quickAddForm: $('quick-add-form'), quickAddInput: $('quick-add-input'),
     scope: $('scope'), search: $('search'), count: $('count'), filterToggle: $('filter-toggle'), filters: $('filters'),
     status: $('status-filter'), type: $('type-filter'), kind: $('kind-filter'), priority: $('priority-filter'),
     projectWrap: $('project-wrap'), project: $('project-filter'), projects: $('projects'), clear: $('clear-filters'),
     list: $('list'), listEmpty: $('list-empty'), reader: $('reader'), detailEmpty: $('detail-empty'), proposal: $('proposal'), back: $('back'),
     context: $('proposal-context'), title: $('proposal-title'), summary: $('proposal-summary'),
-    handoffCard: $('handoff-card'), actions: $('proposal-actions'),
+    workerCard: $('worker-card'), handoffCard: $('handoff-card'), dependenciesCard: $('dependencies-card'),
+    actions: $('proposal-actions'),
     more: $('proposal-more'), meta: $('proposal-meta'), resolution: $('resolution'), body: $('proposal-body'),
     activitySection: $('activity-section'), activityList: $('activity-list'),
-    snapshot: $('snapshot'), liveStatus: $('live-status')
+    snapshot: $('snapshot'), liveStatus: $('live-status'),
+    actionDialog: $('action-dialog'), actionForm: $('action-form'), dialogTitle: $('dialog-title'),
+    dialogError: $('dialog-error'), dialogBody: $('dialog-body'),
+    dialogCloseBtn: $('dialog-close-btn'), dialogCancelBtn: $('dialog-cancel-btn'),
+    dialogSubmitBtn: $('dialog-submit-btn'),
+    toast: $('toast')
   };
 
   var state = {
+    viewMode: (function () {
+      try { return localStorage.getItem('pin_view_mode') || 'board'; } catch (_) { return 'board'; }
+    })(),
     items: [],
     shown: [],
     selected: null,
     scope: '',
     archive: '',
     captured: '',
+    etag: null,
     filters: { text: '', status: '', type: '', kind: '', priority: '', project: '' }
   };
 
+  var activeModalConfig = null;
+  var toastTimer = null;
+
   function norm(value) { return String(value == null ? '' : value).toLowerCase(); }
-  function text(node, value) { node.textContent = value == null ? '' : String(value); }
-  function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
+  function text(node, value) { if (node) node.textContent = value == null ? '' : String(value); }
+  function clear(node) { if (node) while (node.firstChild) node.removeChild(node.firstChild); }
   function node(tag, className, value) {
     var n = document.createElement(tag);
     if (className) n.className = className;
@@ -69,9 +93,33 @@
     try { return new Date(n).toLocaleDateString(undefined, opts); } catch (_) { return new Date(n).toISOString(); }
   }
 
-  function captured(value) {
-    var d = new Date(value); if (isNaN(d.getTime())) return value || '';
-    try { return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch (_) { return d.toISOString(); }
+  function timeAgo(value) {
+    var n = Number(value); if (!isFinite(n)) return '';
+    if (n < 1e12) n *= 1000;
+    var diffSec = Math.floor((Date.now() - n) / 1000);
+    if (diffSec < 60) return 'just now';
+    if (diffSec < 3600) return Math.floor(diffSec / 60) + 'm ago';
+    if (diffSec < 86400) return Math.floor(diffSec / 3600) + 'h ago';
+    if (diffSec < 86400 * 30) return Math.floor(diffSec / 86400) + 'd ago';
+    return date(value, false);
+  }
+
+  function formatCountdown(expiresAt) {
+    if (!expiresAt) return null;
+    var target = Number(expiresAt);
+    if (target < 1e12) target *= 1000;
+    var now = Date.now();
+    var diff = target - now;
+    if (diff <= 0) return { text: 'Lease expired', expired: true };
+    var totalSec = Math.floor(diff / 1000);
+    var hours = Math.floor(totalSec / 3600);
+    var mins = Math.floor((totalSec % 3600) / 60);
+    var secs = totalSec % 60;
+    var parts = [];
+    if (hours > 0) parts.push(hours + 'h');
+    parts.push(mins + 'm');
+    parts.push((secs < 10 && hours > 0 ? '0' : '') + secs + 's');
+    return { text: parts.join(' '), expired: false };
   }
 
   function route() {
@@ -90,6 +138,18 @@
       if (state.items[i].id === id) return state.items[i];
     }
     return null;
+  }
+
+  function hasUnresolvedPrereqs(item) {
+    if (!item.depends_on || !item.depends_on.length) return false;
+    for (var i = 0; i < item.depends_on.length; i++) {
+      var depId = item.depends_on[i];
+      var depItem = find(depId);
+      if (!depItem) return true;
+      var s = itemStatus(depItem);
+      if (s !== 'done' && s !== 'closed') return true;
+    }
+    return false;
   }
 
   function unique(pick) {
@@ -157,6 +217,417 @@
     return norm(searchCorpus).indexOf(q) !== -1;
   }
 
+  function setViewMode(mode) {
+    state.viewMode = mode === 'detail' ? 'detail' : 'board';
+    try { localStorage.setItem('pin_view_mode', state.viewMode); } catch (_) {}
+    if (els.workspace) {
+      els.workspace.classList.toggle('mode-board', state.viewMode === 'board');
+      els.workspace.classList.toggle('mode-detail', state.viewMode === 'detail');
+    }
+    if (els.viewBoardBtn) els.viewBoardBtn.setAttribute('aria-pressed', String(state.viewMode === 'board'));
+    if (els.viewDetailBtn) els.viewDetailBtn.setAttribute('aria-pressed', String(state.viewMode === 'detail'));
+    if (state.viewMode === 'detail' && !state.selected && state.shown.length) {
+      setRoute(state.shown[0].id);
+    }
+  }
+
+  function showToast(message, isError) {
+    if (!els.toast) return;
+    if (toastTimer) clearTimeout(toastTimer);
+    text(els.toast, message);
+    els.toast.className = 'toast' + (isError ? ' toast-error' : ' toast-success');
+    els.toast.hidden = false;
+    toastTimer = setTimeout(function () {
+      els.toast.hidden = true;
+    }, 3500);
+  }
+
+  function showDialogError(message) {
+    if (!els.dialogError) return;
+    if (message) {
+      text(els.dialogError, message);
+      els.dialogError.hidden = false;
+    } else {
+      text(els.dialogError, '');
+      els.dialogError.hidden = true;
+    }
+  }
+
+  function sendAction(id, payload) {
+    var url = BASE + 'items/' + encodeURIComponent(id) + '/action';
+    return fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Pin-Action': 'true'
+      },
+      body: JSON.stringify(payload)
+    })
+    .then(function (res) {
+      if (!res.ok) {
+        return res.json().then(function (e) {
+          throw new Error(e.error || ('HTTP ' + res.status));
+        }).catch(function (parseErr) {
+          throw new Error(parseErr.message || ('HTTP ' + res.status));
+        });
+      }
+      return res.json();
+    })
+    .then(function (data) {
+      refreshData();
+      return data;
+    });
+  }
+
+  function openActionModal(config) {
+    activeModalConfig = config;
+    showDialogError('');
+    text(els.dialogTitle, config.title || 'Action');
+    text(els.dialogSubmitBtn, config.submitText || 'Confirm');
+    if (els.dialogSubmitBtn) els.dialogSubmitBtn.disabled = false;
+    clear(els.dialogBody);
+    if (config.render) config.render(els.dialogBody);
+
+    if (els.actionDialog.showModal) {
+      els.actionDialog.showModal();
+    } else {
+      els.actionDialog.setAttribute('open', '');
+    }
+
+    var firstField = els.dialogBody.querySelector('textarea, input, select');
+    if (firstField) firstField.focus();
+  }
+
+  function closeActionModal() {
+    activeModalConfig = null;
+    showDialogError('');
+    if (els.dialogSubmitBtn) els.dialogSubmitBtn.disabled = false;
+    if (els.actionDialog.close) {
+      els.actionDialog.close();
+    } else {
+      els.actionDialog.removeAttribute('open');
+    }
+  }
+
+  function triggerModalSubmit() {
+    if (!activeModalConfig || !activeModalConfig.onSubmit) return;
+    showDialogError('');
+
+    var maybePromise = activeModalConfig.onSubmit();
+    if (maybePromise === false) return;
+
+    if (maybePromise && typeof maybePromise.then === 'function') {
+      if (els.dialogSubmitBtn) {
+        els.dialogSubmitBtn.disabled = true;
+        text(els.dialogSubmitBtn, 'Submitting…');
+      }
+      maybePromise
+        .then(function () {
+          closeActionModal();
+          showToast('Action applied successfully', false);
+        })
+        .catch(function (err) {
+          showDialogError(err.message || 'Action failed');
+          if (els.dialogSubmitBtn) {
+            els.dialogSubmitBtn.disabled = false;
+            text(els.dialogSubmitBtn, activeModalConfig.submitText || 'Confirm');
+          }
+        });
+    } else {
+      closeActionModal();
+    }
+  }
+
+  function openCompleteModal(item) {
+    var rev = item.revision;
+    openActionModal({
+      title: 'Complete: ' + (item.title || item.id),
+      submitText: 'Complete with Evidence',
+      render: function (body) {
+        var label = node('label');
+        label.appendChild(node('span', '', 'Verification evidence (required)'));
+        label.appendChild(node('span', 'help-text', 'Paste test output, CLI command output, or logs demonstrating completion.'));
+        var ta = node('textarea');
+        ta.id = 'action-input-evidence';
+        ta.required = true;
+        ta.rows = 7;
+        ta.placeholder = 'e.g. cargo test output, CLI smoke test, or verification proof...';
+        label.appendChild(ta);
+        body.appendChild(label);
+      },
+      onSubmit: function () {
+        var ta = $('action-input-evidence');
+        var val = ta ? ta.value.trim() : '';
+        if (!val) {
+          if (ta) ta.focus();
+          showDialogError('Verification evidence is required.');
+          return false;
+        }
+        return sendAction(item.id, { action: 'complete', evidence: val, expect_revision: rev });
+      }
+    });
+  }
+
+  function openBlockedModal(item) {
+    var rev = item.revision;
+    openActionModal({
+      title: 'Mark Blocked: ' + (item.title || item.id),
+      submitText: 'Mark Blocked',
+      render: function (body) {
+        var label = node('label');
+        label.appendChild(node('span', '', 'Blocker reason (required)'));
+        label.appendChild(node('span', 'help-text', 'Specify what is blocking this item and what is needed to unblock it.'));
+        var ta = node('textarea');
+        ta.id = 'action-input-blocker';
+        ta.required = true;
+        ta.rows = 4;
+        ta.placeholder = 'e.g. Waiting on upstream PR, missing credentials, or prerequisite task...';
+        label.appendChild(ta);
+        body.appendChild(label);
+      },
+      onSubmit: function () {
+        var ta = $('action-input-blocker');
+        var val = ta ? ta.value.trim() : '';
+        if (!val) {
+          if (ta) ta.focus();
+          showDialogError('Blocker reason is required.');
+          return false;
+        }
+        return sendAction(item.id, { action: 'transition', to: 'blocked', note: val, expect_revision: rev });
+      }
+    });
+  }
+
+  function openClaimModal(item) {
+    var rev = item.revision;
+    var selectedLease = 3600;
+    var savedActor = '';
+    try { savedActor = localStorage.getItem('pin_actor') || ''; } catch (_) {}
+    if (!savedActor) savedActor = 'human:viewer';
+
+    openActionModal({
+      title: 'Claim: ' + (item.title || item.id),
+      submitText: 'Claim & Start',
+      render: function (body) {
+        var actorLabel = node('label');
+        actorLabel.appendChild(node('span', '', 'Actor identifier'));
+        var actorInput = node('input');
+        actorInput.id = 'action-input-actor';
+        actorInput.type = 'text';
+        actorInput.value = savedActor;
+        actorInput.placeholder = 'human:name or agent:model';
+        actorLabel.appendChild(actorInput);
+        body.appendChild(actorLabel);
+
+        var leaseLabel = node('label');
+        leaseLabel.appendChild(node('span', '', 'Lease duration'));
+        var pills = node('div', 'preset-pills');
+        var presets = [
+          { label: '15m', sec: 900 },
+          { label: '1h', sec: 3600 },
+          { label: '4h', sec: 14400 }
+        ];
+        presets.forEach(function (p) {
+          var btn = node('button', 'preset-pill' + (p.sec === selectedLease ? ' active' : ''), p.label);
+          btn.type = 'button';
+          btn.addEventListener('click', function () {
+            selectedLease = p.sec;
+            var siblings = pills.querySelectorAll('.preset-pill');
+            siblings.forEach(function (s) { s.classList.remove('active'); });
+            btn.classList.add('active');
+          });
+          pills.appendChild(btn);
+        });
+        leaseLabel.appendChild(pills);
+        body.appendChild(leaseLabel);
+      },
+      onSubmit: function () {
+        var actorEl = $('action-input-actor');
+        var actorVal = actorEl ? actorEl.value.trim() : '';
+        if (!actorVal) actorVal = 'human:viewer';
+        try { localStorage.setItem('pin_actor', actorVal); } catch (_) {}
+        return sendAction(item.id, { action: 'claim', actor: actorVal, lease: selectedLease, expect_revision: rev });
+      }
+    });
+  }
+
+  function openCloseModal(item) {
+    var rev = item.revision;
+    openActionModal({
+      title: 'Close: ' + (item.title || item.id),
+      submitText: 'Close Item',
+      render: function (body) {
+        var label = node('label');
+        label.appendChild(node('span', '', 'Closing note (optional)'));
+        var ta = node('textarea');
+        ta.id = 'action-input-close';
+        ta.rows = 3;
+        ta.placeholder = 'e.g. Shipped in release v1.2, verified by test suite...';
+        label.appendChild(ta);
+        body.appendChild(label);
+      },
+      onSubmit: function () {
+        var ta = $('action-input-close');
+        var val = ta ? ta.value.trim() : '';
+        return sendAction(item.id, { action: 'close', note: val || undefined, expect_revision: rev });
+      }
+    });
+  }
+
+  function handleCardDrop(droppedId, targetStatus) {
+    var item = find(droppedId);
+    if (!item) return;
+    var cur = itemStatus(item);
+    var rev = item.revision;
+
+    if (targetStatus === 'done') {
+      if (cur === 'in_progress') {
+        openCompleteModal(item);
+      } else {
+        sendAction(item.id, { action: 'transition', to: 'done', expect_revision: rev })
+          .catch(function (err) { showToast('Action failed: ' + err.message, true); });
+      }
+      return;
+    }
+
+    if (targetStatus === 'blocked') {
+      openBlockedModal(item);
+      return;
+    }
+
+    if (targetStatus === 'in_progress') {
+      if (cur === 'in_progress') return;
+      openClaimModal(item);
+      return;
+    }
+
+    if (targetStatus === 'planned') {
+      if (cur === 'in_progress') {
+        sendAction(item.id, { action: 'release', force: true, expect_revision: rev })
+          .catch(function (err) { showToast('Action failed: ' + err.message, true); });
+      } else {
+        sendAction(item.id, { action: 'transition', to: 'planned', expect_revision: rev })
+          .catch(function (err) { showToast('Action failed: ' + err.message, true); });
+      }
+      return;
+    }
+
+    if (targetStatus === 'created') {
+      if (cur !== 'created') {
+        sendAction(item.id, { action: 'transition', to: 'created', expect_revision: rev })
+          .catch(function (err) { showToast('Action failed: ' + err.message, true); });
+      }
+      return;
+    }
+
+    if (targetStatus === 'closed') {
+      openCloseModal(item);
+      return;
+    }
+  }
+
+  function buildBoardCard(item) {
+    var card = node('button', 'board-card status-border-' + itemStatus(item));
+    card.type = 'button';
+    card.dataset.id = item.id;
+    card.draggable = true;
+
+    var header = node('div', 'board-card-header');
+    var idSpan = node('span', 'board-card-id', item.id.slice(0, 8));
+    header.appendChild(idSpan);
+
+    if (priority(item) !== 'unset') {
+      var dot = node('span', 'priority-dot priority-' + priority(item));
+      dot.title = priority(item) + ' priority';
+      header.appendChild(dot);
+    }
+    card.appendChild(header);
+
+    var titleEl = node('h4', 'board-card-title', item.title || '(untitled)');
+    card.appendChild(titleEl);
+
+    var meta = node('div', 'board-card-meta');
+    meta.appendChild(node('span', 'type-badge', itemType(item)));
+
+    if (item.claimed_by) {
+      meta.appendChild(node('span', 'claimer-badge', '@' + item.claimed_by));
+    }
+
+    if (item.claim_expires_at) {
+      var countdown = node('span', 'lease-countdown');
+      countdown.dataset.expiresAt = String(item.claim_expires_at);
+      var cd = formatCountdown(item.claim_expires_at);
+      if (cd) {
+        text(countdown, cd.text);
+        if (cd.expired) countdown.classList.add('expired');
+      }
+      meta.appendChild(countdown);
+    }
+
+    if (hasUnresolvedPrereqs(item)) {
+      card.classList.add('is-locked');
+      var lock = node('span', 'lock-indicator', '🔒 Locked');
+      lock.title = 'Has unresolved prerequisite dependencies';
+      meta.appendChild(lock);
+    }
+
+    card.appendChild(meta);
+
+    card.addEventListener('dragstart', function (e) {
+      e.dataTransfer.setData('text/plain', item.id);
+      e.dataTransfer.effectAllowed = 'move';
+      card.classList.add('dragging');
+    });
+
+    card.addEventListener('dragend', function () {
+      card.classList.remove('dragging');
+    });
+
+    card.addEventListener('click', function () {
+      setRoute(item.id);
+      setViewMode('detail');
+    });
+
+    return card;
+  }
+
+  function renderBoard() {
+    var cols = {
+      created: document.querySelector('.board-col-cards[data-drop-status="created"]'),
+      planned: document.querySelector('.board-col-cards[data-drop-status="planned"]'),
+      in_progress: document.querySelector('.board-col-cards[data-drop-status="in_progress"]'),
+      blocked: document.querySelector('.board-col-cards[data-drop-status="blocked"]'),
+      done_review: document.querySelector('.board-col-cards[data-drop-status="done"]'),
+      closed: document.querySelector('.board-drawer-content')
+    };
+
+    Object.keys(cols).forEach(function (k) { if (cols[k]) clear(cols[k]); });
+
+    var counts = { created: 0, planned: 0, in_progress: 0, blocked: 0, done_review: 0, closed: 0 };
+
+    state.shown.forEach(function (item) {
+      var st = itemStatus(item);
+      var targetCol = null;
+      if (st === 'created') { targetCol = cols.created; counts.created++; }
+      else if (st === 'planned') { targetCol = cols.planned; counts.planned++; }
+      else if (st === 'in_progress') { targetCol = cols.in_progress; counts.in_progress++; }
+      else if (st === 'blocked') { targetCol = cols.blocked; counts.blocked++; }
+      else if (st === 'review' || st === 'done') { targetCol = cols.done_review; counts.done_review++; }
+      else if (st === 'closed' || st === 'cancelled') { targetCol = cols.closed; counts.closed++; }
+
+      if (targetCol) {
+        targetCol.appendChild(buildBoardCard(item));
+      }
+    });
+
+    text(els.countCreated, counts.created);
+    text(els.countPlanned, counts.planned);
+    text(els.countInProgress, counts.in_progress);
+    text(els.countBlocked, counts.blocked);
+    text(els.countDoneReview, counts.done_review);
+    text(els.countClosed, counts.closed);
+  }
+
   function renderList() {
     state.shown = state.items.filter(matches);
     clear(els.list);
@@ -172,12 +643,13 @@
       clear(els.listEmpty);
       els.listEmpty.appendChild(node('strong', '', state.items.length ? 'No items match filters.' : 'No items in this vault.'));
       els.listEmpty.appendChild(node('p', '', state.items.length ? 'Try clearing search or filters.' : 'Add items with pin add.'));
+      renderBoard();
       return;
     }
 
     state.shown.forEach(function (item) {
       var li = node('li');
-      var button = node('button', 'proposal-item');
+      var button = node('button', 'proposal-item status-border-' + itemStatus(item));
       button.type = 'button';
       button.dataset.id = item.id;
       button.setAttribute('aria-current', item.id === state.selected ? 'true' : 'false');
@@ -185,7 +657,7 @@
       var titleEl = node('strong', '', item.title || '(untitled)');
       button.appendChild(titleEl);
 
-      var meta = node('span');
+      var meta = node('span', 'item-badges');
       meta.appendChild(node('span', 'type-badge', itemType(item)));
       meta.appendChild(node('span', 'status-badge status-' + itemStatus(item), itemStatus(item)));
 
@@ -197,7 +669,7 @@
         meta.appendChild(node('span', 'priority-' + priority(item), priority(item)));
       }
 
-      var time = node('time', '', date(item.timestamp, false));
+      var time = node('time', '', timeAgo(item.timestamp));
       time.dateTime = String(item.timestamp || '');
       meta.appendChild(time);
 
@@ -206,6 +678,8 @@
       li.appendChild(button);
       els.list.appendChild(li);
     });
+
+    renderBoard();
   }
 
   function addSummary(value, className) {
@@ -232,28 +706,97 @@
     try { els.body.innerHTML = DOMPurify.sanitize(dirty, PURIFY_CONFIG); } catch (_) { text(els.body, source); }
   }
 
-  function sendAction(id, payload) {
-    var url = BASE + 'items/' + encodeURIComponent(id) + '/action';
-    fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Pin-Action': 'true'
-      },
-      body: JSON.stringify(payload)
-    })
-    .then(function (res) {
-      if (!res.ok) {
-        return res.json().then(function (e) { throw new Error(e.error || ('HTTP ' + res.status)); });
+  function renderWorkerBox(item) {
+    clear(els.workerCard);
+    els.workerCard.appendChild(node('h3', '', 'Active Worker & State'));
+
+    var header = node('div', 'worker-card-header');
+    if (item.claimed_by) {
+      header.appendChild(node('span', 'worker-actor', '@' + item.claimed_by));
+    } else {
+      header.appendChild(node('span', 'worker-actor', 'Unclaimed'));
+    }
+    if (item.revision != null) {
+      header.appendChild(node('span', 'worker-revision', 'rev ' + item.revision));
+    }
+    els.workerCard.appendChild(header);
+
+    var meta = node('div', 'worker-meta');
+    if (item.claim_expires_at) {
+      var timer = node('span', 'lease-countdown');
+      timer.dataset.expiresAt = String(item.claim_expires_at);
+      var cd = formatCountdown(item.claim_expires_at);
+      if (cd) {
+        text(timer, cd.text);
+        if (cd.expired) timer.classList.add('expired');
       }
-      return res.json();
-    })
-    .then(function () {
-      refreshData();
-    })
-    .catch(function (err) {
-      alert('Action failed: ' + err.message);
+      meta.appendChild(timer);
+    }
+    if (item.created_by) {
+      meta.appendChild(node('span', '', 'Created by @' + item.created_by));
+    }
+    if (meta.children.length) {
+      els.workerCard.appendChild(meta);
+    }
+  }
+
+  function renderDependencies(item) {
+    clear(els.dependenciesCard);
+    els.dependenciesCard.appendChild(node('h3', '', 'Dependencies'));
+
+    var list = node('ul', 'dependencies-list');
+    var hasAny = false;
+
+    if (item.depends_on && item.depends_on.length) {
+      item.depends_on.forEach(function (depId) {
+        hasAny = true;
+        var depItem = find(depId);
+        var isDone = depItem && (itemStatus(depItem) === 'done' || itemStatus(depItem) === 'closed');
+        var li = node('li', 'dependency-item');
+        var ind = node('span', 'dep-indicator ' + (isDone ? 'resolved' : 'unresolved'), isDone ? '✓' : '○');
+        ind.title = isDone ? 'Resolved' : 'Unresolved prerequisite';
+        li.appendChild(ind);
+
+        var btn = node('button', 'dependency-link', (depItem && depItem.title ? depItem.title : depId));
+        btn.type = 'button';
+        btn.title = 'Prerequisite: ' + depId;
+        btn.addEventListener('click', function () { setRoute(depId); });
+        li.appendChild(btn);
+
+        if (depItem) {
+          li.appendChild(node('span', 'status-badge status-' + itemStatus(depItem), itemStatus(depItem)));
+        }
+        list.appendChild(li);
+      });
+    }
+
+    var dependents = state.items.filter(function (other) {
+      return other.depends_on && other.depends_on.indexOf(item.id) !== -1;
     });
+
+    if (dependents.length) {
+      dependents.forEach(function (dep) {
+        hasAny = true;
+        var li = node('li', 'dependency-item');
+        var ind = node('span', 'dep-indicator', '↳');
+        ind.title = 'Dependent item';
+        li.appendChild(ind);
+
+        var btn = node('button', 'dependency-link', dep.title || dep.id);
+        btn.type = 'button';
+        btn.title = 'Dependent: ' + dep.id;
+        btn.addEventListener('click', function () { setRoute(dep.id); });
+        li.appendChild(btn);
+        li.appendChild(node('span', 'status-badge status-' + itemStatus(dep), itemStatus(dep)));
+        list.appendChild(li);
+      });
+    }
+
+    if (hasAny) {
+      els.dependenciesCard.appendChild(list);
+    } else {
+      els.dependenciesCard.appendChild(node('div', 'help-text', 'No prerequisites or dependents'));
+    }
   }
 
   function renderActions(item) {
@@ -270,56 +813,57 @@
 
     if (st === 'created') {
       btn('Move to Planned', true, function () {
-        sendAction(item.id, { action: 'transition', to: 'planned', expect_revision: rev });
+        sendAction(item.id, { action: 'transition', to: 'planned', expect_revision: rev })
+          .then(function () { showToast('Moved to Planned', false); })
+          .catch(function (err) { showToast('Action failed: ' + err.message, true); });
       });
     }
 
     if (st === 'planned') {
       btn('Claim (Start Work)', true, function () {
-        sendAction(item.id, { action: 'claim', lease: 3600, expect_revision: rev });
+        openClaimModal(item);
       });
       btn('Mark Blocked', false, function () {
-        var note = prompt('Reason for blocking:');
-        if (note != null) sendAction(item.id, { action: 'transition', to: 'blocked', note: note, expect_revision: rev });
+        openBlockedModal(item);
       });
     }
 
     if (st === 'in_progress') {
       btn('Complete with Evidence', true, function () {
-        var evidence = prompt('Verification evidence (tests output, command output):');
-        if (evidence && evidence.trim()) {
-          sendAction(item.id, { action: 'complete', evidence: evidence.trim(), expect_revision: rev });
-        }
+        openCompleteModal(item);
       });
       btn('Release Claim', false, function () {
-        sendAction(item.id, { action: 'release', force: true, expect_revision: rev });
+        sendAction(item.id, { action: 'release', force: true, expect_revision: rev })
+          .then(function () { showToast('Claim released', false); })
+          .catch(function (err) { showToast('Action failed: ' + err.message, true); });
       });
       btn('Mark Blocked', false, function () {
-        var note = prompt('Reason for blocking:');
-        if (note != null) sendAction(item.id, { action: 'transition', to: 'blocked', note: note, expect_revision: rev });
+        openBlockedModal(item);
       });
     }
 
     if (st === 'blocked') {
       btn('Unblock (Move to Planned)', true, function () {
-        sendAction(item.id, { action: 'transition', to: 'planned', expect_revision: rev });
+        sendAction(item.id, { action: 'transition', to: 'planned', expect_revision: rev })
+          .then(function () { showToast('Moved to Planned', false); })
+          .catch(function (err) { showToast('Action failed: ' + err.message, true); });
       });
     }
 
     if (st === 'done') {
       btn('Close Item', true, function () {
-        sendAction(item.id, { action: 'close', expect_revision: rev });
+        openCloseModal(item);
       });
       btn('Reopen to Planned', false, function () {
-        sendAction(item.id, { action: 'transition', to: 'planned', expect_revision: rev });
+        sendAction(item.id, { action: 'transition', to: 'planned', expect_revision: rev })
+          .then(function () { showToast('Reopened to Planned', false); })
+          .catch(function (err) { showToast('Action failed: ' + err.message, true); });
       });
     }
 
-    if (st !== 'closed' && st !== 'cancelled') {
-      btn('Cancel', false, function () {
-        if (confirm('Cancel this work item?')) {
-          sendAction(item.id, { action: 'transition', to: 'cancelled', expect_revision: rev });
-        }
+    if (st !== 'closed' && st !== 'cancelled' && st !== 'done') {
+      btn('Close Item', false, function () {
+        openCloseModal(item);
       });
     }
 
@@ -340,25 +884,25 @@
     if (h.progress) {
       var p = node('div', 'handoff-field');
       p.appendChild(node('strong', '', 'Progress:'));
-      p.appendChild(document.createTextNode(h.progress));
+      p.appendChild(node('div', 'handoff-text', h.progress));
       els.handoffCard.appendChild(p);
     }
     if (h.next) {
       var n = node('div', 'handoff-field');
       n.appendChild(node('strong', '', 'Next steps:'));
-      n.appendChild(document.createTextNode(h.next));
+      n.appendChild(node('div', 'handoff-text', h.next));
       els.handoffCard.appendChild(n);
     }
     if (h.blocker) {
       var b = node('div', 'handoff-field');
       b.appendChild(node('strong', '', 'Blocker:'));
-      b.appendChild(document.createTextNode(h.blocker));
+      b.appendChild(node('div', 'handoff-text', h.blocker));
       els.handoffCard.appendChild(b);
     }
     if (h.verification) {
       var v = node('div', 'handoff-field');
       v.appendChild(node('strong', '', 'Verification evidence:'));
-      v.appendChild(document.createTextNode(h.verification));
+      v.appendChild(node('pre', 'handoff-evidence', h.verification));
       els.handoffCard.appendChild(v);
     }
   }
@@ -412,7 +956,9 @@
     addSummary(date(item.timestamp, true));
     if (tags(item).length) addSummary(tags(item).join(' · '));
 
+    renderWorkerBox(item);
     renderHandoff(item);
+    renderDependencies(item);
     renderActions(item);
 
     clear(els.meta);
@@ -450,6 +996,19 @@
     }
   }
 
+  function updateCountdowns() {
+    var timers = document.querySelectorAll('.lease-countdown');
+    timers.forEach(function (el) {
+      var exp = el.dataset.expiresAt;
+      if (!exp) return;
+      var info = formatCountdown(exp);
+      if (info) {
+        text(el, info.text);
+        el.classList.toggle('expired', info.expired);
+      }
+    });
+  }
+
   function bind() {
     els.search.addEventListener('input', function () { state.filters.text = this.value; renderList(); });
     els.status.addEventListener('change', function () { state.filters.status = this.value; renderList(); });
@@ -473,7 +1032,109 @@
     els.back.addEventListener('click', function () { setRoute(null); });
     window.addEventListener('hashchange', applyRoute);
 
+    if (els.viewBoardBtn) {
+      els.viewBoardBtn.addEventListener('click', function () { setViewMode('board'); });
+    }
+    if (els.viewDetailBtn) {
+      els.viewDetailBtn.addEventListener('click', function () { setViewMode('detail'); });
+    }
+
+    if (els.dialogSubmitBtn) {
+      els.dialogSubmitBtn.addEventListener('click', triggerModalSubmit);
+    }
+    if (els.dialogCloseBtn) {
+      els.dialogCloseBtn.addEventListener('click', closeActionModal);
+    }
+    if (els.dialogCancelBtn) {
+      els.dialogCancelBtn.addEventListener('click', closeActionModal);
+    }
+
+    if (els.dialogBody) {
+      els.dialogBody.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') {
+          if (e.target.tagName === 'INPUT') {
+            e.preventDefault();
+            triggerModalSubmit();
+          } else if (e.target.tagName === 'TEXTAREA' && (e.ctrlKey || e.metaKey)) {
+            e.preventDefault();
+            triggerModalSubmit();
+          }
+        }
+      });
+    }
+
+    document.querySelectorAll('.board-col-cards').forEach(function (container) {
+      container.addEventListener('dragover', function (e) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        container.classList.add('drag-over');
+      });
+      container.addEventListener('dragleave', function () {
+        container.classList.remove('drag-over');
+      });
+      container.addEventListener('drop', function (e) {
+        e.preventDefault();
+        container.classList.remove('drag-over');
+        var id = e.dataTransfer.getData('text/plain');
+        var status = container.dataset.dropStatus;
+        if (id && status) handleCardDrop(id, status);
+      });
+    });
+    if (els.quickAddForm && els.quickAddInput) {
+      els.quickAddForm.addEventListener('submit', function (e) {
+        e.preventDefault();
+        var title = els.quickAddInput.value.trim();
+        if (!title) return;
+        var activeProject = (state.scope && state.scope !== 'all') ? state.scope : undefined;
+        els.quickAddInput.disabled = true;
+        fetch(BASE + 'items', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Pin-Action': 'true'
+          },
+          body: JSON.stringify({
+            title: title,
+            type: 'task',
+            status: 'created',
+            project: activeProject
+          })
+        })
+        .then(function (res) {
+          if (!res.ok) {
+            return res.json().then(function (err) { throw new Error(err.error || 'Failed to create task'); })
+              .catch(function (pErr) { throw new Error(pErr.message || 'Failed to create task'); });
+          }
+          return res.json();
+        })
+        .then(function (newItem) {
+          els.quickAddInput.value = '';
+          els.quickAddInput.disabled = false;
+          showToast('Created task: ' + (newItem.title || title), false);
+          refreshData();
+        })
+        .catch(function (err) {
+          els.quickAddInput.disabled = false;
+          showToast(err.message || 'Failed to create task', true);
+        });
+      });
+    }
+
     document.addEventListener('keydown', function (event) {
+      if (els.actionDialog && els.actionDialog.open) {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          closeActionModal();
+          return;
+        }
+        if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+          event.preventDefault();
+          triggerModalSubmit();
+          return;
+        }
+        return;
+      }
+
       var input = /^(INPUT|SELECT|TEXTAREA)$/.test(event.target.tagName);
       if (event.key === '/' && !input) {
         event.preventDefault();
@@ -498,6 +1159,8 @@
         setRoute(state.shown[index].id);
       }
     });
+
+    setInterval(updateCountdowns, 1000);
   }
 
   function ingest(data) {
@@ -511,20 +1174,32 @@
     setupFilters();
 
     var currentRoute = route();
-    if (!currentRoute && !isNarrow() && state.items.length) {
+    if (!currentRoute && !isNarrow() && state.items.length && state.viewMode === 'detail') {
       history.replaceState(null, '', '#/item/' + encodeURIComponent(state.items[0].id));
     }
+    setViewMode(state.viewMode);
     applyRoute();
   }
 
   function refreshData() {
-    fetch(BASE + 'data.json', { credentials: 'same-origin', cache: 'no-store' })
+    var headers = {};
+    if (state.etag) {
+      headers['If-None-Match'] = state.etag;
+    }
+    fetch(BASE + 'data.json', { credentials: 'same-origin', cache: 'no-store', headers: headers })
       .then(function (res) {
+        if (res.status === 304) {
+          return null;
+        }
         if (!res.ok) throw new Error('Data load error: ' + res.status);
+        var etag = res.headers.get('ETag');
+        if (etag) state.etag = etag;
         return res.json();
       })
       .then(function (data) {
-        ingest(data);
+        if (data) {
+          ingest(data);
+        }
       })
       .catch(function () {});
   }
@@ -538,9 +1213,15 @@
 
   function boot() {
     bind();
-    fetch(BASE + 'data.json', { credentials: 'same-origin', cache: 'no-store' })
+    var headers = {};
+    if (state.etag) {
+      headers['If-None-Match'] = state.etag;
+    }
+    fetch(BASE + 'data.json', { credentials: 'same-origin', cache: 'no-store', headers: headers })
       .then(function (res) {
         if (!res.ok) throw new Error('Could not load vault (' + res.status + ')');
+        var etag = res.headers.get('ETag');
+        if (etag) state.etag = etag;
         return res.json();
       })
       .then(function (data) {

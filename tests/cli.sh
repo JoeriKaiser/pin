@@ -372,6 +372,12 @@ mutation=$(curl -s -S -X POST -H "Origin: $origin" -H 'Content-Type: application
 assert_contains "$mutation" '"status":"planned"'
 curl -s -S "${url}data.json" | grep -q '"status":"planned"' || fail "viewer data did not refresh after mutation"
 
+# Test POST items (quick-add from viewer)
+created_from_view=$(curl -s -S -X POST -H "Origin: $origin" -H 'Content-Type: application/json' -H 'X-Pin-Action: true' --data '{"title":"Created from viewer","type":"task","status":"created","project":"view"}' "${url}items")
+assert_contains "$created_from_view" '"title":"Created from viewer"'
+assert_contains "$created_from_view" '"status":"created"'
+curl -s -S "${url}data.json" | grep -q '"title":"Created from viewer"' || fail "viewer data did not contain newly created item"
+
 # Try getting file with wrong token
 bad_url=$(echo "$url" | sed 's/[a-f0-9]\{32\}/bad_token/')
 bad_code=$(curl -s -o /dev/null -w "%{http_code}" "${bad_url}data.json")

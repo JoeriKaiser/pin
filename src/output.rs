@@ -5,6 +5,7 @@ use chrono::DateTime;
 use serde::Serialize;
 use std::io::IsTerminal;
 
+
 #[derive(Serialize)]
 pub struct JsonIdeaOutput<'a> {
     pub id: &'a str,
@@ -247,7 +248,13 @@ pub fn emit_context(
                     }
                     println!("\n{}:", k.label());
                     for idea in matching {
-                        let mut line = format!("- [{}] {}", idea.id, idea.title);
+                        let mut line = format!(
+                            "- [{}] [{}] [{}] {}",
+                            idea.id,
+                            idea.work_type().as_str(),
+                            idea.current_status().as_str(),
+                            idea.title
+                        );
                         if let Some(tags) = &idea.tags {
                             if !tags.trim().is_empty() {
                                 line.push_str(&format!(" [{tags}]"));
@@ -256,13 +263,24 @@ pub fn emit_context(
                         if let Some(priority) = idea.priority {
                             line.push_str(&format!(" ({})", priority.as_str()));
                         }
+                        if let Some(claimed_by) = &idea.claimed_by {
+                            if !claimed_by.trim().is_empty() {
+                                line.push_str(&format!(" @{claimed_by}"));
+                            }
+                        }
                         println!("{line}");
                     }
                 }
             } else {
                 for idea in bounded_ideas {
-                    let mut line =
-                        format!("- [{}] [{}] {}", idea.id, idea.kind.as_str(), idea.title);
+                    let mut line = format!(
+                        "- [{}] [{}] [{}] [{}] {}",
+                        idea.id,
+                        idea.kind.as_str(),
+                        idea.work_type().as_str(),
+                        idea.current_status().as_str(),
+                        idea.title
+                    );
                     if let Some(tags) = &idea.tags {
                         if !tags.trim().is_empty() {
                             line.push_str(&format!(" [{tags}]"));
@@ -271,9 +289,14 @@ pub fn emit_context(
                     if let Some(priority) = idea.priority {
                         line.push_str(&format!(" ({})", priority.as_str()));
                     }
+                    if let Some(claimed_by) = &idea.claimed_by {
+                        if !claimed_by.trim().is_empty() {
+                            line.push_str(&format!(" @{claimed_by}"));
+                        }
+                    }
                     println!("{line}");
                 }
-            }
         }
     }
+}
 }

@@ -712,8 +712,20 @@ pub fn serialize_front_matter(meta: &IdeaMeta) -> String {
             ) {
                 continue;
             }
-            if let Ok(v_str) = serde_yaml::to_string(v) {
-                out.push_str(&format!("{key}: {v_str}"));
+            if v.is_mapping() || v.is_sequence() {
+                let mut single_map = serde_yaml::Mapping::new();
+                single_map.insert(k.clone(), v.clone());
+                if let Ok(entry_str) = serde_yaml::to_string(&single_map) {
+                    let entry_str = entry_str.strip_prefix("---\n").unwrap_or(&entry_str);
+                    out.push_str(entry_str);
+                    if !entry_str.ends_with('\n') {
+                        out.push('\n');
+                    }
+                }
+            } else if let Ok(v_str) = serde_yaml::to_string(v) {
+                let v_str = v_str.strip_prefix("---\n").unwrap_or(&v_str);
+                let v_str = v_str.trim_end_matches(['\r', '\n']);
+                out.push_str(&format!("{key}: {v_str}\n"));
             }
         }
     }
@@ -799,6 +811,44 @@ Preserved body paragraph.
         assert!(doc.contains("priority: \"high\""));
         assert!(doc.contains("custom_key: custom_value"));
         assert!(doc.contains("Preserved body paragraph."));
+    }
+
+    #[test]
+    fn test_front_matter_rewrite_preserves_custom_mapping_and_sequence() {
+        let content = r#"---
+schema: 1
+id: "0123456789ab"
+project: "test"
+kind: "technical"
+timestamp: 1700000000
+title: "Original Title"
+custom_map:
+  nested_key: "nested_value"
+custom_seq:
+  - "item1"
+  - "item2"
+custom_scalar: 42
+---
+# Original Title
+
+Preserved body paragraph.
+"#;
+        let mut issues = Vec::new();
+        let meta =
+            parse_front_matter_detailed("0123456789ab.md", content, &mut issues).unwrap();
+        assert_eq!(meta.title, "Original Title");
+
+        let doc = render_full_document(&meta);
+        let mut parse_issues = Vec::new();
+        let reparsed =
+            parse_front_matter_detailed("0123456789ab.md", &doc, &mut parse_issues);
+        assert!(reparsed.is_some(), "Serialized document must be valid YAML");
+        let reparsed = reparsed.unwrap();
+        assert_eq!(reparsed.title, "Original Title");
+        assert!(doc.contains("custom_map:\n  nested_key: nested_value") || doc.contains("custom_map:\n  nested_key: \"nested_value\""));
+        assert!(doc.contains("custom_seq:\n- item1\n- item2") || doc.contains("custom_seq:\n  - item1\n  - item2"));
+        assert!(doc.contains("custom_scalar: 42"));
+        assert!(!doc.contains("custom_map: nested_key:"));
     }
 
     #[test]

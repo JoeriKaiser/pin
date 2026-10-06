@@ -81,7 +81,7 @@ fn print_usage() {
          rm <id|prefix|filename> [--format json|plain]\n  \
          import <directory> [--force] [--format json|plain]\n  \
          export <directory> [--force] [--format json|plain]\n  \
-         stats [--format json|plain]\n  \
+         stats [--project <name>] [--format json|plain]\n  \
          view [--project <name>] [--tag <name>] [--kind <kind>] [--type <type>]\n       \
          [--status <status>] [--archived|--all] [--port <n>] [--no-open] [--format json|plain]\n  \
          view-project [--tag <name>] [--kind <kind>] [--type <type>] [--status <status>]\n               \
@@ -107,7 +107,12 @@ impl<'a> ArgReader<'a> {
     }
 
     fn peek(&self) -> Option<&'a str> {
-        self.args.get(self.idx).map(|s| s.as_str())
+        let arg = self.args.get(self.idx).map(|s| s.as_str())?;
+        if arg == "--help" || arg == "-h" {
+            print_usage();
+            process::exit(0);
+        }
+        Some(arg)
     }
 
     fn next_val(&mut self, flag: &str) -> &'a str {
@@ -156,6 +161,10 @@ impl<'a> ArgReader<'a> {
                 self.command
             );
             process::exit(1);
+        }
+        if self.args[2] == "--help" || self.args[2] == "-h" {
+            print_usage();
+            process::exit(0);
         }
         self.idx = 3;
         &self.args[2]
@@ -277,7 +286,7 @@ fn main() {
 
             let gitignore_path = local_vault.join(".gitignore");
             if !gitignore_path.exists() {
-                let _ = fs::write(&gitignore_path, "*.lock\n.*.edit-recovery.tmp\n");
+                let _ = fs::write(&gitignore_path, "*.lock\n.*.lock\n.*.edit-recovery.tmp\n");
             }
 
             let config_path = root.join(".pin-project");
@@ -439,14 +448,17 @@ fn main() {
             let file_path = vault_path.join(&filename);
             let creator = resolve_actor(actor);
 
+            let resolved_type = item_type.unwrap_or(WorkType::Task);
+            let final_status = status.unwrap_or(Status::Created);
+
             let idea = IdeaMeta::new_work_item(
                 id.clone(),
                 proj_name,
                 title_val,
                 final_content,
                 final_kind,
-                item_type.unwrap_or(WorkType::Task),
-                status.unwrap_or(Status::Created),
+                resolved_type,
+                final_status,
                 priority,
                 tags.map(|s| s.to_string()),
                 Some(creator),
@@ -537,6 +549,10 @@ fn main() {
             if args.len() < 3 {
                 eprintln!("Error: 'search' subcommand requires a query argument");
                 process::exit(1);
+            }
+            if args[2] == "--help" || args[2] == "-h" {
+                print_usage();
+                process::exit(0);
             }
             let query = &args[2];
             reader.idx = 3;
@@ -1070,9 +1086,17 @@ fn main() {
         }
 
         "depend" => {
+            if args.len() >= 3 && (args[2] == "--help" || args[2] == "-h") {
+                print_usage();
+                process::exit(0);
+            }
             if args.len() < 4 {
                 eprintln!("Error: 'depend' requires an item selector and a dependency selector");
                 process::exit(1);
+            }
+            if args[3] == "--help" || args[3] == "-h" {
+                print_usage();
+                process::exit(0);
             }
             let selector = &args[2];
             let dep_selector = &args[3];
@@ -1146,9 +1170,17 @@ fn main() {
         }
 
         "parent" => {
+            if args.len() >= 3 && (args[2] == "--help" || args[2] == "-h") {
+                print_usage();
+                process::exit(0);
+            }
             if args.len() < 4 {
                 eprintln!("Error: 'parent' requires an item selector and a parent selector");
                 process::exit(1);
+            }
+            if args[3] == "--help" || args[3] == "-h" {
+                print_usage();
+                process::exit(0);
             }
             let selector = &args[2];
             let parent_selector = &args[3];
@@ -1222,9 +1254,17 @@ fn main() {
         }
 
         "relate" => {
+            if args.len() >= 3 && (args[2] == "--help" || args[2] == "-h") {
+                print_usage();
+                process::exit(0);
+            }
             if args.len() < 4 {
                 eprintln!("Error: 'relate' requires an item selector and a related selector");
                 process::exit(1);
+            }
+            if args[3] == "--help" || args[3] == "-h" {
+                print_usage();
+                process::exit(0);
             }
             let selector = &args[2];
             let rel_selector = &args[3];
@@ -1344,6 +1384,8 @@ fn main() {
         "archive" => {
             let selector = reader.parse_selector();
             let (mut resolution, mut note, mut format) = (Resolution::Implemented, None, None);
+            let mut actor = None;
+            let mut expect_revision = None;
 
             while let Some(arg) = reader.peek() {
                 match arg {
@@ -1355,6 +1397,14 @@ fn main() {
                         });
                     }
                     "--note" => note = Some(reader.next_val("--note").to_string()),
+                    "--actor" => actor = Some(reader.next_val("--actor").to_string()),
+                    "--expect-revision" => {
+                        let val = reader.next_val("--expect-revision");
+                        expect_revision = Some(val.parse::<u64>().unwrap_or_else(|_| {
+                            eprintln!("Error: --expect-revision requires an integer");
+                            process::exit(1);
+                        }));
+                    }
                     "--format" => format = Some(reader.parse_format(false)),
                     _ => {
                         eprintln!("Error: Unknown flag '{arg}'");
@@ -1368,52 +1418,56 @@ fn main() {
                 eprintln!("Error: {e}");
                 process::exit(1);
             });
-            let path = vault_path.join(&filename);
-            let content = fs::read_to_string(&path).unwrap_or_else(|e| {
-                eprintln!("Error: Could not read file: {e}");
+
+            let actor_name = actor.or_else(|| env::var("PIN_ACTOR").ok());
+            let meta = workflow::archive_item(
+                &vault_path,
+                &filename,
+                resolution,
+                actor_name.as_deref(),
+                note.as_deref(),
+                expect_revision,
+            )
+            .unwrap_or_else(|e| {
+                eprintln!("Error: {e}");
                 process::exit(1);
             });
 
-            let mut issues = Vec::new();
-            if let Some(mut meta) = parse_front_matter_detailed(&filename, &content, &mut issues) {
-                meta.archived_at = Some(chrono::Utc::now().timestamp());
-                meta.resolution = Some(resolution);
-                meta.resolution_note = note;
-
-                if let Err(e) = atomic_write(&path, &render_full_document(&meta)) {
-                    eprintln!("Error: Failed to save archived idea: {e}");
-                    process::exit(1);
+            let fmt = format.unwrap_or_else(|| default_format(OutputFormat::Plain));
+            if fmt == OutputFormat::Json {
+                #[derive(serde::Serialize)]
+                struct ArchiveJson<'a> {
+                    archived: &'a str,
+                    filename: &'a str,
+                    resolution: &'a str,
                 }
-
-                let fmt = format.unwrap_or_else(|| default_format(OutputFormat::Plain));
-                if fmt == OutputFormat::Json {
-                    #[derive(serde::Serialize)]
-                    struct ArchiveJson<'a> {
-                        archived: &'a str,
-                        filename: &'a str,
-                        resolution: &'a str,
-                    }
-                    let res = ArchiveJson {
-                        archived: &meta.id,
-                        filename: &filename,
-                        resolution: resolution.as_str(),
-                    };
-                    println!("{}", serde_json::to_string(&res).unwrap_or_default());
-                } else {
-                    println!("Archived {}  {}", meta.id, filename);
-                }
+                let res = ArchiveJson {
+                    archived: &meta.id,
+                    filename: &filename,
+                    resolution: resolution.as_str(),
+                };
+                println!("{}", serde_json::to_string(&res).unwrap_or_default());
             } else {
-                eprintln!("Error: Invalid front matter in file");
-                process::exit(1);
+                println!("Archived {}  {}", meta.id, filename);
             }
         }
 
         "unarchive" => {
             let selector = reader.parse_selector();
             let mut format = None;
+            let mut actor = None;
+            let mut expect_revision = None;
 
             while let Some(arg) = reader.peek() {
                 match arg {
+                    "--actor" => actor = Some(reader.next_val("--actor").to_string()),
+                    "--expect-revision" => {
+                        let val = reader.next_val("--expect-revision");
+                        expect_revision = Some(val.parse::<u64>().unwrap_or_else(|_| {
+                            eprintln!("Error: --expect-revision requires an integer");
+                            process::exit(1);
+                        }));
+                    }
                     "--format" => format = Some(reader.parse_format(false)),
                     _ => {
                         eprintln!("Error: Unknown flag '{arg}'");
@@ -1427,41 +1481,33 @@ fn main() {
                 eprintln!("Error: {e}");
                 process::exit(1);
             });
-            let path = vault_path.join(&filename);
-            let content = fs::read_to_string(&path).unwrap_or_else(|e| {
-                eprintln!("Error: Could not read file: {e}");
+
+            let actor_name = actor.or_else(|| env::var("PIN_ACTOR").ok());
+            let meta = workflow::unarchive_item(
+                &vault_path,
+                &filename,
+                actor_name.as_deref(),
+                expect_revision,
+            )
+            .unwrap_or_else(|e| {
+                eprintln!("Error: {e}");
                 process::exit(1);
             });
 
-            let mut issues = Vec::new();
-            if let Some(mut meta) = parse_front_matter_detailed(&filename, &content, &mut issues) {
-                meta.archived_at = None;
-                meta.resolution = None;
-                meta.resolution_note = None;
-
-                if let Err(e) = atomic_write(&path, &render_full_document(&meta)) {
-                    eprintln!("Error: Failed to save unarchived idea: {e}");
-                    process::exit(1);
+            let fmt = format.unwrap_or_else(|| default_format(OutputFormat::Plain));
+            if fmt == OutputFormat::Json {
+                #[derive(serde::Serialize)]
+                struct UnarchiveJson<'a> {
+                    unarchived: &'a str,
+                    filename: &'a str,
                 }
-
-                let fmt = format.unwrap_or_else(|| default_format(OutputFormat::Plain));
-                if fmt == OutputFormat::Json {
-                    #[derive(serde::Serialize)]
-                    struct UnarchiveJson<'a> {
-                        unarchived: &'a str,
-                        filename: &'a str,
-                    }
-                    let res = UnarchiveJson {
-                        unarchived: &meta.id,
-                        filename: &filename,
-                    };
-                    println!("{}", serde_json::to_string(&res).unwrap_or_default());
-                } else {
-                    println!("Unarchived {}  {}", meta.id, filename);
-                }
+                let res = UnarchiveJson {
+                    unarchived: &meta.id,
+                    filename: &filename,
+                };
+                println!("{}", serde_json::to_string(&res).unwrap_or_default());
             } else {
-                eprintln!("Error: Invalid front matter in file");
-                process::exit(1);
+                println!("Unarchived {}  {}", meta.id, filename);
             }
         }
 
@@ -1710,6 +1756,10 @@ fn main() {
                 eprintln!("Error: '{cmd}' requires a directory");
                 process::exit(1);
             }
+            if args[2] == "--help" || args[2] == "-h" {
+                print_usage();
+                process::exit(0);
+            }
             let target_path_str = &args[2];
             reader.idx = 3;
 
@@ -1852,8 +1902,10 @@ fn main() {
 
         "stats" => {
             let mut format = None;
+            let mut filter_project = None;
             while let Some(arg) = reader.peek() {
                 match arg {
+                    "--project" => filter_project = Some(reader.next_val("--project").to_string()),
                     "--format" => format = Some(reader.parse_format(false)),
                     _ => {
                         eprintln!("Error: Unexpected argument '{arg}'");
@@ -1863,7 +1915,7 @@ fn main() {
                 reader.idx += 1;
             }
 
-            let stats = calculate_stats(&vault_path);
+            let stats = calculate_stats(&vault_path, filter_project.as_deref());
             let fmt = format.unwrap_or_else(|| default_format(OutputFormat::Plain));
             emit_stats(&stats, fmt);
         }

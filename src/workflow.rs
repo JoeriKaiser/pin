@@ -1,5 +1,5 @@
 use crate::frontmatter::{parse_front_matter_detailed, render_full_document};
-use crate::model::{ActivityEvent, IdeaMeta, Status};
+use crate::model::{ActivityEvent, IdeaMeta, Resolution, Status, WorkType};
 use crate::vault::{atomic_write, collect_ideas};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -398,6 +398,67 @@ pub fn close_item(
     Ok(meta)
 }
 
+pub fn archive_item(
+    vault_path: &Path,
+    filename: &str,
+    resolution: Resolution,
+    actor: Option<&str>,
+    note: Option<&str>,
+    expect_revision: Option<u64>,
+) -> Result<IdeaMeta, WorkflowError> {
+    let (mut meta, _lock) = load_and_lock(vault_path, filename, expect_revision)?;
+    let from_status = meta.current_status();
+    let now = chrono::Utc::now().timestamp();
+    let actor_str = actor.unwrap_or("agent:default").to_string();
+
+    meta.archived_at = Some(now);
+    meta.resolution = Some(resolution);
+    meta.resolution_note = note.map(|s| s.to_string());
+
+    meta.claimed_by = None;
+    meta.claim_expires_at = None;
+
+    meta.activity.push(ActivityEvent {
+        at: now,
+        actor: actor_str,
+        action: "archived".to_string(),
+        from: Some(from_status),
+        to: Some(meta.current_status()),
+        note: note.map(|s| s.to_string()),
+    });
+
+    save_item(vault_path, &mut meta)?;
+    Ok(meta)
+}
+
+pub fn unarchive_item(
+    vault_path: &Path,
+    filename: &str,
+    actor: Option<&str>,
+    expect_revision: Option<u64>,
+) -> Result<IdeaMeta, WorkflowError> {
+    let (mut meta, _lock) = load_and_lock(vault_path, filename, expect_revision)?;
+    let from_status = meta.current_status();
+    let now = chrono::Utc::now().timestamp();
+    let actor_str = actor.unwrap_or("agent:default").to_string();
+
+    meta.archived_at = None;
+    meta.resolution = None;
+    meta.resolution_note = None;
+
+    meta.activity.push(ActivityEvent {
+        at: now,
+        actor: actor_str,
+        action: "unarchived".to_string(),
+        from: Some(from_status),
+        to: Some(meta.current_status()),
+        note: None,
+    });
+
+    save_item(vault_path, &mut meta)?;
+    Ok(meta)
+}
+
 pub fn depend_item(
     vault_path: &Path,
     filename: &str,
@@ -517,7 +578,10 @@ pub fn relate_item(
 }
 
 pub fn is_item_ready(item: &IdeaMeta, all_items_map: &HashMap<String, &IdeaMeta>, now: i64) -> bool {
-    if item.current_status() != Status::Planned {
+    let status_ready = item.current_status() == Status::Planned
+        || (item.current_status() == Status::Created
+            && (item.work_type() == WorkType::Task || item.work_type() == WorkType::Bug));
+    if !status_ready {
         return false;
     }
     if item.has_active_claim(now) {
@@ -799,5 +863,82 @@ mod tests {
         // Revision should have incremented 10 times (from 1 to 11)
         assert_eq!(final_meta.current_revision(), 11);
         assert_eq!(final_meta.activity.len(), 11); // initial created + 10 handoffs
+    }
+
+    #[test]
+    fn test_is_item_ready_created_tasks_and_bugs() {
+        let dir = tempdir().unwrap();
+        let _task = setup_test_item(dir.path(), "task01", Status::Created, None);
+
+        let bug_item = IdeaMeta::new_work_item(
+            "bug01".to_string(),
+            "test".to_string(),
+            "Bug item".to_string(),
+            "Body".to_string(),
+            Kind::Technical,
+            WorkType::Bug,
+            Status::Created,
+            None,
+            None,
+            Some("agent:creator".to_string()),
+        );
+        fs::write(dir.path().join("bug01.md"), render_full_document(&bug_item)).unwrap();
+
+        let idea_item = IdeaMeta::new_work_item(
+            "idea01".to_string(),
+            "test".to_string(),
+            "Idea item".to_string(),
+            "Body".to_string(),
+            Kind::Technical,
+            WorkType::Idea,
+            Status::Created,
+            None,
+            None,
+            Some("agent:creator".to_string()),
+        );
+        fs::write(dir.path().join("idea01.md"), render_full_document(&idea_item)).unwrap();
+
+        let items = collect_ideas(dir.path()).unwrap();
+        let ready = next_ready_items(&items, Some("test"), 10);
+        let ready_ids: Vec<&str> = ready.iter().map(|i| i.id.as_str()).collect();
+        assert!(ready_ids.contains(&"task01"));
+        assert!(ready_ids.contains(&"bug01"));
+        assert!(!ready_ids.contains(&"idea01"));
+    }
+
+    #[test]
+    fn test_archive_and_unarchive_lifecycle() {
+        let dir = tempdir().unwrap();
+        let filename = setup_test_item(dir.path(), "arch01", Status::InProgress, None);
+
+        let archived = archive_item(
+            dir.path(),
+            &filename,
+            Resolution::Implemented,
+            Some("agent:test"),
+            Some("Shipped"),
+            None,
+        )
+        .unwrap();
+
+        assert!(archived.is_archived());
+        assert_eq!(archived.resolution, Some(Resolution::Implemented));
+        assert_eq!(archived.resolution_note.as_deref(), Some("Shipped"));
+        assert_eq!(archived.claimed_by, None);
+        assert_eq!(archived.current_revision(), 2);
+        assert_eq!(archived.activity.last().unwrap().action, "archived");
+
+        let unarchived = unarchive_item(
+            dir.path(),
+            &filename,
+            Some("agent:test"),
+            Some(2),
+        )
+        .unwrap();
+
+        assert!(!unarchived.is_archived());
+        assert_eq!(unarchived.resolution, None);
+        assert_eq!(unarchived.current_revision(), 3);
+        assert_eq!(unarchived.activity.last().unwrap().action, "unarchived");
     }
 }

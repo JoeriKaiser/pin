@@ -5,6 +5,8 @@ use std::env;
 use std::fmt;
 use std::fs;
 use std::io::{self, Write};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
@@ -143,9 +145,19 @@ pub fn atomic_write(path: &Path, content: &str) -> io::Result<()> {
     fs::create_dir_all(parent)?;
 
     let mut temp_file = tempfile::NamedTempFile::new_in(parent)?;
+    #[cfg(unix)]
+    {
+        let _ = temp_file
+            .as_file()
+            .set_permissions(fs::Permissions::from_mode(0o644));
+    }
     temp_file.write_all(content.as_bytes())?;
     temp_file.flush()?;
     temp_file.persist(path).map_err(|e| e.error)?;
+    #[cfg(unix)]
+    {
+        fs::set_permissions(path, fs::Permissions::from_mode(0o644))?;
+    }
     Ok(())
 }
 
@@ -341,5 +353,20 @@ mod tests {
         let token = generate_token();
         assert_eq!(token.len(), 32);
         assert!(token.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn test_atomic_write_permissions() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("test.md");
+        atomic_write(&file_path, "hello world").unwrap();
+        let content = fs::read_to_string(&file_path).unwrap();
+        assert_eq!(content, "hello world");
+        #[cfg(unix)]
+        {
+            let meta = fs::metadata(&file_path).unwrap();
+            let mode = meta.permissions().mode() & 0o777;
+            assert_eq!(mode, 0o644);
+        }
     }
 }
