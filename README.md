@@ -161,6 +161,10 @@ Records move through explicit lifecycle states:
 
 Every item record includes an integer `revision`. Parallel agents can pass `--expect-revision <n>` to detect concurrent modifications. Mutations acquire an atomic file lock (`.<id>.md.lock`) with automatic retry and stale-lock eviction to guarantee integrity during multi-agent execution.
 
+### Project and vault resolution
+
+The vault is the repository-local `.pin_vault/` when one exists, otherwise `~/.pin_vault`. The project name comes from `--project`, then `PIN_PROJECT`, then the `.pin-project` file at the repository root, then the repository directory name. Because that last fallback is just a directory name, two checkouts with the same basename (`client-a/api` and `client-b/api`) resolve to the same project. Run `pin init --local` or write a `.pin-project` file to keep them apart.
+
 ## Human orchestrator viewer (`pin view`)
 
 Running `pin view` launches an embedded HTTP server serving a single-page management interface:
