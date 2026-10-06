@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.2.0]
+
+### Fixed
+- `claim` no longer reopens finished work. An item in `done`, `closed`, or `cancelled` state is rejected, and `complete` rejects closed and cancelled items while still allowing a `done` item to be re-verified.
+- `pin doctor` reports dependencies that can never be satisfied: `dangling_dependency` when the referenced item is missing from the vault, `blocked_by_cancelled` when it was cancelled. Both cases previously left dependents unready with `pin next` returning nothing and saying nothing.
+- `pin view` closes connections that connect and then stall, using a 10 second read and write timeout.
+- `pin view` answers oversized request bodies with 413 instead of allocating whatever the `Content-Length` header claims. The limit is 1 MiB.
+
+### Changed
+- Split the 1,826-line `main` function into `src/cli.rs` and `src/commands/`, one module per command group. Commands return `Result<(), CliError>` and `main` maps failures to exit codes in one place. `process::exit` calls went from 149 to 3.
+- `Status::is_active`, which nothing called, is replaced by `Status::is_finished`, covering `done`, `closed`, and `cancelled`.
+- README documents how the vault location and project name resolve, including the collision when two checkouts share a directory name.
+- Corrected the 2.0.0 entry, which claimed Linux and Windows ARM64 release binaries that the release matrix does not build.
+
 ## [2.0.0]
 
 ### Changed
@@ -7,7 +21,7 @@
 - Replaced monolithic single-file build with a clean Cargo project structure and compile-time embedded static web assets (`include_str!`).
 - Enhanced memory safety, RAII-based atomic file persistence, and robust error recovery.
 - Added native comprehensive unit test suites (`cargo test`) with instantaneous execution.
-- Cross-platform CI matrix and automated release packaging across Linux (x86_64, ARM64), macOS (x86_64, ARM64), and Windows (x86_64, ARM64).
+- Cross-platform CI matrix and automated release packaging across Linux (x86_64), macOS (x86_64, ARM64), and Windows (x86_64). Other architectures fall back to a source build.
 - Updated source installer fallback to use the Rust/Cargo toolchain.
 - Version bumped to 2.0.0.
 

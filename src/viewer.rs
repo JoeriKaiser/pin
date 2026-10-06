@@ -12,8 +12,17 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 use std::thread;
+use std::time::Duration;
 
 const VIEW_CSP: &str = "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; sandbox allow-scripts allow-same-origin";
+
+/// Bodies are small JSON payloads. Anything larger is a mistake or a stuck
+/// client, and must not be turned into an allocation.
+const MAX_REQUEST_BODY: usize = 1024 * 1024;
+
+/// A client that connects and then stalls would otherwise hold its thread
+/// forever, since the viewer is meant to stay up for hours.
+const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Serialize)]
 struct SnapshotData<'a> {
@@ -187,6 +196,9 @@ fn send_response(
 }
 
 fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16) {
+    let _ = stream.set_read_timeout(Some(CLIENT_TIMEOUT));
+    let _ = stream.set_write_timeout(Some(CLIENT_TIMEOUT));
+
     let mut reader = BufReader::new(&stream);
     let mut request_line = String::new();
 
@@ -205,6 +217,7 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
     // Read headers
     let mut headers = Vec::new();
     let mut content_length = 0;
+    let mut body_too_large = false;
     let mut has_pin_action_header = false;
     let mut origin_header = None;
     let mut if_none_match = None;
@@ -217,7 +230,11 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
         let trimmed = line.trim();
         if trimmed.to_ascii_lowercase().starts_with("content-length:") {
             if let Some((_, val)) = trimmed.split_once(':') {
-                content_length = val.trim().parse::<usize>().unwrap_or(0);
+                match val.trim().parse::<usize>() {
+                    Ok(n) if n <= MAX_REQUEST_BODY => content_length = n,
+                    Ok(_) => body_too_large = true,
+                    Err(_) => content_length = 0,
+                }
             }
         }
         if trimmed.to_ascii_lowercase().starts_with("x-pin-action:") {
@@ -252,6 +269,20 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
     }
 
     let subpath = &raw_path[expected_prefix.len()..];
+
+    if method == "POST" && body_too_large {
+        send_response(
+            &mut stream,
+            413,
+            "Payload Too Large",
+            "application/json; charset=utf-8",
+            b"{\"error\":\"Request body exceeds the 1 MiB limit\"}",
+            false,
+            true,
+            None,
+        );
+        return;
+    }
 
     // POST /items/{id}/action
     if method == "POST" {

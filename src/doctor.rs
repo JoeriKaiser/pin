@@ -1,7 +1,7 @@
 use crate::frontmatter::{
     derive_deterministic_id, parse_front_matter_detailed, render_full_document, Issue, Severity,
 };
-use crate::model::{IdeaMeta, OutputFormat};
+use crate::model::{IdeaMeta, OutputFormat, Status};
 use crate::vault::atomic_write;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -121,6 +121,41 @@ pub fn scan_vault(vault_path: &Path) -> VaultScan {
             }
         }
     }
+
+    // `pin next` only returns an item once every dependency reaches `done` or
+    // `closed`, so a dependency that was cancelled or deleted leaves dependents
+    // permanently unready with no explanation. Report those two cases here.
+    let statuses: HashMap<&str, Status> = scan
+        .metas
+        .iter()
+        .map(|m| (m.id.as_str(), m.current_status()))
+        .collect();
+
+    let mut unresolved = Vec::new();
+    for meta in &scan.metas {
+        for dep_id in &meta.depends_on {
+            match statuses.get(dep_id.as_str()) {
+                None => unresolved.push(Issue {
+                    severity: Severity::Warning,
+                    code: "dangling_dependency".to_string(),
+                    filename: meta.filename.clone(),
+                    message: format!("Depends on '{dep_id}', which is not in the vault"),
+                    field: Some("depends_on".to_string()),
+                }),
+                Some(Status::Cancelled) => unresolved.push(Issue {
+                    severity: Severity::Warning,
+                    code: "blocked_by_cancelled".to_string(),
+                    filename: meta.filename.clone(),
+                    message: format!(
+                        "Depends on '{dep_id}', which was cancelled and can never satisfy the dependency"
+                    ),
+                    field: Some("depends_on".to_string()),
+                }),
+                Some(_) => {}
+            }
+        }
+    }
+    scan.issues.extend(unresolved);
 
     scan
 }
@@ -350,5 +385,69 @@ pub fn emit_doctor_report(
                 "Summary: {error_count} error(s), {warning_count} warning(s), {info_count} info"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::frontmatter::render_full_document;
+    use crate::model::{Kind, WorkType};
+    use tempfile::tempdir;
+
+    fn write_item(dir: &Path, id: &str, status: Status, depends_on: Vec<&str>) -> String {
+        let mut item = IdeaMeta::new_work_item(
+            id.to_string(),
+            "test".to_string(),
+            format!("Item {id}"),
+            "Body".to_string(),
+            Kind::Technical,
+            WorkType::Task,
+            status,
+            None,
+            None,
+            Some("agent:creator".to_string()),
+        );
+        item.depends_on = depends_on.into_iter().map(|s| s.to_string()).collect();
+        let filename = format!("{id}.md");
+        fs::write(dir.join(&filename), render_full_document(&item)).unwrap();
+        filename
+    }
+
+    #[test]
+    fn test_unresolvable_dependencies_are_reported() {
+        let dir = tempdir().unwrap();
+        write_item(dir.path(), "0123456789aa", Status::Cancelled, vec![]);
+        write_item(
+            dir.path(),
+            "0123456789bb",
+            Status::Planned,
+            vec!["0123456789aa", "0123456789ff"],
+        );
+
+        let scan = scan_vault(dir.path());
+        let codes: Vec<&str> = scan.issues.iter().map(|i| i.code.as_str()).collect();
+        assert!(
+            codes.contains(&"blocked_by_cancelled"),
+            "a cancelled dependency must be reported: {codes:?}"
+        );
+        assert!(
+            codes.contains(&"dangling_dependency"),
+            "a missing dependency must be reported: {codes:?}"
+        );
+
+        // A dependency that has completed is satisfied and stays quiet.
+        write_item(dir.path(), "0123456789cc", Status::Done, vec![]);
+        write_item(
+            dir.path(),
+            "0123456789dd",
+            Status::Planned,
+            vec!["0123456789cc"],
+        );
+        let scan = scan_vault(dir.path());
+        assert!(
+            !scan.issues.iter().any(|i| i.filename == "0123456789dd.md"),
+            "a completed dependency must not be reported"
+        );
     }
 }

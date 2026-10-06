@@ -17,7 +17,6 @@ pub enum WorkflowError {
         expected: u64,
         actual: u64,
     },
-    #[allow(dead_code)]
     InvalidTransition {
         from: Status,
         to: Status,
@@ -230,6 +229,15 @@ pub fn claim_item(
     let (mut meta, _lock) = load_and_lock(vault_path, filename, expect_revision)?;
     let now = chrono::Utc::now().timestamp();
 
+    let current_status = meta.current_status();
+    if current_status.is_finished() {
+        return Err(WorkflowError::InvalidTransition {
+            from: current_status,
+            to: Status::InProgress,
+            reason: "finished work cannot be claimed".to_string(),
+        });
+    }
+
     if meta.has_active_claim(now) {
         let current_claimer = meta.claimed_by.as_deref().unwrap_or("");
         if current_claimer != actor {
@@ -359,6 +367,14 @@ pub fn complete_item(
     let from_status = meta.current_status();
     let now = chrono::Utc::now().timestamp();
     let actor_str = actor.unwrap_or("agent:default").to_string();
+
+    if from_status.is_terminal() {
+        return Err(WorkflowError::InvalidTransition {
+            from: from_status,
+            to: Status::Done,
+            reason: "a closed or cancelled item cannot be completed".to_string(),
+        });
+    }
 
     // Release claim upon completion
     meta.claimed_by = None;
@@ -728,6 +744,58 @@ mod tests {
             done.handoff.and_then(|h| h.verification),
             Some("Unit tests passed 5/5".to_string())
         );
+    }
+
+    #[test]
+    fn test_claim_rejects_finished_work() {
+        let dir = tempdir().unwrap();
+        for (id, status) in [
+            ("0123456789c1", Status::Done),
+            ("0123456789c2", Status::Closed),
+            ("0123456789c3", Status::Cancelled),
+        ] {
+            let filename = setup_test_item(dir.path(), id, status, None);
+            let result = claim_item(dir.path(), &filename, "agent:worker", 60, None);
+            assert!(
+                matches!(result, Err(WorkflowError::InvalidTransition { .. })),
+                "claiming a {status} item must be rejected"
+            );
+
+            let content = fs::read_to_string(dir.path().join(&filename)).unwrap();
+            let meta = parse_front_matter_detailed(&filename, &content, &mut Vec::new()).unwrap();
+            assert_eq!(meta.current_status(), status);
+            assert!(meta.claimed_by.is_none());
+        }
+    }
+
+    #[test]
+    fn test_complete_rejects_closed_work_but_allows_reverification() {
+        let dir = tempdir().unwrap();
+
+        let closed = setup_test_item(dir.path(), "0123456789d1", Status::Closed, None);
+        let rejected = complete_item(
+            dir.path(),
+            &closed,
+            Some("agent:worker"),
+            "late evidence",
+            None,
+        );
+        assert!(matches!(
+            rejected,
+            Err(WorkflowError::InvalidTransition { .. })
+        ));
+
+        // `done` is not terminal, so re-verifying finished work stays allowed.
+        let done = setup_test_item(dir.path(), "0123456789d2", Status::Done, None);
+        let reverified = complete_item(
+            dir.path(),
+            &done,
+            Some("agent:worker"),
+            "Re-verified after a follow-up fix",
+            None,
+        )
+        .unwrap();
+        assert_eq!(reverified.current_status(), Status::Done);
     }
 
     #[test]
