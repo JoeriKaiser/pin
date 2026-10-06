@@ -1,10 +1,7 @@
-use crate::model::{
-    ActivityEvent, ArchiveFilter, Handoff, IdeaMeta, Kind, OutputFormat,
-};
+use crate::model::{ActivityEvent, ArchiveFilter, Handoff, IdeaMeta, Kind, OutputFormat};
 use chrono::DateTime;
 use serde::Serialize;
 use std::io::IsTerminal;
-
 
 #[derive(Serialize)]
 pub struct JsonIdeaOutput<'a> {
@@ -159,7 +156,12 @@ pub fn emit_single_idea(meta: &IdeaMeta, format: OutputFormat) {
             println!("{}", serde_json::to_string(&json_item).unwrap_or_default());
         }
         OutputFormat::Plain => {
-            println!("Saved {}  [{}]  {}", meta.id, meta.current_status().as_str(), meta.title);
+            println!(
+                "Saved {}  [{}]  {}",
+                meta.id,
+                meta.current_status().as_str(),
+                meta.title
+            );
         }
         OutputFormat::Table => {
             emit_table(std::slice::from_ref(meta));
@@ -174,7 +176,9 @@ fn emit_table(ideas: &[IdeaMeta]) {
     }
 
     println!("DATE        TYPE     STATUS       ID            TITLE");
-    println!("----------  -------  -----------  ------------  ----------------------------------------");
+    println!(
+        "----------  -------  -----------  ------------  ----------------------------------------"
+    );
 
     for idea in ideas {
         let date_str = if idea.timestamp > 0 {
@@ -296,7 +300,7 @@ pub fn emit_context(
                     }
                     println!("{line}");
                 }
+            }
         }
     }
-}
 }

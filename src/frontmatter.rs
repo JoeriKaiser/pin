@@ -834,19 +834,23 @@ custom_scalar: 42
 Preserved body paragraph.
 "#;
         let mut issues = Vec::new();
-        let meta =
-            parse_front_matter_detailed("0123456789ab.md", content, &mut issues).unwrap();
+        let meta = parse_front_matter_detailed("0123456789ab.md", content, &mut issues).unwrap();
         assert_eq!(meta.title, "Original Title");
 
         let doc = render_full_document(&meta);
         let mut parse_issues = Vec::new();
-        let reparsed =
-            parse_front_matter_detailed("0123456789ab.md", &doc, &mut parse_issues);
+        let reparsed = parse_front_matter_detailed("0123456789ab.md", &doc, &mut parse_issues);
         assert!(reparsed.is_some(), "Serialized document must be valid YAML");
         let reparsed = reparsed.unwrap();
         assert_eq!(reparsed.title, "Original Title");
-        assert!(doc.contains("custom_map:\n  nested_key: nested_value") || doc.contains("custom_map:\n  nested_key: \"nested_value\""));
-        assert!(doc.contains("custom_seq:\n- item1\n- item2") || doc.contains("custom_seq:\n  - item1\n  - item2"));
+        assert!(
+            doc.contains("custom_map:\n  nested_key: nested_value")
+                || doc.contains("custom_map:\n  nested_key: \"nested_value\"")
+        );
+        assert!(
+            doc.contains("custom_seq:\n- item1\n- item2")
+                || doc.contains("custom_seq:\n  - item1\n  - item2")
+        );
         assert!(doc.contains("custom_scalar: 42"));
         assert!(!doc.contains("custom_map: nested_key:"));
     }
@@ -902,8 +906,7 @@ activity:
 Work details here.
 "#;
         let mut issues = Vec::new();
-        let meta =
-            parse_front_matter_detailed("0123456789ab.md", content, &mut issues).unwrap();
+        let meta = parse_front_matter_detailed("0123456789ab.md", content, &mut issues).unwrap();
         assert_eq!(meta.schema, Some(2));
         assert_eq!(meta.item_type, Some(WorkType::Task));
         assert_eq!(meta.status, Some(Status::InProgress));
@@ -911,9 +914,7 @@ Work details here.
         assert_eq!(meta.claimed_by.as_deref(), Some("agent:worker1"));
         assert_eq!(meta.depends_on, vec!["dep012345678"]);
         assert_eq!(
-            meta.handoff
-                .as_ref()
-                .and_then(|h| h.progress.as_deref()),
+            meta.handoff.as_ref().and_then(|h| h.progress.as_deref()),
             Some("Step 1 done")
         );
         assert_eq!(meta.activity.len(), 1);

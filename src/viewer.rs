@@ -136,7 +136,11 @@ fn etags_match(client_header: &str, server_etag: &str) -> bool {
     }
     let s = server_etag.trim().trim_matches('"');
     for item in client.split(',') {
-        let item = item.trim().strip_prefix("W/").unwrap_or(item.trim()).trim_matches('"');
+        let item = item
+            .trim()
+            .strip_prefix("W/")
+            .unwrap_or(item.trim())
+            .trim_matches('"');
         if !item.is_empty() && item == s {
             return true;
         }
@@ -146,9 +150,8 @@ fn etags_match(client_header: &str, server_etag: &str) -> bool {
 
 fn send_not_modified(stream: &mut TcpStream, etag: &str) {
     let clean_etag = etag.trim().trim_matches('"');
-    let header_str = format!(
-        "HTTP/1.1 304 Not Modified\r\nETag: \"{clean_etag}\"\r\nConnection: close\r\n\r\n"
-    );
+    let header_str =
+        format!("HTTP/1.1 304 Not Modified\r\nETag: \"{clean_etag}\"\r\nConnection: close\r\n\r\n");
     let _ = stream.write_all(header_str.as_bytes());
 }
 
@@ -235,7 +238,16 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
 
     let expected_prefix = format!("/{}/", snapshot.token);
     if !raw_path.starts_with(&expected_prefix) {
-        send_response(&mut stream, 404, "Not Found", "text/plain; charset=utf-8", b"Not Found", false, true, None);
+        send_response(
+            &mut stream,
+            404,
+            "Not Found",
+            "text/plain; charset=utf-8",
+            b"Not Found",
+            false,
+            true,
+            None,
+        );
         return;
     }
 
@@ -250,13 +262,31 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
             });
 
             if !valid_origin || !has_pin_action_header {
-                send_response(&mut stream, 403, "Forbidden", "application/json; charset=utf-8", b"{\"error\":\"Forbidden request\"}", false, true, None);
+                send_response(
+                    &mut stream,
+                    403,
+                    "Forbidden",
+                    "application/json; charset=utf-8",
+                    b"{\"error\":\"Forbidden request\"}",
+                    false,
+                    true,
+                    None,
+                );
                 return;
             }
 
             let mut body_bytes = vec![0u8; content_length];
             if reader.read_exact(&mut body_bytes).is_err() {
-                send_response(&mut stream, 400, "Bad Request", "application/json; charset=utf-8", b"{\"error\":\"Failed to read body\"}", false, true, None);
+                send_response(
+                    &mut stream,
+                    400,
+                    "Bad Request",
+                    "application/json; charset=utf-8",
+                    b"{\"error\":\"Failed to read body\"}",
+                    false,
+                    true,
+                    None,
+                );
                 return;
             }
 
@@ -264,18 +294,37 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                 Ok(p) => p,
                 Err(e) => {
                     let msg = format!("{{\"error\":\"Invalid JSON: {e}\"}}");
-                    send_response(&mut stream, 400, "Bad Request", "application/json; charset=utf-8", msg.as_bytes(), false, true, None);
+                    send_response(
+                        &mut stream,
+                        400,
+                        "Bad Request",
+                        "application/json; charset=utf-8",
+                        msg.as_bytes(),
+                        false,
+                        true,
+                        None,
+                    );
                     return;
                 }
             };
 
             let title_trimmed = payload.title.trim();
             if title_trimmed.is_empty() {
-                send_response(&mut stream, 400, "Bad Request", "application/json; charset=utf-8", b"{\"error\":\"Title cannot be empty\"}", false, true, None);
+                send_response(
+                    &mut stream,
+                    400,
+                    "Bad Request",
+                    "application/json; charset=utf-8",
+                    b"{\"error\":\"Title cannot be empty\"}",
+                    false,
+                    true,
+                    None,
+                );
                 return;
             }
 
-            let proj_name = payload.project
+            let proj_name = payload
+                .project
                 .filter(|p| !p.trim().is_empty())
                 .unwrap_or_else(|| {
                     if snapshot.scope_label != "all" {
@@ -289,9 +338,12 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
             let final_type = payload.item_type.unwrap_or(WorkType::Task);
             let final_kind = payload.kind.unwrap_or(Kind::Technical);
             let final_status = payload.status.unwrap_or(Status::Created);
-            let viewer_actor = env::var("PIN_VIEWER_ACTOR").unwrap_or_else(|_| "human:viewer".to_string());
+            let viewer_actor =
+                env::var("PIN_VIEWER_ACTOR").unwrap_or_else(|_| "human:viewer".to_string());
             let creator = payload.actor.unwrap_or(viewer_actor);
-            let body_content = payload.body.unwrap_or_else(|| format!("# {}\n", title_trimmed));
+            let body_content = payload
+                .body
+                .unwrap_or_else(|| format!("# {}\n", title_trimmed));
 
             let item = IdeaMeta::new_work_item(
                 id.clone(),
@@ -310,13 +362,31 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
             let rendered = crate::frontmatter::render_full_document(&item);
             if let Err(e) = crate::vault::atomic_write(&file_path, &rendered) {
                 let msg = format!("{{\"error\":\"Failed to save item: {e}\"}}");
-                send_response(&mut stream, 500, "Internal Server Error", "application/json; charset=utf-8", msg.as_bytes(), false, true, None);
+                send_response(
+                    &mut stream,
+                    500,
+                    "Internal Server Error",
+                    "application/json; charset=utf-8",
+                    msg.as_bytes(),
+                    false,
+                    true,
+                    None,
+                );
                 return;
             }
 
             let json_item = JsonIdeaOutput::from(&item);
             let body_str = serde_json::to_string(&json_item).unwrap_or_default();
-            send_response(&mut stream, 201, "Created", "application/json; charset=utf-8", body_str.as_bytes(), true, true, None);
+            send_response(
+                &mut stream,
+                201,
+                "Created",
+                "application/json; charset=utf-8",
+                body_str.as_bytes(),
+                true,
+                true,
+                None,
+            );
             return;
         }
 
@@ -331,14 +401,32 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                 });
 
                 if !valid_origin || !has_pin_action_header {
-                    send_response(&mut stream, 403, "Forbidden", "application/json; charset=utf-8", b"{\"error\":\"Forbidden request\"}", false, true, None);
+                    send_response(
+                        &mut stream,
+                        403,
+                        "Forbidden",
+                        "application/json; charset=utf-8",
+                        b"{\"error\":\"Forbidden request\"}",
+                        false,
+                        true,
+                        None,
+                    );
                     return;
                 }
 
                 // Read body
                 let mut body_bytes = vec![0u8; content_length];
                 if reader.read_exact(&mut body_bytes).is_err() {
-                    send_response(&mut stream, 400, "Bad Request", "application/json; charset=utf-8", b"{\"error\":\"Failed to read body\"}", false, true, None);
+                    send_response(
+                        &mut stream,
+                        400,
+                        "Bad Request",
+                        "application/json; charset=utf-8",
+                        b"{\"error\":\"Failed to read body\"}",
+                        false,
+                        true,
+                        None,
+                    );
                     return;
                 }
 
@@ -346,7 +434,16 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                     Ok(p) => p,
                     Err(e) => {
                         let msg = format!("{{\"error\":\"Invalid JSON: {e}\"}}");
-                        send_response(&mut stream, 400, "Bad Request", "application/json; charset=utf-8", msg.as_bytes(), false, true, None);
+                        send_response(
+                            &mut stream,
+                            400,
+                            "Bad Request",
+                            "application/json; charset=utf-8",
+                            msg.as_bytes(),
+                            false,
+                            true,
+                            None,
+                        );
                         return;
                     }
                 };
@@ -355,33 +452,40 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                     Ok(f) => f,
                     Err(e) => {
                         let msg = format!("{{\"error\":\"{e}\"}}");
-                        send_response(&mut stream, 404, "Not Found", "application/json; charset=utf-8", msg.as_bytes(), false, true, None);
+                        send_response(
+                            &mut stream,
+                            404,
+                            "Not Found",
+                            "application/json; charset=utf-8",
+                            msg.as_bytes(),
+                            false,
+                            true,
+                            None,
+                        );
                         return;
                     }
                 };
 
-                let viewer_actor = env::var("PIN_VIEWER_ACTOR")
-                    .unwrap_or_else(|_| "human:viewer".to_string());
+                let viewer_actor =
+                    env::var("PIN_VIEWER_ACTOR").unwrap_or_else(|_| "human:viewer".to_string());
                 let actor_to_use = payload.actor.as_deref().unwrap_or(&viewer_actor);
 
                 let mutation_result = match payload.action.as_str() {
-                    "transition" => {
-                        match payload.to {
-                            Some(target_status) => workflow::transition_item(
-                                &snapshot.vault_path,
-                                &filename,
-                                target_status,
-                                Some(actor_to_use),
-                                payload.note.as_deref(),
-                                payload.expect_revision,
-                            ),
-                            None => Err(workflow::WorkflowError::InvalidTransition {
-                                from: Status::Created,
-                                to: Status::Created,
-                                reason: "Missing 'to' status".to_string(),
-                            }),
-                        }
-                    }
+                    "transition" => match payload.to {
+                        Some(target_status) => workflow::transition_item(
+                            &snapshot.vault_path,
+                            &filename,
+                            target_status,
+                            Some(actor_to_use),
+                            payload.note.as_deref(),
+                            payload.expect_revision,
+                        ),
+                        None => Err(workflow::WorkflowError::InvalidTransition {
+                            from: Status::Created,
+                            to: Status::Created,
+                            reason: "Missing 'to' status".to_string(),
+                        }),
+                    },
                     "claim" => workflow::claim_item(
                         &snapshot.vault_path,
                         &filename,
@@ -432,7 +536,16 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                     Ok(updated_meta) => {
                         let json_item = JsonIdeaOutput::from(&updated_meta);
                         let body_str = serde_json::to_string(&json_item).unwrap_or_default();
-                        send_response(&mut stream, 200, "OK", "application/json; charset=utf-8", body_str.as_bytes(), true, true, None);
+                        send_response(
+                            &mut stream,
+                            200,
+                            "OK",
+                            "application/json; charset=utf-8",
+                            body_str.as_bytes(),
+                            true,
+                            true,
+                            None,
+                        );
                         return;
                     }
                     Err(err) => {
@@ -445,19 +558,46 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                             _ => 400,
                         };
                         let msg = format!("{{\"error\":\"{err}\"}}");
-                        send_response(&mut stream, status_code, "Error", "application/json; charset=utf-8", msg.as_bytes(), true, true, None);
+                        send_response(
+                            &mut stream,
+                            status_code,
+                            "Error",
+                            "application/json; charset=utf-8",
+                            msg.as_bytes(),
+                            true,
+                            true,
+                            None,
+                        );
                         return;
                     }
                 }
             }
         }
 
-        send_response(&mut stream, 405, "Method Not Allowed", "text/plain; charset=utf-8", b"Method Not Allowed", false, true, None);
+        send_response(
+            &mut stream,
+            405,
+            "Method Not Allowed",
+            "text/plain; charset=utf-8",
+            b"Method Not Allowed",
+            false,
+            true,
+            None,
+        );
         return;
     }
 
     if method != "GET" && method != "HEAD" {
-        send_response(&mut stream, 405, "Method Not Allowed", "text/plain; charset=utf-8", b"Method Not Allowed", false, true, None);
+        send_response(
+            &mut stream,
+            405,
+            "Method Not Allowed",
+            "text/plain; charset=utf-8",
+            b"Method Not Allowed",
+            false,
+            true,
+            None,
+        );
         return;
     }
 
@@ -533,12 +673,30 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
         "marked.min.js" => ("text/javascript; charset=utf-8", MARKED_JS.as_bytes()),
         "purify.min.js" => ("text/javascript; charset=utf-8", PURIFY_JS.as_bytes()),
         _ => {
-            send_response(&mut stream, 404, "Not Found", "text/plain; charset=utf-8", b"Not Found", false, true, None);
+            send_response(
+                &mut stream,
+                404,
+                "Not Found",
+                "text/plain; charset=utf-8",
+                b"Not Found",
+                false,
+                true,
+                None,
+            );
             return;
         }
     };
 
-    send_response(&mut stream, 200, "OK", content_type, body, true, method == "GET", None);
+    send_response(
+        &mut stream,
+        200,
+        "OK",
+        content_type,
+        body,
+        true,
+        method == "GET",
+        None,
+    );
 }
 
 pub fn open_browser(url: &str) {

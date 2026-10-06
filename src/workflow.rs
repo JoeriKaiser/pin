@@ -13,10 +13,20 @@ use std::time::{Duration, Instant};
 pub enum WorkflowError {
     Io(io::Error),
     LockConflict(String),
-    RevisionConflict { expected: u64, actual: u64 },
+    RevisionConflict {
+        expected: u64,
+        actual: u64,
+    },
     #[allow(dead_code)]
-    InvalidTransition { from: Status, to: Status, reason: String },
-    ClaimConflict { claimed_by: String, expires_at: i64 },
+    InvalidTransition {
+        from: Status,
+        to: Status,
+        reason: String,
+    },
+    ClaimConflict {
+        claimed_by: String,
+        expires_at: i64,
+    },
     NotClaimed,
     PermissionDenied(String),
     MissingEvidence,
@@ -39,7 +49,10 @@ impl fmt::Display for WorkflowError {
             WorkflowError::InvalidTransition { from, to, reason } => {
                 write!(f, "Invalid transition from '{from}' to '{to}': {reason}")
             }
-            WorkflowError::ClaimConflict { claimed_by, expires_at } => {
+            WorkflowError::ClaimConflict {
+                claimed_by,
+                expires_at,
+            } => {
                 write!(
                     f,
                     "Item is already claimed by '{claimed_by}' (claim expires at {expires_at})"
@@ -577,7 +590,11 @@ pub fn relate_item(
     Ok(meta)
 }
 
-pub fn is_item_ready(item: &IdeaMeta, all_items_map: &HashMap<String, &IdeaMeta>, now: i64) -> bool {
+pub fn is_item_ready(
+    item: &IdeaMeta,
+    all_items_map: &HashMap<String, &IdeaMeta>,
+    now: i64,
+) -> bool {
     let status_ready = item.current_status() == Status::Planned
         || (item.current_status() == Status::Created
             && (item.work_type() == WorkType::Task || item.work_type() == WorkType::Bug));
@@ -682,7 +699,8 @@ mod tests {
         assert!(matches!(conflict, Err(WorkflowError::ClaimConflict { .. })));
 
         // Release
-        let released = release_item(dir.path(), &filename, Some("agent:worker1"), false, None).unwrap();
+        let released =
+            release_item(dir.path(), &filename, Some("agent:worker1"), false, None).unwrap();
         assert_eq!(released.current_status(), Status::Planned);
         assert!(released.claimed_by.is_none());
         assert_eq!(released.current_revision(), 3);
@@ -793,8 +811,18 @@ mod tests {
     #[test]
     fn test_next_ready_items_dependency_ordering() {
         let dir = tempdir().unwrap();
-        let f1 = setup_test_item(dir.path(), "012345678901", Status::Planned, Some(Priority::Medium));
-        let f2 = setup_test_item(dir.path(), "012345678902", Status::Planned, Some(Priority::High));
+        let f1 = setup_test_item(
+            dir.path(),
+            "012345678901",
+            Status::Planned,
+            Some(Priority::Medium),
+        );
+        let f2 = setup_test_item(
+            dir.path(),
+            "012345678902",
+            Status::Planned,
+            Some(Priority::High),
+        );
 
         // f2 (High priority) depends on f1 (Medium priority)
         depend_item(dir.path(), &f2, "012345678901", None, None).unwrap();
@@ -806,7 +834,14 @@ mod tests {
         assert_eq!(ready[0].id, "012345678901");
 
         // Complete f1 with evidence
-        complete_item(dir.path(), &f1, Some("agent:test"), "Verification proof", None).unwrap();
+        complete_item(
+            dir.path(),
+            &f1,
+            Some("agent:test"),
+            "Verification proof",
+            None,
+        )
+        .unwrap();
 
         let items_after = collect_ideas(dir.path()).unwrap();
         let ready_after = next_ready_items(&items_after, Some("test"), 10);
@@ -896,7 +931,11 @@ mod tests {
             None,
             Some("agent:creator".to_string()),
         );
-        fs::write(dir.path().join("idea01.md"), render_full_document(&idea_item)).unwrap();
+        fs::write(
+            dir.path().join("idea01.md"),
+            render_full_document(&idea_item),
+        )
+        .unwrap();
 
         let items = collect_ideas(dir.path()).unwrap();
         let ready = next_ready_items(&items, Some("test"), 10);
@@ -928,13 +967,8 @@ mod tests {
         assert_eq!(archived.current_revision(), 2);
         assert_eq!(archived.activity.last().unwrap().action, "archived");
 
-        let unarchived = unarchive_item(
-            dir.path(),
-            &filename,
-            Some("agent:test"),
-            Some(2),
-        )
-        .unwrap();
+        let unarchived =
+            unarchive_item(dir.path(), &filename, Some("agent:test"), Some(2)).unwrap();
 
         assert!(!unarchived.is_archived());
         assert_eq!(unarchived.resolution, None);

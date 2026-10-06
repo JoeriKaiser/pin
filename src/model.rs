@@ -135,7 +135,9 @@ impl FromStr for WorkType {
             "bug" => Ok(WorkType::Bug),
             "idea" => Ok(WorkType::Idea),
             "decision" => Ok(WorkType::Decision),
-            _ => Err(format!("Invalid work type: {s} (expected task, bug, idea, decision)")),
+            _ => Err(format!(
+                "Invalid work type: {s} (expected task, bug, idea, decision)"
+            )),
         }
     }
 }

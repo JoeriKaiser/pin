@@ -407,7 +407,9 @@ fn main() {
                             }
                         }
                     } else {
-                        eprintln!("Error: --kind is required (technical, product, business, or project)");
+                        eprintln!(
+                            "Error: --kind is required (technical, product, business, or project)"
+                        );
                         process::exit(1);
                     }
                 }
@@ -480,9 +482,15 @@ fn main() {
             } else {
                 None
             };
-            let (mut filter_tag, mut filter_kind, mut filter_type, mut filter_status, mut filter_claimed_by) =
-                (None, None, None, None, None);
-            let (mut filter_ready, mut archive_filter, mut format) = (false, ArchiveFilter::Active, None);
+            let (
+                mut filter_tag,
+                mut filter_kind,
+                mut filter_type,
+                mut filter_status,
+                mut filter_claimed_by,
+            ) = (None, None, None, None, None);
+            let (mut filter_ready, mut archive_filter, mut format) =
+                (false, ArchiveFilter::Active, None);
 
             while let Some(arg) = reader.peek() {
                 match arg {
@@ -518,7 +526,9 @@ fn main() {
                             process::exit(1);
                         }));
                     }
-                    "--claimed-by" => filter_claimed_by = Some(reader.next_val("--claimed-by").to_string()),
+                    "--claimed-by" => {
+                        filter_claimed_by = Some(reader.next_val("--claimed-by").to_string())
+                    }
                     "--format" => format = Some(reader.parse_format(true)),
                     _ => {
                         eprintln!("Error: Unknown flag '{arg}'");
@@ -557,8 +567,14 @@ fn main() {
             let query = &args[2];
             reader.idx = 3;
 
-            let (mut filter_project, mut filter_tag, mut filter_kind, mut filter_type, mut filter_status, mut filter_claimed_by) =
-                (None, None, None, None, None, None);
+            let (
+                mut filter_project,
+                mut filter_tag,
+                mut filter_kind,
+                mut filter_type,
+                mut filter_status,
+                mut filter_claimed_by,
+            ) = (None, None, None, None, None, None);
             let (mut archive_filter, mut limit, mut format) = (ArchiveFilter::Active, None, None);
 
             while let Some(arg) = reader.peek() {
@@ -588,7 +604,9 @@ fn main() {
                             process::exit(1);
                         }));
                     }
-                    "--claimed-by" => filter_claimed_by = Some(reader.next_val("--claimed-by").to_string()),
+                    "--claimed-by" => {
+                        filter_claimed_by = Some(reader.next_val("--claimed-by").to_string())
+                    }
                     "--limit" => {
                         let val = reader.next_val("--limit");
                         limit = Some(val.parse::<usize>().unwrap_or_else(|_| {
@@ -628,8 +646,13 @@ fn main() {
         }
 
         "context" => {
-            let (mut filter_project, mut filter_kind, mut filter_type, mut filter_status, mut limit) =
-                (None, None, None, None, None);
+            let (
+                mut filter_project,
+                mut filter_kind,
+                mut filter_type,
+                mut filter_status,
+                mut limit,
+            ) = (None, None, None, None, None);
             let (mut archive_filter, mut group_kind, mut format) =
                 (ArchiveFilter::Active, false, None);
 
@@ -850,7 +873,13 @@ fn main() {
             });
 
             let resolved_actor = resolve_actor(actor);
-            match workflow::claim_item(&vault_path, &filename, &resolved_actor, lease, expect_revision) {
+            match workflow::claim_item(
+                &vault_path,
+                &filename,
+                &resolved_actor,
+                lease,
+                expect_revision,
+            ) {
                 Ok(meta) => {
                     let fmt = format.unwrap_or_else(|| default_format(OutputFormat::Plain));
                     emit_single_idea(&meta, fmt);
@@ -894,8 +923,16 @@ fn main() {
                 process::exit(1);
             });
 
-            let resolved_actor = actor.map(|a| a.to_string()).unwrap_or_else(|| resolve_actor(None));
-            match workflow::release_item(&vault_path, &filename, Some(&resolved_actor), force, expect_revision) {
+            let resolved_actor = actor
+                .map(|a| a.to_string())
+                .unwrap_or_else(|| resolve_actor(None));
+            match workflow::release_item(
+                &vault_path,
+                &filename,
+                Some(&resolved_actor),
+                force,
+                expect_revision,
+            ) {
                 Ok(meta) => {
                     let fmt = format.unwrap_or_else(|| default_format(OutputFormat::Plain));
                     emit_single_idea(&meta, fmt);
@@ -1133,15 +1170,17 @@ fn main() {
                 eprintln!("Error: {e}");
                 process::exit(1);
             });
-            let dep_content = fs::read_to_string(vault_path.join(&dep_filename)).unwrap_or_else(|e| {
-                eprintln!("Error: Could not read dependency file: {e}");
-                process::exit(1);
-            });
+            let dep_content =
+                fs::read_to_string(vault_path.join(&dep_filename)).unwrap_or_else(|e| {
+                    eprintln!("Error: Could not read dependency file: {e}");
+                    process::exit(1);
+                });
             let mut issues = Vec::new();
-            let dep_meta = parse_front_matter_detailed(&dep_filename, &dep_content, &mut issues).unwrap_or_else(|| {
-                eprintln!("Error: Invalid front matter in dependency file");
-                process::exit(1);
-            });
+            let dep_meta = parse_front_matter_detailed(&dep_filename, &dep_content, &mut issues)
+                .unwrap_or_else(|| {
+                    eprintln!("Error: Invalid front matter in dependency file");
+                    process::exit(1);
+                });
 
             let resolved_actor = resolve_actor(actor);
             match workflow::depend_item(
@@ -1213,19 +1252,23 @@ fn main() {
                 eprintln!("Error: {e}");
                 process::exit(1);
             });
-            let parent_filename = resolve_selector(&vault_path, parent_selector).unwrap_or_else(|e| {
-                eprintln!("Error: {e}");
-                process::exit(1);
-            });
-            let parent_content = fs::read_to_string(vault_path.join(&parent_filename)).unwrap_or_else(|e| {
-                eprintln!("Error: Could not read parent file: {e}");
-                process::exit(1);
-            });
+            let parent_filename =
+                resolve_selector(&vault_path, parent_selector).unwrap_or_else(|e| {
+                    eprintln!("Error: {e}");
+                    process::exit(1);
+                });
+            let parent_content = fs::read_to_string(vault_path.join(&parent_filename))
+                .unwrap_or_else(|e| {
+                    eprintln!("Error: Could not read parent file: {e}");
+                    process::exit(1);
+                });
             let mut issues = Vec::new();
-            let parent_meta = parse_front_matter_detailed(&parent_filename, &parent_content, &mut issues).unwrap_or_else(|| {
-                eprintln!("Error: Invalid front matter in parent file");
-                process::exit(1);
-            });
+            let parent_meta =
+                parse_front_matter_detailed(&parent_filename, &parent_content, &mut issues)
+                    .unwrap_or_else(|| {
+                        eprintln!("Error: Invalid front matter in parent file");
+                        process::exit(1);
+                    });
 
             let resolved_actor = resolve_actor(actor);
             match workflow::parent_item(
@@ -1301,15 +1344,17 @@ fn main() {
                 eprintln!("Error: {e}");
                 process::exit(1);
             });
-            let rel_content = fs::read_to_string(vault_path.join(&rel_filename)).unwrap_or_else(|e| {
-                eprintln!("Error: Could not read related file: {e}");
-                process::exit(1);
-            });
+            let rel_content =
+                fs::read_to_string(vault_path.join(&rel_filename)).unwrap_or_else(|e| {
+                    eprintln!("Error: Could not read related file: {e}");
+                    process::exit(1);
+                });
             let mut issues = Vec::new();
-            let rel_meta = parse_front_matter_detailed(&rel_filename, &rel_content, &mut issues).unwrap_or_else(|| {
-                eprintln!("Error: Invalid front matter in related file");
-                process::exit(1);
-            });
+            let rel_meta = parse_front_matter_detailed(&rel_filename, &rel_content, &mut issues)
+                .unwrap_or_else(|| {
+                    eprintln!("Error: Invalid front matter in related file");
+                    process::exit(1);
+                });
 
             let resolved_actor = resolve_actor(actor);
             match workflow::relate_item(
@@ -1322,10 +1367,7 @@ fn main() {
                 Ok(meta) => {
                     let fmt = format.unwrap_or_else(|| default_format(OutputFormat::Plain));
                     if fmt == OutputFormat::Json {
-                        println!(
-                            "{{\"id\":\"{}\",\"related\":{:?}}}",
-                            meta.id, meta.related
-                        );
+                        println!("{{\"id\":\"{}\",\"related\":{:?}}}", meta.id, meta.related);
                     } else {
                         println!("Related {} to {}", meta.id, rel_meta.id);
                     }
@@ -1640,7 +1682,9 @@ fn main() {
                 let recovery_filename = format!(".{edited_id}.edit-recovery.tmp");
                 let recovery_path = vault_path.join(&recovery_filename);
                 let _ = fs::write(&recovery_path, &edited_content);
-                eprintln!("Error: File changed while editing. Saved recovery to '{recovery_filename}'");
+                eprintln!(
+                    "Error: File changed while editing. Saved recovery to '{recovery_filename}'"
+                );
                 process::exit(1);
             }
 
@@ -1927,7 +1971,8 @@ fn main() {
             } else {
                 None
             };
-            let (mut filter_tag, mut filter_kind, mut filter_type, mut filter_status) = (None, None, None, None);
+            let (mut filter_tag, mut filter_kind, mut filter_type, mut filter_status) =
+                (None, None, None, None);
             let (mut archive_filter, mut port, mut no_open, mut format) =
                 (ArchiveFilter::Active, 0, false, None);
 
