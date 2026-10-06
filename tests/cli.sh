@@ -378,6 +378,18 @@ assert_contains "$created_from_view" '"title":"Created from viewer"'
 assert_contains "$created_from_view" '"status":"created"'
 curl -s -S "${url}data.json" | grep -q '"title":"Created from viewer"' || fail "viewer data did not contain newly created item"
 
+# Oversized request bodies are rejected rather than allocated
+head -c 2000000 /dev/zero | tr '\0' 'a' >"$TMP/oversized.json"
+oversized_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "Origin: $origin" -H 'X-Pin-Action: true' --data-binary @"$TMP/oversized.json" "${url}items")
+[ "$oversized_code" = "413" ] || {
+    kill -9 $view_pid 2>/dev/null || true
+    fail "expected 413 for an oversized request body, got $oversized_code"
+}
+curl -s -S "${url}data.json" | grep -q '"status":"created"' || {
+    kill -9 $view_pid 2>/dev/null || true
+    fail "viewer stopped serving after rejecting an oversized body"
+}
+
 # Try getting file with wrong token
 bad_url=$(echo "$url" | sed 's/[a-f0-9]\{32\}/bad_token/')
 bad_code=$(curl -s -o /dev/null -w "%{http_code}" "${bad_url}data.json")
