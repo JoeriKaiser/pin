@@ -10,46 +10,132 @@
 <a class="skip" href="#reader">Skip to proposal</a>
 <header class="topbar">
   <div class="identity"><strong>pin</strong><span id="scope"></span></div>
-  <label class="search"><span class="visually-hidden">Search proposals</span><input id="search" type="search" placeholder="Search proposals" autocomplete="off" spellcheck="false"><kbd>/</kbd></label>
+  <label class="search"><span class="visually-hidden">Search items</span><input id="search" type="search" placeholder="Search items" autocomplete="off" spellcheck="false"><kbd>/</kbd></label>
   <div class="topbar-actions">
+    <div class="view-switch" role="group" aria-label="View mode">
+      <button id="view-board-btn" class="control view-btn" type="button" aria-pressed="true">Board</button>
+      <button id="view-detail-btn" class="control view-btn" type="button" aria-pressed="false">Detail</button>
+    </div>
     <button id="filter-toggle" class="control" type="button" aria-expanded="false" aria-controls="filters">Filters</button>
     <span id="count" class="count" aria-live="polite">Loading…</span>
   </div>
 </header>
 
 <div id="filters" class="filters" hidden>
+  <label>Status<select id="status-filter"><option value="">Any status</option></select></label>
+  <label>Type<select id="type-filter"><option value="">Any type</option></select></label>
   <label>Kind<select id="kind-filter"><option value="">Any kind</option></select></label>
   <label>Priority<select id="priority-filter"><option value="">Any priority</option></select></label>
   <label id="project-wrap" hidden>Project<input id="project-filter" list="projects" placeholder="All projects" autocomplete="off"><datalist id="projects"></datalist></label>
   <button id="clear-filters" class="text-button" type="button">Clear</button>
 </div>
 
-<main class="workspace">
-  <section id="index" class="index" aria-label="Proposals">
+<main id="workspace" class="workspace mode-board">
+  <section id="board" class="board-view" aria-label="Board">
+    <div class="board-columns">
+      <div class="board-col" data-col="created">
+        <div class="board-col-header">
+          <span class="board-col-title">Backlog</span>
+          <span class="board-col-count" id="count-created">0</span>
+        </div>
+        <form id="quick-add-form" class="quick-add-form">
+          <input id="quick-add-input" class="quick-add-input" type="text" placeholder="+ Add task, press Enter..." autocomplete="off">
+        </form>
+        <div class="board-col-cards" data-drop-status="created"></div>
+      </div>
+      <div class="board-col" data-col="planned">
+        <div class="board-col-header">
+          <span class="board-col-title">Planned</span>
+          <span class="board-col-count" id="count-planned">0</span>
+        </div>
+        <div class="board-col-cards" data-drop-status="planned"></div>
+      </div>
+      <div class="board-col" data-col="in_progress">
+        <div class="board-col-header">
+          <span class="board-col-title">In Progress</span>
+          <span class="board-col-count" id="count-in_progress">0</span>
+        </div>
+        <div class="board-col-cards" data-drop-status="in_progress"></div>
+      </div>
+      <div class="board-col" data-col="blocked">
+        <div class="board-col-header">
+          <span class="board-col-title">Blocked</span>
+          <span class="board-col-count" id="count-blocked">0</span>
+        </div>
+        <div class="board-col-cards" data-drop-status="blocked"></div>
+      </div>
+      <div class="board-col" data-col="done_review">
+        <div class="board-col-header">
+          <span class="board-col-title">Done / Review</span>
+          <span class="board-col-count" id="count-done_review">0</span>
+        </div>
+        <div class="board-col-cards" data-drop-status="done"></div>
+      </div>
+    </div>
+    <details id="board-archive-drawer" class="board-drawer">
+      <summary class="board-drawer-summary">
+        <span>Closed & Cancelled (<span id="count-closed">0</span>)</span>
+      </summary>
+      <div class="board-drawer-content board-col-cards" data-drop-status="closed"></div>
+    </details>
+  </section>
+
+  <section id="index" class="index" aria-label="Work items">
     <div id="list-empty" class="empty" hidden></div>
     <ul id="list" class="proposal-list"></ul>
   </section>
 
   <section id="reader" class="reader" tabindex="-1" aria-labelledby="proposal-title">
-    <button id="back" class="back control" type="button">← Proposals</button>
-    <div id="detail-empty" class="empty reader-empty"><p>Select a proposal to read it.</p></div>
+    <button id="back" class="back control" type="button">← Work items</button>
+    <div id="detail-empty" class="empty reader-empty"><p>Select an item to view it.</p></div>
     <article id="proposal" hidden>
-      <header class="proposal-header">
-        <p id="proposal-context" class="proposal-context"></p>
-        <h1 id="proposal-title"></h1>
-        <div id="proposal-summary" class="proposal-summary"></div>
-        <details id="proposal-more" class="proposal-more">
-          <summary>More details</summary>
-          <dl id="proposal-meta"></dl>
-        </details>
-        <div id="resolution" class="resolution" hidden></div>
-      </header>
-      <div id="proposal-body" class="prose"></div>
+      <div class="split-detail">
+        <div class="prose-pane">
+          <header class="proposal-header">
+            <p id="proposal-context" class="proposal-context"></p>
+            <h1 id="proposal-title"></h1>
+            <div id="proposal-summary" class="proposal-summary"></div>
+            <div id="resolution" class="resolution" hidden></div>
+          </header>
+          <div id="proposal-body" class="prose"></div>
+        </div>
+        <aside class="inspector-rail">
+          <div id="worker-card" class="inspector-card worker-card"></div>
+          <div id="handoff-card" class="inspector-card handoff-card" hidden></div>
+          <div id="dependencies-card" class="inspector-card dependencies-card"></div>
+          <div id="proposal-actions" class="proposal-actions" hidden></div>
+          <details id="proposal-more" class="proposal-more">
+            <summary>More details</summary>
+            <dl id="proposal-meta"></dl>
+          </details>
+          <section id="activity-section" class="activity-section" hidden>
+            <h2>Activity History</h2>
+            <ol id="activity-list" class="activity-list"></ol>
+          </section>
+        </aside>
+      </div>
     </article>
   </section>
 </main>
 
-<footer><span id="snapshot"></span><span>Read-only local snapshot</span></footer>
+<dialog id="action-dialog" class="action-dialog">
+  <div id="action-form" class="dialog-content">
+    <div class="dialog-header">
+      <h2 id="dialog-title">Action</h2>
+      <button id="dialog-close-btn" class="dialog-close" type="button" aria-label="Close">✕</button>
+    </div>
+    <div id="dialog-error" class="dialog-error" hidden></div>
+    <div id="dialog-body" class="dialog-body"></div>
+    <div class="dialog-footer">
+      <button id="dialog-cancel-btn" class="control text-button" type="button">Cancel</button>
+      <button id="dialog-submit-btn" class="action-btn primary" type="button">Confirm</button>
+    </div>
+  </div>
+</dialog>
+
+<div id="toast" class="toast" hidden></div>
+
+<footer><span id="snapshot"></span><span id="live-status">● Live viewer</span></footer>
 <script src="marked.min.js"></script>
 <script src="purify.min.js"></script>
 <script src="app.js"></script>

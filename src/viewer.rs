@@ -1,11 +1,14 @@
 use crate::assets::*;
-use crate::model::{ArchiveFilter, IdeaMeta, OutputFormat};
+use crate::model::{ArchiveFilter, IdeaMeta, Kind, OutputFormat, Priority, Status, WorkType};
 use crate::output::JsonIdeaOutput;
-use crate::vault::generate_token;
+use crate::vault::{collect_ideas_with_filter, generate_token, resolve_selector, FilterOptions};
+use crate::workflow;
 use chrono::Utc;
-use serde::Serialize;
-use std::io::{self, BufRead, BufReader, Write};
+use serde::{Deserialize, Serialize};
+use std::env;
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 use std::thread;
@@ -23,48 +26,167 @@ struct SnapshotData<'a> {
 
 pub struct ViewSnapshot {
     pub token: String,
-    pub data_json: String,
+    pub vault_path: PathBuf,
+    pub scope_label: String,
+    pub archive_filter: ArchiveFilter,
+}
+
+#[derive(Deserialize)]
+struct ActionPayload {
+    action: String,
+    #[serde(default)]
+    to: Option<Status>,
+    #[serde(default)]
+    actor: Option<String>,
+    #[serde(default)]
+    note: Option<String>,
+    #[serde(default)]
+    evidence: Option<String>,
+    #[serde(default)]
+    progress: Option<String>,
+    #[serde(default)]
+    next: Option<String>,
+    #[serde(default)]
+    blocker: Option<String>,
+    #[serde(default)]
+    verification: Option<String>,
+    #[serde(default)]
+    lease: Option<u64>,
+    #[serde(default)]
+    force: Option<bool>,
+    #[serde(default)]
+    expect_revision: Option<u64>,
+}
+
+#[derive(Deserialize)]
+struct CreateItemPayload {
+    title: String,
+    #[serde(default)]
+    body: Option<String>,
+    #[serde(rename = "type", default)]
+    item_type: Option<WorkType>,
+    #[serde(default)]
+    kind: Option<Kind>,
+    #[serde(default)]
+    status: Option<Status>,
+    #[serde(default)]
+    priority: Option<Priority>,
+    #[serde(default)]
+    project: Option<String>,
+    #[serde(default)]
+    tags: Option<String>,
+    #[serde(default)]
+    actor: Option<String>,
 }
 
 pub fn create_snapshot(
-    ideas: &[IdeaMeta],
+    _ideas: &[IdeaMeta],
+    vault_path: PathBuf,
     scope_label: &str,
     archive_filter: ArchiveFilter,
 ) -> ViewSnapshot {
     let token = generate_token();
-    let captured_at = Utc::now().to_rfc3339();
-
-    let json_items: Vec<JsonIdeaOutput> = ideas
-        .iter()
-        .map(|meta| {
-            let mut item = JsonIdeaOutput::from(meta);
-            item.content = Some(&meta.body);
-            item
-        })
-        .collect();
-
-    let count = json_items.len();
-
-    let archive_str = match archive_filter {
-        ArchiveFilter::Active => "active",
-        ArchiveFilter::Archived => "archived",
-        ArchiveFilter::All => "all",
-    };
-
-    let data = SnapshotData {
-        scope: scope_label,
-        archive_filter: archive_str,
-        captured_at,
-        items: json_items,
-        count,
-    };
-
-    let data_json = serde_json::to_string(&data).unwrap_or_else(|_| "{}".to_string());
-
-    ViewSnapshot { token, data_json }
+    ViewSnapshot {
+        token,
+        vault_path,
+        scope_label: scope_label.to_string(),
+        archive_filter,
+    }
 }
 
-fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>) {
+fn compute_vault_etag(vault_path: &Path) -> String {
+    let mut count: u64 = 0;
+    let mut max_mtime_secs: u64 = 0;
+    let mut max_mtime_nanos: u32 = 0;
+    let mut total_size: u64 = 0;
+
+    if let Ok(entries) = std::fs::read_dir(vault_path) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("md") {
+                let filename = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+                if filename.starts_with('.') {
+                    continue;
+                }
+                count += 1;
+                if let Ok(meta) = entry.metadata() {
+                    total_size = total_size.wrapping_add(meta.len());
+                    if let Ok(modified) = meta.modified() {
+                        if let Ok(dur) = modified.duration_since(std::time::UNIX_EPOCH) {
+                            let s = dur.as_secs();
+                            let n = dur.subsec_nanos();
+                            if s > max_mtime_secs || (s == max_mtime_secs && n > max_mtime_nanos) {
+                                max_mtime_secs = s;
+                                max_mtime_nanos = n;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    format!("{count:x}-{max_mtime_secs:x}-{max_mtime_nanos:x}-{total_size:x}")
+}
+
+fn etags_match(client_header: &str, server_etag: &str) -> bool {
+    let client = client_header.trim();
+    if client == "*" {
+        return true;
+    }
+    let s = server_etag.trim().trim_matches('"');
+    for item in client.split(',') {
+        let item = item
+            .trim()
+            .strip_prefix("W/")
+            .unwrap_or(item.trim())
+            .trim_matches('"');
+        if !item.is_empty() && item == s {
+            return true;
+        }
+    }
+    false
+}
+
+fn send_not_modified(stream: &mut TcpStream, etag: &str) {
+    let clean_etag = etag.trim().trim_matches('"');
+    let header_str =
+        format!("HTTP/1.1 304 Not Modified\r\nETag: \"{clean_etag}\"\r\nConnection: close\r\n\r\n");
+    let _ = stream.write_all(header_str.as_bytes());
+}
+
+fn send_response(
+    stream: &mut TcpStream,
+    status_code: u16,
+    status_text: &str,
+    content_type: &str,
+    body: &[u8],
+    extra_security: bool,
+    send_body: bool,
+    etag: Option<&str>,
+) {
+    let mut header_str = format!(
+        "HTTP/1.1 {status_code} {status_text}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n",
+        body.len()
+    );
+    if let Some(e) = etag {
+        let clean_etag = e.trim().trim_matches('"');
+        header_str.push_str(&format!("ETag: \"{clean_etag}\"\r\n"));
+    }
+    if extra_security {
+        header_str.push_str(&format!(
+            "Content-Security-Policy: {VIEW_CSP}\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\nCache-Control: no-store\r\n"
+        ));
+    }
+    header_str.push_str("\r\n");
+
+    let _ = stream.write_all(header_str.as_bytes());
+    if send_body {
+        let _ = stream.write_all(body);
+    }
+}
+
+fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16) {
     let mut reader = BufReader::new(&stream);
     let mut request_line = String::new();
 
@@ -80,71 +202,501 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>) {
     let method = parts[0];
     let raw_path = parts[1];
 
-    if method != "GET" && method != "HEAD" {
-        let response = format!(
-            "HTTP/1.1 405 Method Not Allowed\r\n\
-             Content-Type: text/plain; charset=utf-8\r\n\
-             Content-Length: 18\r\n\
-             Connection: close\r\n\r\n\
-             Method Not Allowed"
-        );
-        let _ = stream.write_all(response.as_bytes());
-        return;
+    // Read headers
+    let mut headers = Vec::new();
+    let mut content_length = 0;
+    let mut has_pin_action_header = false;
+    let mut origin_header = None;
+    let mut if_none_match = None;
+
+    loop {
+        let mut line = String::new();
+        if reader.read_line(&mut line).is_err() || line.trim().is_empty() {
+            break;
+        }
+        let trimmed = line.trim();
+        if trimmed.to_ascii_lowercase().starts_with("content-length:") {
+            if let Some((_, val)) = trimmed.split_once(':') {
+                content_length = val.trim().parse::<usize>().unwrap_or(0);
+            }
+        }
+        if trimmed.to_ascii_lowercase().starts_with("x-pin-action:") {
+            has_pin_action_header = true;
+        }
+        if trimmed.to_ascii_lowercase().starts_with("origin:") {
+            if let Some((_, val)) = trimmed.split_once(':') {
+                origin_header = Some(val.trim().to_string());
+            }
+        }
+        if trimmed.to_ascii_lowercase().starts_with("if-none-match:") {
+            if let Some((_, val)) = trimmed.split_once(':') {
+                if_none_match = Some(val.trim().to_string());
+            }
+        }
+        headers.push(line);
     }
 
     let expected_prefix = format!("/{}/", snapshot.token);
     if !raw_path.starts_with(&expected_prefix) {
-        let response = format!(
-            "HTTP/1.1 404 Not Found\r\n\
-             Content-Type: text/plain; charset=utf-8\r\n\
-             Content-Length: 9\r\n\
-             Connection: close\r\n\r\n\
-             Not Found"
+        send_response(
+            &mut stream,
+            404,
+            "Not Found",
+            "text/plain; charset=utf-8",
+            b"Not Found",
+            false,
+            true,
+            None,
         );
-        let _ = stream.write_all(response.as_bytes());
         return;
     }
 
     let subpath = &raw_path[expected_prefix.len()..];
-    let (content_type, body) = match subpath {
-        "" | "index.html" => ("text/html; charset=utf-8", INDEX_HTML.as_bytes()),
+
+    // POST /items/{id}/action
+    if method == "POST" {
+        if subpath == "items" || subpath == "items/create" {
+            let valid_origin = origin_header.as_deref().is_some_and(|orig| {
+                orig == format!("http://127.0.0.1:{port}")
+                    || orig == format!("http://localhost:{port}")
+            });
+
+            if !valid_origin || !has_pin_action_header {
+                send_response(
+                    &mut stream,
+                    403,
+                    "Forbidden",
+                    "application/json; charset=utf-8",
+                    b"{\"error\":\"Forbidden request\"}",
+                    false,
+                    true,
+                    None,
+                );
+                return;
+            }
+
+            let mut body_bytes = vec![0u8; content_length];
+            if reader.read_exact(&mut body_bytes).is_err() {
+                send_response(
+                    &mut stream,
+                    400,
+                    "Bad Request",
+                    "application/json; charset=utf-8",
+                    b"{\"error\":\"Failed to read body\"}",
+                    false,
+                    true,
+                    None,
+                );
+                return;
+            }
+
+            let payload: CreateItemPayload = match serde_json::from_slice(&body_bytes) {
+                Ok(p) => p,
+                Err(e) => {
+                    let msg = format!("{{\"error\":\"Invalid JSON: {e}\"}}");
+                    send_response(
+                        &mut stream,
+                        400,
+                        "Bad Request",
+                        "application/json; charset=utf-8",
+                        msg.as_bytes(),
+                        false,
+                        true,
+                        None,
+                    );
+                    return;
+                }
+            };
+
+            let title_trimmed = payload.title.trim();
+            if title_trimmed.is_empty() {
+                send_response(
+                    &mut stream,
+                    400,
+                    "Bad Request",
+                    "application/json; charset=utf-8",
+                    b"{\"error\":\"Title cannot be empty\"}",
+                    false,
+                    true,
+                    None,
+                );
+                return;
+            }
+
+            let proj_name = payload
+                .project
+                .filter(|p| !p.trim().is_empty())
+                .unwrap_or_else(|| {
+                    if snapshot.scope_label != "all" {
+                        snapshot.scope_label.clone()
+                    } else {
+                        "default".to_string()
+                    }
+                });
+
+            let id = crate::vault::generate_id();
+            let final_type = payload.item_type.unwrap_or(WorkType::Task);
+            let final_kind = payload.kind.unwrap_or(Kind::Technical);
+            let final_status = payload.status.unwrap_or(Status::Created);
+            let viewer_actor =
+                env::var("PIN_VIEWER_ACTOR").unwrap_or_else(|_| "human:viewer".to_string());
+            let creator = payload.actor.unwrap_or(viewer_actor);
+            let body_content = payload
+                .body
+                .unwrap_or_else(|| format!("# {}\n", title_trimmed));
+
+            let item = IdeaMeta::new_work_item(
+                id.clone(),
+                proj_name,
+                title_trimmed.to_string(),
+                body_content,
+                final_kind,
+                final_type,
+                final_status,
+                payload.priority,
+                payload.tags,
+                Some(creator),
+            );
+
+            let file_path = snapshot.vault_path.join(format!("{id}.md"));
+            let rendered = crate::frontmatter::render_full_document(&item);
+            if let Err(e) = crate::vault::atomic_write(&file_path, &rendered) {
+                let msg = format!("{{\"error\":\"Failed to save item: {e}\"}}");
+                send_response(
+                    &mut stream,
+                    500,
+                    "Internal Server Error",
+                    "application/json; charset=utf-8",
+                    msg.as_bytes(),
+                    false,
+                    true,
+                    None,
+                );
+                return;
+            }
+
+            let json_item = JsonIdeaOutput::from(&item);
+            let body_str = serde_json::to_string(&json_item).unwrap_or_default();
+            send_response(
+                &mut stream,
+                201,
+                "Created",
+                "application/json; charset=utf-8",
+                body_str.as_bytes(),
+                true,
+                true,
+                None,
+            );
+            return;
+        }
+
+        if let Some(stripped) = subpath.strip_prefix("items/") {
+            if let Some(id_part) = stripped.strip_suffix("/action") {
+                let id = id_part.trim();
+
+                // CSRF verification: must have Origin matching server address and X-Pin-Action header
+                let valid_origin = origin_header.as_deref().is_some_and(|orig| {
+                    orig == format!("http://127.0.0.1:{port}")
+                        || orig == format!("http://localhost:{port}")
+                });
+
+                if !valid_origin || !has_pin_action_header {
+                    send_response(
+                        &mut stream,
+                        403,
+                        "Forbidden",
+                        "application/json; charset=utf-8",
+                        b"{\"error\":\"Forbidden request\"}",
+                        false,
+                        true,
+                        None,
+                    );
+                    return;
+                }
+
+                // Read body
+                let mut body_bytes = vec![0u8; content_length];
+                if reader.read_exact(&mut body_bytes).is_err() {
+                    send_response(
+                        &mut stream,
+                        400,
+                        "Bad Request",
+                        "application/json; charset=utf-8",
+                        b"{\"error\":\"Failed to read body\"}",
+                        false,
+                        true,
+                        None,
+                    );
+                    return;
+                }
+
+                let payload: ActionPayload = match serde_json::from_slice(&body_bytes) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        let msg = format!("{{\"error\":\"Invalid JSON: {e}\"}}");
+                        send_response(
+                            &mut stream,
+                            400,
+                            "Bad Request",
+                            "application/json; charset=utf-8",
+                            msg.as_bytes(),
+                            false,
+                            true,
+                            None,
+                        );
+                        return;
+                    }
+                };
+
+                let filename = match resolve_selector(&snapshot.vault_path, id) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        let msg = format!("{{\"error\":\"{e}\"}}");
+                        send_response(
+                            &mut stream,
+                            404,
+                            "Not Found",
+                            "application/json; charset=utf-8",
+                            msg.as_bytes(),
+                            false,
+                            true,
+                            None,
+                        );
+                        return;
+                    }
+                };
+
+                let viewer_actor =
+                    env::var("PIN_VIEWER_ACTOR").unwrap_or_else(|_| "human:viewer".to_string());
+                let actor_to_use = payload.actor.as_deref().unwrap_or(&viewer_actor);
+
+                let mutation_result = match payload.action.as_str() {
+                    "transition" => match payload.to {
+                        Some(target_status) => workflow::transition_item(
+                            &snapshot.vault_path,
+                            &filename,
+                            target_status,
+                            Some(actor_to_use),
+                            payload.note.as_deref(),
+                            payload.expect_revision,
+                        ),
+                        None => Err(workflow::WorkflowError::InvalidTransition {
+                            from: Status::Created,
+                            to: Status::Created,
+                            reason: "Missing 'to' status".to_string(),
+                        }),
+                    },
+                    "claim" => workflow::claim_item(
+                        &snapshot.vault_path,
+                        &filename,
+                        actor_to_use,
+                        payload.lease.unwrap_or(3600),
+                        payload.expect_revision,
+                    ),
+                    "release" => workflow::release_item(
+                        &snapshot.vault_path,
+                        &filename,
+                        Some(actor_to_use),
+                        payload.force.unwrap_or(false),
+                        payload.expect_revision,
+                    ),
+                    "handoff" => workflow::handoff_item(
+                        &snapshot.vault_path,
+                        &filename,
+                        Some(actor_to_use),
+                        payload.progress.as_deref(),
+                        payload.next.as_deref(),
+                        payload.blocker.as_deref(),
+                        payload.verification.as_deref(),
+                        payload.expect_revision,
+                    ),
+                    "complete" => {
+                        let ev = payload.evidence.as_deref().unwrap_or("");
+                        workflow::complete_item(
+                            &snapshot.vault_path,
+                            &filename,
+                            Some(actor_to_use),
+                            ev,
+                            payload.expect_revision,
+                        )
+                    }
+                    "close" => workflow::close_item(
+                        &snapshot.vault_path,
+                        &filename,
+                        Some(actor_to_use),
+                        payload.note.as_deref(),
+                        payload.expect_revision,
+                    ),
+                    other => Err(workflow::WorkflowError::ParseError(format!(
+                        "Unknown action '{other}'"
+                    ))),
+                };
+
+                match mutation_result {
+                    Ok(updated_meta) => {
+                        let json_item = JsonIdeaOutput::from(&updated_meta);
+                        let body_str = serde_json::to_string(&json_item).unwrap_or_default();
+                        send_response(
+                            &mut stream,
+                            200,
+                            "OK",
+                            "application/json; charset=utf-8",
+                            body_str.as_bytes(),
+                            true,
+                            true,
+                            None,
+                        );
+                        return;
+                    }
+                    Err(err) => {
+                        let status_code = match err {
+                            workflow::WorkflowError::RevisionConflict { .. }
+                            | workflow::WorkflowError::ClaimConflict { .. }
+                            | workflow::WorkflowError::LockConflict(_) => 409,
+                            workflow::WorkflowError::ItemNotFound(_) => 404,
+                            workflow::WorkflowError::PermissionDenied(_) => 403,
+                            _ => 400,
+                        };
+                        let msg = format!("{{\"error\":\"{err}\"}}");
+                        send_response(
+                            &mut stream,
+                            status_code,
+                            "Error",
+                            "application/json; charset=utf-8",
+                            msg.as_bytes(),
+                            true,
+                            true,
+                            None,
+                        );
+                        return;
+                    }
+                }
+            }
+        }
+
+        send_response(
+            &mut stream,
+            405,
+            "Method Not Allowed",
+            "text/plain; charset=utf-8",
+            b"Method Not Allowed",
+            false,
+            true,
+            None,
+        );
+        return;
+    }
+
+    if method != "GET" && method != "HEAD" {
+        send_response(
+            &mut stream,
+            405,
+            "Method Not Allowed",
+            "text/plain; charset=utf-8",
+            b"Method Not Allowed",
+            false,
+            true,
+            None,
+        );
+        return;
+    }
+
+    if subpath == "data.json" {
+        let etag = compute_vault_etag(&snapshot.vault_path);
+        if let Some(if_none) = &if_none_match {
+            if etags_match(if_none, &etag) {
+                send_not_modified(&mut stream, &etag);
+                return;
+            }
+        }
+
+        let filter_project = if snapshot.scope_label == "all" {
+            None
+        } else {
+            Some(snapshot.scope_label.as_str())
+        };
+        let filter = FilterOptions {
+            project: filter_project,
+            archive_filter: snapshot.archive_filter,
+            ..Default::default()
+        };
+        let ideas = collect_ideas_with_filter(&snapshot.vault_path, &filter).unwrap_or_default();
+        let captured_at = Utc::now().to_rfc3339();
+
+        let json_items: Vec<JsonIdeaOutput> = ideas
+            .iter()
+            .map(|meta| {
+                let mut item = JsonIdeaOutput::from(meta);
+                item.content = Some(&meta.body);
+                item
+            })
+            .collect();
+
+        let count = json_items.len();
+        let archive_str = match snapshot.archive_filter {
+            ArchiveFilter::Active => "active",
+            ArchiveFilter::Archived => "archived",
+            ArchiveFilter::All => "all",
+        };
+
+        let data = SnapshotData {
+            scope: &snapshot.scope_label,
+            archive_filter: archive_str,
+            captured_at,
+            items: json_items,
+            count,
+        };
+
+        let data_json = serde_json::to_string(&data).unwrap_or_else(|_| "{}".to_string());
+        send_response(
+            &mut stream,
+            200,
+            "OK",
+            "application/json; charset=utf-8",
+            data_json.as_bytes(),
+            true,
+            method == "GET",
+            Some(&etag),
+        );
+        return;
+    }
+
+    let modified_html;
+    let (content_type, body): (&str, &[u8]) = match subpath {
+        "" | "index.html" => {
+            let token_base = format!("data-base=\"/{}/\"", snapshot.token);
+            modified_html = INDEX_HTML.replace("data-base=\"\"", &token_base);
+            ("text/html; charset=utf-8", modified_html.as_bytes())
+        }
         "app.css" => ("text/css; charset=utf-8", APP_CSS.as_bytes()),
         "app.js" => ("text/javascript; charset=utf-8", APP_JS.as_bytes()),
         "marked.min.js" => ("text/javascript; charset=utf-8", MARKED_JS.as_bytes()),
         "purify.min.js" => ("text/javascript; charset=utf-8", PURIFY_JS.as_bytes()),
-        "data.json" => (
-            "application/json; charset=utf-8",
-            snapshot.data_json.as_bytes(),
-        ),
         _ => {
-            let response = format!(
-                "HTTP/1.1 404 Not Found\r\n\
-                 Content-Type: text/plain; charset=utf-8\r\n\
-                 Content-Length: 9\r\n\
-                 Connection: close\r\n\r\n\
-                 Not Found"
+            send_response(
+                &mut stream,
+                404,
+                "Not Found",
+                "text/plain; charset=utf-8",
+                b"Not Found",
+                false,
+                true,
+                None,
             );
-            let _ = stream.write_all(response.as_bytes());
             return;
         }
     };
 
-    let response_headers = format!(
-        "HTTP/1.1 200 OK\r\n\
-         Content-Type: {content_type}\r\n\
-         Content-Length: {}\r\n\
-         Content-Security-Policy: {VIEW_CSP}\r\n\
-         X-Content-Type-Options: nosniff\r\n\
-         X-Frame-Options: DENY\r\n\
-         Cache-Control: no-store\r\n\
-         Connection: close\r\n\r\n",
-        body.len()
+    send_response(
+        &mut stream,
+        200,
+        "OK",
+        content_type,
+        body,
+        true,
+        method == "GET",
+        None,
     );
-
-    let _ = stream.write_all(response_headers.as_bytes());
-    if method == "GET" {
-        let _ = stream.write_all(body);
-    }
 }
 
 pub fn open_browser(url: &str) {
@@ -205,12 +757,13 @@ pub fn serve_view(
     }
 
     let shared_snapshot = Arc::new(snapshot);
+    let server_port = local_addr.port();
 
     for stream in listener.incoming() {
         if let Ok(stream) = stream {
             let snap = Arc::clone(&shared_snapshot);
             thread::spawn(move || {
-                handle_client(stream, &snap);
+                handle_client(stream, &snap, server_port);
             });
         }
     }

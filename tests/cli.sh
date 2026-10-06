@@ -48,7 +48,24 @@ assert_contains "$created" '"kind":"technical"'
 assert_contains "$created" '"title":"Cache invalidation"'
 assert_contains "$created" '"tags":["perf","agents"]'
 assert_contains "$created" '"priority":"high"'
-HOME="$TMP/home" "$PIN_BIN" read "$(printf '%s' "$created" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')" | grep -q '^schema: 1$'
+HOME="$TMP/home" "$PIN_BIN" read "$(printf '%s' "$created" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')" | grep -q -E '^schema: [12]$'
+
+wf_item=$(HOME="$TMP/home" "$PIN_BIN" add '# Lifecycle test' --kind technical --type task --format json)
+wf_id=$(printf '%s' "$wf_item" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+HOME="$TMP/home" PIN_ACTOR=agent:test "$PIN_BIN" transition "$wf_id" --to planned --format json | grep -q '"status":"planned"'
+HOME="$TMP/home" PIN_ACTOR=agent:test "$PIN_BIN" claim "$wf_id" --lease 60 --format json | grep -q '"status":"in_progress"'
+if HOME="$TMP/home" PIN_ACTOR=agent:other "$PIN_BIN" claim "$wf_id" --format json >/dev/null 2>&1; then
+    fail "claim was stolen from another active actor"
+fi
+HOME="$TMP/home" PIN_ACTOR=agent:test "$PIN_BIN" handoff "$wf_id" --progress 'Started work' --next 'Finish tests' --format json | grep -q '"action":"handoff_updated"'
+HOME="$TMP/home" PIN_ACTOR=agent:test "$PIN_BIN" release "$wf_id" --format json | grep -q '"status":"planned"'
+if HOME="$TMP/home" "$PIN_BIN" transition "$wf_id" --to done --expect-revision 0 >/dev/null 2>&1; then
+    fail "stale revision was accepted"
+fi
+HOME="$TMP/home" PIN_ACTOR=agent:test "$PIN_BIN" claim "$wf_id" --format json >/dev/null
+HOME="$TMP/home" PIN_ACTOR=agent:test "$PIN_BIN" complete "$wf_id" --evidence 'Direct completion path' --format json | grep -q '"status":"done"'
+HOME="$TMP/home" PIN_ACTOR=agent:test "$PIN_BIN" close "$wf_id" --format json | grep -q '"status":"closed"'
+HOME="$TMP/home" "$PIN_BIN" rm "$wf_id" --format json >/dev/null
 
 if HOME="$TMP/home" "$PIN_BIN" add '# Missing kind' >/dev/null 2>&1; then
     fail "add accepted a proposal without --kind"
@@ -183,6 +200,84 @@ assert_contains "$all_stats" '"archived":1'
 HOME="$TMP/home" "$PIN_BIN" unarchive "$id" --format json | grep -q '"unarchived"'
 HOME="$TMP/home" "$PIN_BIN" list-project --format json | grep -q "$id"
 
+mkdir -p "$TMP/dependency-vault"
+dependency=$(PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" add '# Dependency' --kind technical --type task --format json)
+dependency_id=$(printf '%s' "$dependency" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+dependent=$(PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" add '# Dependent work' --kind technical --type task --format json)
+dependent_id=$(printf '%s' "$dependent" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" depend "$dependent_id" "$dependency_id" --format json | grep -q '"action":"dependency_added"'
+PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" parent "$dependent_id" "$dependency_id" --format json | grep -q '"parent_id":"'
+PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" relate "$dependent_id" "$dependency_id" --format json | grep -q '"related":\['
+PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" transition "$dependency_id" --to planned --format json >/dev/null
+PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" transition "$dependent_id" --to planned --format json >/dev/null
+ready=$(PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" next --format json)
+assert_contains "$ready" "$dependency_id"
+case "$ready" in *"$dependent_id"*) fail "next returned work with unfinished dependency" ;; esac
+ready_list=$(PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" list-project --ready --format json)
+assert_contains "$ready_list" "$dependency_id"
+case "$ready_list" in *"$dependent_id"*) fail "ready list returned work with unfinished dependency" ;; esac
+PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" claim "$dependency_id" --format json >/dev/null
+PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" complete "$dependency_id" --evidence 'Dependency completed' --format json >/dev/null
+ready_after=$(PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" next --format json)
+assert_contains "$ready_after" "$dependent_id"
+if PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" depend "$dependency_id" "$dependent_id" --format json >/dev/null 2>&1; then
+    fail "dependency cycle was accepted"
+fi
+cat >"$TMP/dep-remove-editor" <<'EOF'
+#!/bin/sh
+[ "$1" = "--wait" ] || exit 2
+sed -i '/depends_on:/,+1d' "$2"
+EOF
+chmod +x "$TMP/dep-remove-editor"
+PIN_VAULT="$TMP/dependency-vault" EDITOR="$TMP/dep-remove-editor --wait" "$PIN_BIN" edit "$dependent_id" --format json >/dev/null
+edited_dep=$(PIN_VAULT="$TMP/dependency-vault" "$PIN_BIN" read "$dependent_id")
+case "$edited_dep" in *"depends_on:"*) fail "edit did not remove dependency: $edited_dep" ;; esac
+cross_dep=$(PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=shared "$PIN_BIN" add '# Shared dependency' --kind technical --type task --format json)
+cross_dep_id=$(printf '%s' "$cross_dep" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+cross_dependent=$(PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=other "$PIN_BIN" add '# Other project dependent' --kind technical --type task --format json)
+cross_dependent_id=$(printf '%s' "$cross_dependent" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+PIN_VAULT="$TMP/dependency-vault" "$PIN_BIN" depend "$cross_dependent_id" "$cross_dep_id" --format json >/dev/null
+PIN_VAULT="$TMP/dependency-vault" "$PIN_BIN" transition "$cross_dep_id" --to planned --format json >/dev/null
+PIN_VAULT="$TMP/dependency-vault" "$PIN_BIN" transition "$cross_dependent_id" --to planned --format json >/dev/null
+cross_ready=$(PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=other "$PIN_BIN" next --format json)
+case "$cross_ready" in *"$cross_dependent_id"*) fail "next returned other project work with unfinished shared dependency" ;; esac
+PIN_VAULT="$TMP/dependency-vault" "$PIN_BIN" claim "$cross_dep_id" --format json >/dev/null
+PIN_VAULT="$TMP/dependency-vault" "$PIN_BIN" complete "$cross_dep_id" --evidence 'Shared dependency completed' --format json >/dev/null
+cross_ready_after=$(PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=other "$PIN_BIN" next --format json)
+assert_contains "$cross_ready_after" "$cross_dependent_id"
+
+mkdir -p "$TMP/upgrade-vault"
+cat >"$TMP/upgrade-vault/legacy.md" <<'EOF'
+---
+project: example
+timestamp: 1
+title: Upgrade me
+---
+# Upgrade me
+EOF
+PIN_VAULT="$TMP/upgrade-vault" "$PIN_BIN" doctor --upgrade --format json | grep -q '"repaired":1'
+PIN_VAULT="$TMP/upgrade-vault" "$PIN_BIN" read legacy.md | grep -q '^schema: 2$'
+PIN_VAULT="$TMP/upgrade-vault" "$PIN_BIN" read legacy.md | grep -q '^status: "created"$'
+
+contention_item=$(PIN_VAULT="$TMP/repo/.pin_vault" PIN_PROJECT=example "$PIN_BIN" add '# Lock contention test' --kind technical --type task --format json)
+contention_id=$(printf '%s' "$contention_item" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+PIN_VAULT="$TMP/repo/.pin_vault" PIN_PROJECT=example "$PIN_BIN" transition "$contention_id" --to planned --format json >/dev/null
+
+PIN_VAULT="$TMP/repo/.pin_vault" PIN_PROJECT=example PIN_ACTOR=agent:worker1 "$PIN_BIN" handoff "$contention_id" --progress 'Worker 1 progress' --format json >"$TMP/worker1.out" &
+p1=$!
+PIN_VAULT="$TMP/repo/.pin_vault" PIN_PROJECT=example PIN_ACTOR=agent:worker2 "$PIN_BIN" relate "$contention_id" "$prefix" --format json >"$TMP/worker2.out" &
+p2=$!
+wait $p1
+wait $p2
+
+read_contention=$(PIN_VAULT="$TMP/repo/.pin_vault" "$PIN_BIN" read "$contention_id" --format json)
+assert_contains "$read_contention" 'Worker 1 progress'
+assert_contains "$read_contention" "$prefix"
+assert_contains "$read_contention" 'revision: 4'
+assert_contains "$read_contention" 'agent:worker1'
+assert_contains "$read_contention" 'agent:worker2'
+HOME="$TMP/home" "$PIN_BIN" rm "$contention_id" --format json >/dev/null
+
 mkdir -p "$TMP/search-vault"
 PIN_VAULT="$TMP/search-vault" PIN_PROJECT=search "$PIN_BIN" add '# Incidental note
 
@@ -214,7 +309,8 @@ fi
 
 # 2. View launch with --no-open and plain format
 mkdir -p "$TMP/view-vault"
-PIN_VAULT="$TMP/view-vault" PIN_PROJECT=view "$PIN_BIN" add '# View test' --kind technical --priority low --format json >/dev/null
+view_item=$(PIN_VAULT="$TMP/view-vault" PIN_PROJECT=view "$PIN_BIN" add '# View test' --kind technical --priority low --format json)
+view_id=$(printf '%s' "$view_item" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
 
 view_out="$TMP/view.log"
 view_err="$TMP/view.err"
@@ -250,6 +346,7 @@ curl -s -S -D "$curl_headers" "$url"data.json >"$curl_out"
 # Assert response is valid JSON and contains the pin we added
 assert_contains "$(cat "$curl_out")" '"title":"View test"'
 assert_contains "$(cat "$curl_out")" '"kind":"technical"'
+assert_contains "$(cat "$curl_out")" '"status":"created"'
 
 # Assert security headers
 assert_contains "$(cat "$curl_headers")" "Content-Security-Policy:"
@@ -267,6 +364,19 @@ assert_contains "$(cat "$curl_html")" 'id="proposal-more"'
 curl -s -S "$url"app.js >"$TMP/app.js"
 assert_contains "$(cat "$TMP/app.js")" 'DOMPurify.sanitize'
 assert_contains "$(cat "$TMP/app.js")" 'bodyWithoutDuplicateTitle'
+
+origin=$(printf '%s' "$url" | cut -d/ -f1-3)
+mutation_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H 'Content-Type: application/json' --data '{"action":"transition","to":"planned"}' "${url}items/${view_id}/action")
+[ "$mutation_code" = "403" ] || fail "viewer accepted a mutation without same-origin headers"
+mutation=$(curl -s -S -X POST -H "Origin: $origin" -H 'Content-Type: application/json' -H 'X-Pin-Action: true' --data '{"action":"transition","to":"planned","actor":"human:test","expect_revision":1}' "${url}items/${view_id}/action")
+assert_contains "$mutation" '"status":"planned"'
+curl -s -S "${url}data.json" | grep -q '"status":"planned"' || fail "viewer data did not refresh after mutation"
+
+# Test POST items (quick-add from viewer)
+created_from_view=$(curl -s -S -X POST -H "Origin: $origin" -H 'Content-Type: application/json' -H 'X-Pin-Action: true' --data '{"title":"Created from viewer","type":"task","status":"created","project":"view"}' "${url}items")
+assert_contains "$created_from_view" '"title":"Created from viewer"'
+assert_contains "$created_from_view" '"status":"created"'
+curl -s -S "${url}data.json" | grep -q '"title":"Created from viewer"' || fail "viewer data did not contain newly created item"
 
 # Try getting file with wrong token
 bad_url=$(echo "$url" | sed 's/[a-f0-9]\{32\}/bad_token/')

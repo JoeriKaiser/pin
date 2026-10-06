@@ -1,10 +1,12 @@
 use crate::frontmatter::parse_front_matter_detailed;
-use crate::model::{ArchiveFilter, IdeaMeta, Kind};
+use crate::model::{ArchiveFilter, IdeaMeta, Kind, Status, WorkType};
 use rand::Rng;
 use std::env;
 use std::fmt;
 use std::fs;
 use std::io::{self, Write};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
@@ -143,9 +145,19 @@ pub fn atomic_write(path: &Path, content: &str) -> io::Result<()> {
     fs::create_dir_all(parent)?;
 
     let mut temp_file = tempfile::NamedTempFile::new_in(parent)?;
+    #[cfg(unix)]
+    {
+        let _ = temp_file
+            .as_file()
+            .set_permissions(fs::Permissions::from_mode(0o644));
+    }
     temp_file.write_all(content.as_bytes())?;
     temp_file.flush()?;
     temp_file.persist(path).map_err(|e| e.error)?;
+    #[cfg(unix)]
+    {
+        fs::set_permissions(path, fs::Permissions::from_mode(0o644))?;
+    }
     Ok(())
 }
 
@@ -153,13 +165,22 @@ pub fn collect_ideas(vault_path: &Path) -> io::Result<Vec<IdeaMeta>> {
     collect_ideas_filtered(vault_path, None, None, None, None, ArchiveFilter::All)
 }
 
-pub fn collect_ideas_filtered(
+#[derive(Debug, Clone, Default)]
+pub struct FilterOptions<'a> {
+    pub project: Option<&'a str>,
+    pub tag: Option<&'a str>,
+    pub kind: Option<Kind>,
+    pub item_type: Option<WorkType>,
+    pub status: Option<Status>,
+    pub claimed_by: Option<&'a str>,
+    pub ready: bool,
+    pub query: Option<&'a str>,
+    pub archive_filter: ArchiveFilter,
+}
+
+pub fn collect_ideas_with_filter(
     vault_path: &Path,
-    project: Option<&str>,
-    tag: Option<&str>,
-    kind: Option<Kind>,
-    query: Option<&str>,
-    archive_filter: ArchiveFilter,
+    filter: &FilterOptions,
 ) -> io::Result<Vec<IdeaMeta>> {
     if !vault_path.is_dir() {
         return Ok(Vec::new());
@@ -183,20 +204,35 @@ pub fn collect_ideas_filtered(
             if let Ok(content) = fs::read_to_string(&path) {
                 let mut issues = Vec::new();
                 if let Some(meta) = parse_front_matter_detailed(&filename, &content, &mut issues) {
-                    if !meta.matches_archive_filter(archive_filter) {
+                    if !meta.matches_archive_filter(filter.archive_filter) {
                         continue;
                     }
-                    if let Some(p) = project {
+                    if let Some(p) = filter.project {
                         if !meta.project.eq_ignore_ascii_case(p.trim()) {
                             continue;
                         }
                     }
-                    if let Some(k) = kind {
+                    if let Some(k) = filter.kind {
                         if meta.kind != k {
                             continue;
                         }
                     }
-                    if let Some(t) = tag {
+                    if let Some(t) = filter.item_type {
+                        if meta.work_type() != t {
+                            continue;
+                        }
+                    }
+                    if let Some(s) = filter.status {
+                        if meta.current_status() != s {
+                            continue;
+                        }
+                    }
+                    if let Some(cb) = filter.claimed_by {
+                        if meta.claimed_by.as_deref() != Some(cb) {
+                            continue;
+                        }
+                    }
+                    if let Some(t) = filter.tag {
                         let t_norm = t.trim().to_ascii_lowercase();
                         let has_tag = meta
                             .tags_list()
@@ -206,7 +242,7 @@ pub fn collect_ideas_filtered(
                             continue;
                         }
                     }
-                    if let Some(q) = query {
+                    if let Some(q) = filter.query {
                         if let Some(score) = crate::search::calculate_search_score(&meta, q) {
                             let mut scored_meta = meta;
                             scored_meta.score = Some(score);
@@ -222,9 +258,36 @@ pub fn collect_ideas_filtered(
         }
     }
 
+    if filter.ready {
+        let now = chrono::Utc::now().timestamp();
+        let all_vault_items = collect_ideas(vault_path).unwrap_or_default();
+        let map: std::collections::HashMap<String, &IdeaMeta> =
+            all_vault_items.iter().map(|i| (i.id.clone(), i)).collect();
+        ideas.retain(|item| crate::workflow::is_item_ready(item, &map, now));
+    }
+
     // Sort by timestamp descending by default
     ideas.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
     Ok(ideas)
+}
+
+pub fn collect_ideas_filtered(
+    vault_path: &Path,
+    project: Option<&str>,
+    tag: Option<&str>,
+    kind: Option<Kind>,
+    query: Option<&str>,
+    archive_filter: ArchiveFilter,
+) -> io::Result<Vec<IdeaMeta>> {
+    let opts = FilterOptions {
+        project,
+        tag,
+        kind,
+        query,
+        archive_filter,
+        ..Default::default()
+    };
+    collect_ideas_with_filter(vault_path, &opts)
 }
 
 pub fn resolve_selector(vault_path: &Path, selector: &str) -> Result<String, VaultError> {
@@ -290,5 +353,20 @@ mod tests {
         let token = generate_token();
         assert_eq!(token.len(), 32);
         assert!(token.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn test_atomic_write_permissions() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("test.md");
+        atomic_write(&file_path, "hello world").unwrap();
+        let content = fs::read_to_string(&file_path).unwrap();
+        assert_eq!(content, "hello world");
+        #[cfg(unix)]
+        {
+            let meta = fs::metadata(&file_path).unwrap();
+            let mode = meta.permissions().mode() & 0o777;
+            assert_eq!(mode, 0o644);
+        }
     }
 }

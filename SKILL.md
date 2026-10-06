@@ -1,15 +1,36 @@
 ---
 name: pin
-description: Proactively curates substantial project-specific improvement proposals in a Markdown vault. Use during and at the end of software project sessions, and whenever work reveals a meaningful out-of-scope technical, product, business, or project improvement. Load context lazily; capture justified, distinct, actionable ideas sparingly.
+description: Maintains a local-first project work ledger for agents and humans while proactively curating substantial project-specific improvements. Use during and at the end of software project sessions. Load context lazily; capture justified, distinct, actionable ideas sparingly.
 ---
 
 # Using Pin
 
-`pin` is a durable registry of **future project improvements** and **recommended execution roadmaps**. Treat improvement capture as a lightweight background responsibility during project work.
+`pin` is a durable project work ledger. It stores ideas, tasks, bugs, and decisions as Markdown records, then tracks planning, execution, handoffs, verification, and closure. Treat improvement capture as a lightweight background responsibility during project work.
 
 Act as a curator, not an idea generator: notice continuously, evaluate strictly, and write sparingly. Never manufacture a pin merely to satisfy this protocol.
 
 Pins live as Markdown with YAML front matter in `~/.pin_vault`, a repository-local `.pin_vault`, or `PIN_VAULT`.
+
+## Agent work protocol
+
+Before starting work, request compact context and look for available planned work:
+
+```bash
+pin context --limit 10 --format plain
+pin next --limit 1 --format json
+```
+
+Claim an item before changing the repository. Set `PIN_ACTOR` or pass `--actor` so handoffs identify the agent:
+
+```bash
+pin claim <id> --actor agent:name
+```
+
+Record progress with `handoff`. Use `transition --to blocked` with a reason when work cannot continue. Finish with `complete --evidence` after verification. Use `close` when a human or later agent accepts the result. Claims have a one-hour lease by default and can be renewed with `claim`.
+
+The browser viewer can update records through the same workflow, but the CLI and Markdown files remain the agent interface and source of truth.
+
+Set `PIN_ACTOR` for CLI mutations. The viewer records `human:viewer` unless `PIN_VIEWER_ACTOR` is set when the viewer starts.
 
 ## Mentioning pins
 
@@ -179,7 +200,7 @@ Duplicate titles are rejected by default. Use `--allow-duplicate` only when the 
 ## Do not pin
 
 - generic best-practice checklists without a demonstrated gap
-- routine status updates, ordinary todos, or current-task work
+- curated improvement proposals for routine status updates, ordinary todos, or current-task work. Use the work-item commands when that work needs durable coordination.
 - general documentation about how existing code works
 - raw compiler output, logs, or unfinished code snapshots
 - trivial cleanup or speculative technology substitutions
@@ -189,20 +210,31 @@ Duplicate titles are rejected by default. Use `--allow-duplicate` only when the 
 ## Commands
 
 - `pin context [--project <name>] [--kind <kind>] [--limit <n>] [--group kind] [--archived|--all] [--format json|plain]`
-- `pin add <markdown> --kind technical|product|business|project [--stdin] [--project <name>] [--title <title>] [--tags <csv>] [--priority low|medium|high] [--format json|plain]`
-- `pin list [--project <name>] [--tag <name>] [--kind <kind>] [--archived|--all] [--format json|table|plain]`
-- `pin list-project [--tag <name>] [--kind <kind>] [--archived|--all] [--format json|table|plain]`
-- `pin search <query> [--project <name>] [--tag <name>] [--kind <kind>] [--limit <n>] [--archived|--all] [--format json|table|plain]`
-- `pin doctor [--repair] [--strict] [--format json|plain]`
+- `pin add <markdown> --kind technical|product|business|project [--stdin] [--project <name>] [--title <title>] [--tags <csv>] [--priority low|medium|high] [--type idea|task|bug|decision] [--format json|plain]`
+- `pin list [--project <name>] [--tag <name>] [--kind <kind>] [--type <type>] [--status <status>] [--claimed-by <actor>] [--ready] [--archived|--all] [--format json|table|plain]`
+- `pin list-project [--tag <name>] [--kind <kind>] [--type <type>] [--status <status>] [--claimed-by <actor>] [--ready] [--archived|--all] [--format json|table|plain]`
+- `pin search <query> [--project <name>] [--tag <name>] [--kind <kind>] [--type <type>] [--status <status>] [--claimed-by <actor>] [--limit <n>] [--archived|--all] [--format json|table|plain]`
+- `pin context [--project <name>] [--kind <kind>] [--type <type>] [--status <status>] [--limit <n>] [--group kind] [--archived|--all] [--format json|plain]`
+- `pin next [--project <name>] [--limit <n>] [--format json|plain]`
+- `pin transition <id|id-prefix|filename> --to <status> [--actor <name>] [--note <text>] [--expect-revision <n>] [--format json|plain]`
+- `pin claim <id|id-prefix|filename> [--actor <name>] [--lease <seconds>] [--expect-revision <n>] [--format json|plain]`
+- `pin release <id|id-prefix|filename> [--actor <name>] [--force] [--expect-revision <n>] [--format json|plain]`
+- `pin handoff <id|id-prefix|filename> [--actor <name>] [--progress <text>] [--next <text>] [--blocker <text>] [--verification <text>] [--expect-revision <n>] [--format json|plain]`
+- `pin complete <id|id-prefix|filename> --evidence <text> [--actor <name>] [--expect-revision <n>] [--format json|plain]`
+- `pin close <id|id-prefix|filename> [--actor <name>] [--note <text>] [--expect-revision <n>] [--format json|plain]`
+- `pin depend <id|id-prefix|filename> <dependency-id> [--actor <name>] [--expect-revision <n>] [--format json|plain]`
+- `pin parent <id|id-prefix|filename> <parent-id> [--actor <name>] [--expect-revision <n>] [--format json|plain]`
+- `pin relate <id|id-prefix|filename> <related-id> [--actor <name>] [--expect-revision <n>] [--format json|plain]`
+- `pin doctor [--repair] [--upgrade] [--strict] [--format json|plain]`
 - `pin archive <id|prefix|filename> [--resolution implemented|rejected|superseded|stale] [--note <text>]`
 - `pin unarchive <id|prefix|filename>`
 - `pin read|edit|rm <id|prefix|filename>`
 - `pin stats [--format json|plain]`
 - `pin init --local [--project <name>]`
 - `pin import|export <directory> [--force]`
-- `pin view [--project <name>] [--tag <name>] [--kind <kind>] [--archived|--all] [--port <n>] [--no-open] [--format json|plain]`
-- `pin view-project [--tag <name>] [--kind <kind>] [--archived|--all] [--port <n>] [--no-open] [--format json|plain]`
+- `pin view [--project <name>] [--tag <name>] [--kind <kind>] [--type <type>] [--status <status>] [--archived|--all] [--port <n>] [--no-open] [--format json|plain]`
+- `pin view-project [--tag <name>] [--kind <kind>] [--type <type>] [--status <status>] [--archived|--all] [--port <n>] [--no-open] [--format json|plain]`
 
-Agents must prefer `context`, `list`, or `read` for retrieving proposals. Do not call `view` or `view-project` in headless automated sessions unless explicitly parsing the loopback URL printed on stdout using `--no-open`.
+Agents must prefer `context`, `next`, `list`, or `read` for retrieving work items. Do not call `view` or `view-project` in headless automated sessions unless explicitly parsing the loopback URL printed on stdout using `--no-open`.
 
 Project identity resolves from `--project`, `PIN_PROJECT`, repository-root `.pin-project`, repository name, then current directory name. Vault location resolves from `PIN_VAULT`, repository-root `.pin_vault`, then `~/.pin_vault`.
