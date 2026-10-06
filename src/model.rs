@@ -184,9 +184,12 @@ impl Status {
     pub fn is_terminal(&self) -> bool {
         matches!(self, Status::Closed | Status::Cancelled)
     }
-    #[allow(dead_code)]
-    pub fn is_active(&self) -> bool {
-        !self.is_terminal()
+
+    /// True once the work is over: verified (`done`) or withdrawn (`closed`,
+    /// `cancelled`). Distinct from `is_terminal`, which excludes `done` so that
+    /// an accepted outcome can still be re-verified.
+    pub fn is_finished(&self) -> bool {
+        matches!(self, Status::Done | Status::Closed | Status::Cancelled)
     }
 }
 
