@@ -1,3 +1,4 @@
+pub mod acp;
 mod assets;
 mod cli;
 mod commands;

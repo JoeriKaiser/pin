@@ -17,12 +17,15 @@ pub fn view(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> 
         (None, None, None, None);
     let (mut archive_filter, mut port, mut no_open, mut format) =
         (ArchiveFilter::Active, 0, false, None);
-
+    let mut acp_command: Option<String> = None;
     while let Some(arg) = reader.peek()? {
         match arg {
             "--archived" => archive_filter = ArchiveFilter::Archived,
             "--all" => archive_filter = ArchiveFilter::All,
             "--no-open" => no_open = true,
+            "--acp-command" => {
+                acp_command = Some(reader.next_val("--acp-command")?.to_string());
+            }
             "--project" => {
                 if project_scoped {
                     return Err(CliError::usage("'view-project' does not accept --project"));
@@ -87,7 +90,7 @@ pub fn view(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> 
     );
     let fmt = format.unwrap_or(OutputFormat::Plain);
 
-    serve_view(snapshot, port, no_open, fmt)
+    serve_view(snapshot, port, no_open, fmt, acp_command)
         .map_err(|e| CliError::usage(format!("Failed to serve view: {e}")))?;
     Ok(())
 }

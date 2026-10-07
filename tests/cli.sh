@@ -307,17 +307,42 @@ if HOME="$TMP/home" "$PIN_BIN" view >/dev/null 2>&1; then
     fail "view accepted non-TTY invocation without --no-open or explicit format"
 fi
 
-# 2. View launch with --no-open and plain format
+# 2. View launch with --no-open, plain format, and mock ACP agent
+cat >"$TMP/mock-agent.sh" <<'EOF'
+#!/bin/sh
+while IFS= read -r line; do
+  case "$line" in
+    *initialize*)
+      req_id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentCapabilities":{}}}\n' "$req_id"
+      ;;
+    *session/new*)
+      req_id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"mock-session-1"}}\n' "$req_id"
+      ;;
+    *session/prompt*)
+      req_id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+      printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"mock-session-1","update":{"text":"## Summary\\nMock agent finished\\n\\n## Verification\\nMock tests passed"}}}\n'
+      sleep 0.05
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "$req_id"
+      ;;
+    *session/cancel*)
+      exit 0
+      ;;
+  esac
+done
+EOF
+chmod +x "$TMP/mock-agent.sh"
+
 mkdir -p "$TMP/view-vault"
 view_item=$(PIN_VAULT="$TMP/view-vault" PIN_PROJECT=view "$PIN_BIN" add '# View test' --kind technical --priority low --format json)
 view_id=$(printf '%s' "$view_item" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
 
 view_out="$TMP/view.log"
 view_err="$TMP/view.err"
-# Launch in background
-PIN_VAULT="$TMP/view-vault" "$PIN_BIN" view --no-open --format plain >"$view_out" 2>"$view_err" &
+# Launch in background with mock ACP agent
+PIN_VAULT="$TMP/view-vault" "$PIN_BIN" view --no-open --format plain --acp-command "$TMP/mock-agent.sh" >"$view_out" 2>"$view_err" &
 view_pid=$!
-
 # Wait/poll for stdout readiness
 url=""
 for i in 1 2 3 4 5 6 7 8 9 10; do
@@ -404,6 +429,72 @@ post_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${url}data.json")
     kill -9 $view_pid 2>/dev/null || true
     fail "expected 405 for POST request, got $post_code"
 }
+
+# Test ACP runs endpoint
+runs_json=$(curl -s -S "${url}runs")
+assert_contains "$runs_json" '"running":[]'
+assert_contains "$runs_json" '"primary_busy":null'
+
+# Test ACP SSE stream endpoint
+stream_headers=$(curl -s -S -I --max-time 1 "${url}items/${view_id}/stream" || true)
+assert_contains "$stream_headers" "text/event-stream"
+
+# Test UI contains agent drawer elements with collapsed tool calls and clean thoughts
+assert_contains "$(cat "$curl_html")" 'id="agent-drawer"'
+assert_contains "$(cat "$curl_html")" 'id="worktree-modal"'
+assert_contains "$(cat "$curl_html")" 'id="btn-toggle-tools"'
+assert_contains "$(cat "$curl_html")" 'id="agent-thoughts"'
+assert_contains "$(cat "$curl_html")" 'id="agent-tools"'
+assert_contains "$(cat "$TMP/app.js")" 'EventSource'
+assert_contains "$(cat "$TMP/app.js")" 'cleanThoughtText'
+assert_contains "$(cat "$TMP/app.js")" 'card.open = false'
+assert_contains "$(cat "$TMP/app.js")" 'stripAnsi'
+
+# Verify JavaScript thought cleaning and collapsed tool cards via node
+node -e '
+const fs = require("fs");
+const appJs = fs.readFileSync(process.argv[1], "utf8");
+
+const cleanThoughtMatch = appJs.match(/function cleanThoughtText\(thoughtText\) \{([\s\S]*?)\n  \}/);
+if (!cleanThoughtMatch) { console.error("cleanThoughtText missing"); process.exit(1); }
+const stripAnsiMatch = appJs.match(/function stripAnsi\(str\) \{([\s\S]*?)\n  \}/);
+const stripAnsi = new Function("str", stripAnsiMatch[1]);
+const cleanThoughtText = new Function("thoughtText", "stripAnsi", cleanThoughtMatch[1].replace(/stripAnsi/g, "stripAnsi"));
+
+// ANSI stripping
+if (cleanThoughtText("\x1b[32mChecking code\x1b[0m", stripAnsi) !== "Checking code") {
+  console.error("ANSI not stripped"); process.exit(1);
+}
+// Thinking tag stripping
+const tagCleaned = cleanThoughtText("<think>Thinking...</think>\n<thought>Done</thought>", stripAnsi);
+if (tagCleaned !== "Thinking...\nDone") {
+  console.error("Thinking tags not cleanly stripped:", JSON.stringify(tagCleaned)); process.exit(1);
+}
+// Newline normalization
+if (cleanThoughtText("A\n\n\n\nB", stripAnsi) !== "A\n\nB") {
+  console.error("Excess newlines not collapsed"); process.exit(1);
+}
+// Collapsed tool calls by default
+if (!appJs.includes("card.open = false;")) {
+  console.error("card.open = false not in app.js"); process.exit(1);
+}
+' "$TMP/app.js"
+# Test ACP agent execution and automatic handoff/review transition
+run_res=$(curl -s -S -X POST -H "Origin: $origin" -H 'Content-Type: application/json' -H 'X-Pin-Action: true' "${url}items/${view_id}/run")
+assert_contains "$run_res" '"status":"started"'
+
+read_item=""
+for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+    sleep 0.1
+    read_item=$(PIN_VAULT="$TMP/view-vault" "$PIN_BIN" read "$view_id" 2>/dev/null || true)
+    if printf '%s' "$read_item" | grep -q 'status: "review"'; then
+        break
+    fi
+done
+assert_contains "$read_item" 'status: "review"'
+assert_contains "$read_item" 'progress: "Mock agent finished"'
+assert_contains "$read_item" 'verification: "Mock tests passed"'
+[ -f "$TMP/view-vault/runs/${view_id}.log" ] || fail "run log file was not created"
 
 kill "$view_pid" 2>/dev/null || true
 wait "$view_pid" 2>/dev/null || true

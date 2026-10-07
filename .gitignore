@@ -2,3 +2,5 @@
 main
 build/
 __pycache__/
+/.pin_worktrees/
+/.pin_vault/runs/
