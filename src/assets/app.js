@@ -47,7 +47,23 @@
     dialogError: $('dialog-error'), dialogBody: $('dialog-body'),
     dialogCloseBtn: $('dialog-close-btn'), dialogCancelBtn: $('dialog-cancel-btn'),
     dialogSubmitBtn: $('dialog-submit-btn'),
-    toast: $('toast')
+    toast: $('toast'),
+    agentDrawer: $('agent-drawer'),
+    agentItemId: $('agent-item-id'),
+    agentStatusPill: $('agent-status-pill'),
+    btnCancelAgent: $('btn-cancel-agent'),
+    btnCloseAgentDrawer: $('btn-close-agent-drawer'),
+    agentPlanList: $('agent-plan-list'),
+    agentThoughts: $('agent-thoughts'),
+    agentTools: $('agent-tools'),
+    btnToggleTools: $('btn-toggle-tools'),
+    agentLogInfo: $('agent-log-info'),
+    worktreeModal: $('worktree-modal'),
+    worktreeBusyId: $('worktree-busy-id'),
+    worktreeTargetId: $('worktree-target-id'),
+    btnWorktreeCancel: $('btn-worktree-cancel'),
+    btnWorktreeClose: $('btn-worktree-close'),
+    btnWorktreeConfirm: $('btn-worktree-confirm')
   };
 
   var state = {
@@ -61,7 +77,11 @@
     archive: '',
     captured: '',
     etag: null,
-    filters: { text: '', status: '', type: '', kind: '', priority: '', project: '' }
+    filters: { text: '', status: '', type: '', kind: '', priority: '', project: '' },
+    activeRuns: new Set(),
+    currentStream: null,
+    currentStreamingId: null,
+    pendingWorktreeItem: null
   };
 
   var activeModalConfig = null;
@@ -266,9 +286,15 @@
     .then(function (res) {
       if (!res.ok) {
         return res.json().then(function (e) {
-          throw new Error(e.error || ('HTTP ' + res.status));
+          var err = new Error(e.error || ('HTTP ' + res.status));
+          err.status = res.status;
+          err.data = e;
+          throw err;
         }).catch(function (parseErr) {
-          throw new Error(parseErr.message || ('HTTP ' + res.status));
+          if (parseErr.data) throw parseErr;
+          var err = new Error(parseErr.message || ('HTTP ' + res.status));
+          err.status = res.status;
+          throw err;
         });
       }
       return res.json();
@@ -497,7 +523,19 @@
 
     if (targetStatus === 'in_progress') {
       if (cur === 'in_progress') return;
-      openClaimModal(item);
+      sendAction(item.id, { action: 'transition', to: 'in_progress', expect_revision: rev })
+        .then(function () {
+          showToast('Moved to In Progress', false);
+        })
+        .catch(function (err) {
+          var isBusy = err.status === 409 || (err.data && err.data.status === 'primary_busy') || (err.message && err.message.indexOf('Primary checkout is busy') !== -1);
+          if (isBusy) {
+            var activeId = (err.data && err.data.active_id) || 'another task';
+            openWorktreeModal(item, activeId);
+          } else {
+            showToast('Action failed: ' + err.message, true);
+          }
+        });
       return;
     }
 
@@ -564,6 +602,20 @@
       meta.appendChild(countdown);
     }
 
+    if (state.activeRuns.has(item.id)) {
+      var runBadge = node('span', 'card-running-indicator');
+      runBadge.appendChild(node('span', 'card-running-dot'));
+      runBadge.appendChild(document.createTextNode('Running Agent'));
+      meta.appendChild(runBadge);
+
+      var viewRunBtn = node('button', 'btn-view-run', 'View Run');
+      viewRunBtn.type = 'button';
+      viewRunBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        openAgentDrawer(item.id);
+      });
+      meta.appendChild(viewRunBtn);
+    }
     if (hasUnresolvedPrereqs(item)) {
       card.classList.add('is-locked');
       var lock = node('span', 'lock-indicator', '🔒 Locked');
@@ -829,6 +881,11 @@
     }
 
     if (st === 'in_progress') {
+      if (state.activeRuns.has(item.id)) {
+        btn('View Agent Run', true, function () {
+          openAgentDrawer(item.id);
+        });
+      }
       btn('Complete with Evidence', true, function () {
         openCompleteModal(item);
       });
@@ -1009,6 +1066,436 @@
     });
   }
 
+  function updateActiveRuns() {
+    fetch(BASE + 'runs')
+      .then(function (res) {
+        if (!res.ok) return null;
+        return res.json();
+      })
+      .then(function (data) {
+        if (!data || !Array.isArray(data.running)) return;
+        var newSet = new Set(data.running);
+        var changed = newSet.size !== state.activeRuns.size;
+        if (!changed) {
+          newSet.forEach(function (id) {
+            if (!state.activeRuns.has(id)) changed = true;
+          });
+        }
+        if (changed) {
+          state.activeRuns = newSet;
+          if (state.viewMode === 'board') {
+            renderBoard();
+          }
+        }
+      })
+      .catch(function () {});
+  }
+
+  function openWorktreeModal(item, busyId) {
+    state.pendingWorktreeItem = item;
+    text(els.worktreeBusyId, busyId || 'another task');
+    text(els.worktreeTargetId, item.id);
+    if (els.worktreeModal) {
+      if (els.worktreeModal.showModal) {
+        els.worktreeModal.showModal();
+      } else {
+        els.worktreeModal.setAttribute('open', '');
+      }
+    }
+  }
+
+  function closeWorktreeModal() {
+    state.pendingWorktreeItem = null;
+    if (els.worktreeModal) {
+      if (els.worktreeModal.close) {
+        els.worktreeModal.close();
+      } else {
+        els.worktreeModal.removeAttribute('open');
+      }
+    }
+  }
+
+  function closeAgentDrawer() {
+    if (els.agentDrawer) {
+      els.agentDrawer.hidden = true;
+    }
+    if (state.currentStream) {
+      state.currentStream.close();
+      state.currentStream = null;
+    }
+    state.currentStreamingId = null;
+  }
+
+  function openAgentDrawer(itemId) {
+    if (state.currentStream) {
+      state.currentStream.close();
+      state.currentStream = null;
+    }
+    state.currentStreamingId = itemId;
+
+    if (els.agentDrawer) {
+      els.agentDrawer.hidden = false;
+    }
+    if (els.agentItemId) {
+      text(els.agentItemId, itemId.slice(0, 8));
+      els.agentItemId.dataset.fullId = itemId;
+    }
+    if (els.agentStatusPill) {
+      els.agentStatusPill.className = 'agent-status-pill';
+      text(els.agentStatusPill, 'Running');
+    }
+    if (els.btnCancelAgent) {
+      els.btnCancelAgent.disabled = false;
+    }
+
+    var planSection = $('agent-plan-section');
+    if (planSection) planSection.hidden = true;
+    clear(els.agentPlanList);
+    clear(els.agentThoughts);
+    clear(els.agentTools);
+    if (els.btnToggleTools) {
+      els.btnToggleTools.hidden = true;
+      text(els.btnToggleTools, 'Expand all');
+    }
+    clear(els.agentLogInfo);
+    if (els.agentLogInfo) {
+      text(els.agentLogInfo, 'Logs: .pin_vault/runs/' + itemId + '.log');
+    }
+
+    var streamUrl = BASE + 'items/' + encodeURIComponent(itemId) + '/stream';
+    var source = new EventSource(streamUrl);
+    state.currentStream = source;
+
+    source.onmessage = function (e) {
+      try {
+        var data = JSON.parse(e.data);
+        handleAgentStreamEvent(data);
+      } catch (err) {
+        console.error('Error parsing SSE event:', err);
+      }
+    };
+
+    source.onerror = function () {
+      // If disconnected and run is no longer active, mark finished
+      if (!state.activeRuns.has(itemId)) {
+        if (els.agentStatusPill && els.agentStatusPill.textContent === 'Running') {
+          text(els.agentStatusPill, 'Completed');
+          els.agentStatusPill.className = 'agent-status-pill status-completed';
+        }
+        if (els.btnCancelAgent) els.btnCancelAgent.disabled = true;
+        source.close();
+        if (state.currentStream === source) state.currentStream = null;
+      }
+    };
+  }
+
+  function handleAgentStreamEvent(data) {
+    if (!data) return;
+
+    if (data.type === 'finished') {
+      if (els.agentStatusPill) {
+        text(els.agentStatusPill, 'Completed');
+        els.agentStatusPill.className = 'agent-status-pill status-completed';
+      }
+      if (els.btnCancelAgent) els.btnCancelAgent.disabled = true;
+      if (state.currentStream) {
+        state.currentStream.close();
+        state.currentStream = null;
+      }
+      updateActiveRuns();
+      refreshData();
+      return;
+    }
+
+    if (data.type === 'error') {
+      if (els.agentStatusPill) {
+        text(els.agentStatusPill, 'Failed: ' + (data.message || data.error || 'Error'));
+        els.agentStatusPill.className = 'agent-status-pill status-failed';
+      }
+      if (els.btnCancelAgent) els.btnCancelAgent.disabled = true;
+      if (state.currentStream) {
+        state.currentStream.close();
+        state.currentStream = null;
+      }
+      updateActiveRuns();
+      refreshData();
+      return;
+    }
+
+    var update = (data.params && data.params.update) ? data.params.update : (data.update || data);
+    var updateType = update.sessionUpdate || update.type;
+
+    if (updateType === 'plan') {
+      renderAgentPlan(update);
+    } else if (updateType === 'agent_thought_chunk') {
+      appendAgentThought(extractThoughtContent(update));
+    } else if (updateType === 'agent_message_chunk') {
+      appendAgentThought(extractThoughtContent(update));
+    } else if (updateType === 'tool_call') {
+      renderAgentToolCall(update);
+    } else if (updateType === 'tool_call_update') {
+      updateAgentToolCall(update);
+    }
+  }
+
+  function renderAgentPlan(update) {
+    if (!els.agentPlanList) return;
+    var planSection = $('agent-plan-section');
+    var entries = Array.isArray(update.entries) ? update.entries : (Array.isArray(update.plan) ? update.plan : []);
+    if (!entries.length) {
+      if (planSection) planSection.hidden = true;
+      return;
+    }
+    if (planSection) planSection.hidden = false;
+    clear(els.agentPlanList);
+    entries.forEach(function (entry) {
+      var li = node('li', 'agent-plan-item' + (entry.completed || entry.status === 'completed' ? ' completed' : ''));
+      var cb = node('input');
+      cb.type = 'checkbox';
+      cb.disabled = true;
+      cb.checked = !!(entry.completed || entry.status === 'completed');
+      li.appendChild(cb);
+      li.appendChild(document.createTextNode(entry.content || entry.text || entry.title || JSON.stringify(entry)));
+      els.agentPlanList.appendChild(li);
+    });
+  }
+
+  function stripAnsi(str) {
+    if (!str) return '';
+    return String(str).replace(/\x1b\[[0-9;]*[a-zA-Z]|\u001b\[[0-9;]*[a-zA-Z]/g, '');
+  }
+
+  function cleanThoughtText(thoughtText) {
+    if (!thoughtText) return '';
+    var str = typeof thoughtText === 'string' ? thoughtText : String(thoughtText);
+    return stripAnsi(str)
+      .replace(/<(?:\/)?(?:think|thought|thinking)(?:\s+[^>]*)?>/gi, '')
+      .replace(/\r\n?/g, '\n')
+      .replace(/[ \t]+$/gm, '')
+      .replace(/\n{3,}/g, '\n\n');
+  }
+
+  function extractThoughtContent(update) {
+    if (!update) return '';
+    if (typeof update === 'string') return update;
+    if (update.text) return update.text;
+    if (update.thought) return update.thought;
+    if (update.content) {
+      if (typeof update.content === 'string') return update.content;
+      if (Array.isArray(update.content)) {
+        return update.content.map(function (c) {
+          if (!c) return '';
+          if (typeof c === 'string') return c;
+          return c.text || c.thought || (c.content && c.content.text) || '';
+        }).join('');
+      }
+      if (typeof update.content === 'object') {
+        return update.content.text || update.content.thought || '';
+      }
+    }
+    return '';
+  }
+
+  function appendAgentThought(thoughtText) {
+    if (!els.agentThoughts || !thoughtText) return;
+    var cleaned = cleanThoughtText(thoughtText);
+    if (!cleaned) return;
+
+    var current = els.agentThoughts.textContent || '';
+    if (!current) {
+      cleaned = cleaned.replace(/^\n+/, '');
+    } else if (current.endsWith('\n\n')) {
+      cleaned = cleaned.replace(/^\n+/, '');
+    } else if (current.endsWith('\n')) {
+      cleaned = cleaned.replace(/^\n{2,}/, '\n');
+    }
+
+    if (!cleaned) return;
+    els.agentThoughts.appendChild(document.createTextNode(cleaned));
+    els.agentThoughts.scrollTop = els.agentThoughts.scrollHeight;
+  }
+
+  function formatToolTitle(update) {
+    if (update.title && update.title.trim()) return stripAnsi(update.title.trim());
+    if (update.name) {
+      return stripAnsi(update.kind ? (update.kind + ': ' + update.name) : update.name);
+    }
+    return stripAnsi(update.tool || 'tool');
+  }
+
+  function formatToolPayload(data) {
+    if (data === null || data === undefined) return '';
+    if (typeof data === 'string') return stripAnsi(data).trim();
+    if (Array.isArray(data)) {
+      return data.map(function (item) {
+        if (item && item.type === 'content' && item.content && item.content.text) return stripAnsi(item.content.text);
+        if (item && item.text) return stripAnsi(item.text);
+        if (item && item.type === 'diff') return stripAnsi((item.path ? item.path + '\n' : '') + (item.newText || ''));
+        return typeof item === 'object' ? JSON.stringify(item, null, 2) : stripAnsi(String(item));
+      }).join('\n').trim();
+    }
+    if (typeof data === 'object') {
+      if (Array.isArray(data.content)) {
+        return formatToolPayload(data.content);
+      }
+      if (data.command) return '$ ' + stripAnsi(data.command);
+      if (data.path) return stripAnsi(data.path) + (data.pattern ? ' [grep: ' + stripAnsi(data.pattern) + ']' : '');
+      try { return JSON.stringify(data, null, 2); } catch (_) { return stripAnsi(String(data)); }
+    }
+    return stripAnsi(String(data)).trim();
+  }
+
+  function renderAgentToolCall(update) {
+    if (!els.agentTools) return;
+    var callId = update.toolCallId || update.id || ('tool-' + Date.now());
+    var card = $('agent-tool-' + callId);
+    if (!card) {
+      card = node('details', 'agent-tool-card');
+      card.id = 'agent-tool-' + callId;
+      card.open = false;
+
+      var summary = node('summary', 'agent-tool-header');
+      var titleWrap = node('div', 'agent-tool-title-wrap');
+      titleWrap.appendChild(node('span', 'agent-tool-chevron', '▸'));
+      titleWrap.appendChild(node('span', 'agent-tool-name', formatToolTitle(update)));
+      summary.appendChild(titleWrap);
+
+      var statusBadge = node('span', 'agent-tool-status ' + (update.status || 'in_progress'), update.status || 'in_progress');
+      summary.appendChild(statusBadge);
+      card.appendChild(summary);
+
+      var contentDiv = node('div', 'agent-tool-content');
+
+      var inputDiv = node('div', 'agent-tool-input');
+      var rawIn = update.rawInput || update.input || update.arguments || update.params;
+      var formattedIn = formatToolPayload(rawIn);
+      if (formattedIn) text(inputDiv, formattedIn);
+      contentDiv.appendChild(inputDiv);
+
+      var body = node('div', 'agent-tool-body');
+      contentDiv.appendChild(body);
+
+      card.appendChild(contentDiv);
+      card.addEventListener('toggle', updateToggleToolsButtonState);
+      els.agentTools.appendChild(card);
+      updateToggleToolsButtonState();
+    }
+  }
+
+  function updateAgentToolCall(update) {
+    if (!els.agentTools) return;
+    var callId = update.toolCallId || update.id;
+    if (!callId) return;
+    var card = $('agent-tool-' + callId);
+    if (!card) {
+      renderAgentToolCall(update);
+      card = $('agent-tool-' + callId);
+    }
+    if (!card) return;
+
+    var nameEl = card.querySelector('.agent-tool-name');
+    if (nameEl) {
+      var newTitle = formatToolTitle(update);
+      if (newTitle !== 'tool') text(nameEl, newTitle);
+    }
+
+    var statusBadge = card.querySelector('.agent-tool-status');
+    if (statusBadge && update.status) {
+      text(statusBadge, update.status);
+      statusBadge.className = 'agent-tool-status ' + (update.status === 'completed' ? 'completed' : (update.status === 'failed' ? 'failed' : 'in_progress'));
+      if (update.status === 'completed' || update.status === 'failed') {
+        card.open = false;
+      }
+    }
+
+    var inputDiv = card.querySelector('.agent-tool-input');
+    if (inputDiv && !inputDiv.textContent) {
+      var rawIn = update.rawInput || update.input || update.arguments || update.params;
+      var formattedIn = formatToolPayload(rawIn);
+      if (formattedIn) text(inputDiv, formattedIn);
+    }
+
+    var body = card.querySelector('.agent-tool-body');
+    if (body) {
+      var content = update.rawOutput || update.output || update.result || update.error || update.content;
+      var formatted = formatToolPayload(content);
+      if (formatted) {
+        text(body, formatted);
+      }
+    }
+    updateToggleToolsButtonState();
+  }
+
+  function updateToggleToolsButtonState() {
+    if (!els.btnToggleTools || !els.agentTools) return;
+    var cards = els.agentTools.querySelectorAll('.agent-tool-card');
+    if (!cards.length) {
+      els.btnToggleTools.hidden = true;
+      return;
+    }
+    els.btnToggleTools.hidden = false;
+    var allOpen = true;
+    cards.forEach(function (c) {
+      if (!c.open) allOpen = false;
+    });
+    text(els.btnToggleTools, allOpen ? 'Collapse all' : 'Expand all');
+  }
+
+  function toggleAllToolCards() {
+    if (!els.agentTools) return;
+    var cards = els.agentTools.querySelectorAll('.agent-tool-card');
+    if (!cards.length) return;
+    var anyOpen = false;
+    cards.forEach(function (c) {
+      if (c.open) anyOpen = true;
+    });
+    var nextOpen = !anyOpen;
+    cards.forEach(function (c) {
+      c.open = nextOpen;
+    });
+    updateToggleToolsButtonState();
+  }
+
+  function cancelAgentRun(itemId) {
+    if (!itemId) {
+      if (els.agentItemId && els.agentItemId.dataset.fullId) {
+        itemId = els.agentItemId.dataset.fullId;
+      } else if (els.agentItemId) {
+        itemId = els.agentItemId.textContent.trim();
+      }
+    }
+    if (!itemId) return;
+    if (els.btnCancelAgent) els.btnCancelAgent.disabled = true;
+    fetch(BASE + 'items/' + encodeURIComponent(itemId) + '/cancel', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Pin-Action': 'true'
+      }
+    })
+    .then(function (res) {
+      if (!res.ok) return res.json().then(function (e) { throw new Error(e.error || 'Cancel failed'); });
+      return res.json();
+    })
+    .then(function () {
+      showToast('Agent cancelled', false);
+      if (els.agentStatusPill) {
+        text(els.agentStatusPill, 'Cancelled');
+        els.agentStatusPill.className = 'agent-status-pill status-cancelled';
+      }
+      if (state.currentStream) {
+        state.currentStream.close();
+        state.currentStream = null;
+      }
+      updateActiveRuns();
+      refreshData();
+    })
+    .catch(function (err) {
+      showToast('Cancel failed: ' + err.message, true);
+      if (els.btnCancelAgent) els.btnCancelAgent.disabled = false;
+    });
+  }
+
   function bind() {
     els.search.addEventListener('input', function () { state.filters.text = this.value; renderList(); });
     els.status.addEventListener('change', function () { state.filters.status = this.value; renderList(); });
@@ -1047,6 +1534,45 @@
     }
     if (els.dialogCancelBtn) {
       els.dialogCancelBtn.addEventListener('click', closeActionModal);
+    }
+    if (els.btnCloseAgentDrawer) {
+      els.btnCloseAgentDrawer.addEventListener('click', closeAgentDrawer);
+    }
+    if (els.btnToggleTools) {
+      els.btnToggleTools.addEventListener('click', toggleAllToolCards);
+    }
+    if (els.btnCancelAgent) {
+      els.btnCancelAgent.addEventListener('click', function () {
+        var idToCancel = state.currentStreamingId;
+        if (!idToCancel && els.agentItemId) {
+          idToCancel = els.agentItemId.dataset.fullId || els.agentItemId.textContent.trim();
+        }
+        if (idToCancel) {
+          cancelAgentRun(idToCancel);
+        }
+      });
+    }
+    if (els.btnWorktreeClose) {
+      els.btnWorktreeClose.addEventListener('click', closeWorktreeModal);
+    }
+    if (els.btnWorktreeCancel) {
+      els.btnWorktreeCancel.addEventListener('click', closeWorktreeModal);
+    }
+    if (els.btnWorktreeConfirm) {
+      els.btnWorktreeConfirm.addEventListener('click', function () {
+        var item = state.pendingWorktreeItem;
+        closeWorktreeModal();
+        if (!item) return;
+        var rev = item.revision;
+        sendAction(item.id, { action: 'transition', to: 'in_progress', use_worktree: true, expect_revision: rev })
+          .then(function () {
+            showToast('Started in isolated worktree', false);
+            updateActiveRuns();
+          })
+          .catch(function (err) {
+            showToast('Worktree start failed: ' + err.message, true);
+          });
+      });
     }
 
     if (els.dialogBody) {
@@ -1202,6 +1728,7 @@
         }
       })
       .catch(function () {});
+    updateActiveRuns();
   }
 
   function fatal(message) {
@@ -1226,14 +1753,19 @@
       })
       .then(function (data) {
         ingest(data);
+        updateActiveRuns();
         setInterval(function () {
           if (!document.hidden) refreshData();
+        }, 3000);
+        setInterval(function () {
+          if (!document.hidden) updateActiveRuns();
         }, 3000);
       })
       .catch(function (err) {
         fatal(err.message || 'Could not load vault.');
       });
   }
+  window.openAgentDrawer = openAgentDrawer;
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', boot);

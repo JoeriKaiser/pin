@@ -1,3 +1,4 @@
+use crate::acp::AcpManagerError;
 use crate::assets::*;
 use crate::model::{ArchiveFilter, IdeaMeta, Kind, OutputFormat, Priority, Status, WorkType};
 use crate::output::JsonIdeaOutput;
@@ -14,7 +15,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-const VIEW_CSP: &str = "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; sandbox allow-scripts allow-same-origin";
+const VIEW_CSP: &str = "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; sandbox allow-scripts allow-same-origin allow-forms";
 
 /// Bodies are small JSON payloads. Anything larger is a mistake or a stuck
 /// client, and must not be turned into an allocation.
@@ -38,11 +39,15 @@ pub struct ViewSnapshot {
     pub vault_path: PathBuf,
     pub scope_label: String,
     pub archive_filter: ArchiveFilter,
+    pub acp_command: Option<String>,
+    pub acp_manager: Arc<crate::acp::AcpManager>,
 }
 
 #[derive(Deserialize)]
 struct ActionPayload {
     action: String,
+    #[serde(default)]
+    pub use_worktree: Option<bool>,
     #[serde(default)]
     to: Option<Status>,
     #[serde(default)]
@@ -67,6 +72,11 @@ struct ActionPayload {
     expect_revision: Option<u64>,
 }
 
+#[derive(Deserialize)]
+struct RunPayload {
+    #[serde(default)]
+    pub use_worktree: Option<bool>,
+}
 #[derive(Deserialize)]
 struct CreateItemPayload {
     title: String,
@@ -95,14 +105,22 @@ pub fn create_snapshot(
     archive_filter: ArchiveFilter,
 ) -> ViewSnapshot {
     let token = generate_token();
+    let repo_path = std::env::current_dir()
+        .unwrap_or_else(|_| vault_path.parent().unwrap_or(&vault_path).to_path_buf());
+    let acp_manager = Arc::new(crate::acp::AcpManager::new(
+        vault_path.clone(),
+        repo_path,
+        None,
+    ));
     ViewSnapshot {
         token,
         vault_path,
         scope_label: scope_label.to_string(),
         archive_filter,
+        acp_command: None,
+        acp_manager,
     }
 }
-
 fn compute_vault_etag(vault_path: &Path) -> String {
     let mut count: u64 = 0;
     let mut max_mtime_secs: u64 = 0;
@@ -500,6 +518,29 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                 let viewer_actor =
                     env::var("PIN_VIEWER_ACTOR").unwrap_or_else(|_| "human:viewer".to_string());
                 let actor_to_use = payload.actor.as_deref().unwrap_or(&viewer_actor);
+                // Check if moving to in_progress or claiming requires worktree when primary is busy
+                let is_starting_run = payload.action == "claim"
+                    || (payload.action == "transition" && payload.to == Some(Status::InProgress));
+                if is_starting_run
+                    && payload.use_worktree != Some(true)
+                    && snapshot.acp_manager.is_primary_busy().is_some()
+                {
+                    let busy_id = snapshot.acp_manager.is_primary_busy().unwrap();
+                    let msg = format!(
+                        "{{\"error\":\"Primary checkout is busy\",\"status\":\"primary_busy\",\"active_id\":\"{busy_id}\"}}"
+                    );
+                    send_response(
+                        &mut stream,
+                        409,
+                        "Conflict",
+                        "application/json; charset=utf-8",
+                        msg.as_bytes(),
+                        true,
+                        true,
+                        None,
+                    );
+                    return;
+                }
 
                 let mutation_result = match payload.action.as_str() {
                     "transition" => match payload.to {
@@ -565,6 +606,16 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
 
                 match mutation_result {
                     Ok(updated_meta) => {
+                        if is_starting_run {
+                            let _ = snapshot
+                                .acp_manager
+                                .start_run(id, payload.use_worktree.unwrap_or(false));
+                        } else if payload.action == "release"
+                            || (payload.action == "transition"
+                                && payload.to != Some(Status::InProgress))
+                        {
+                            let _ = snapshot.acp_manager.cancel_run(id);
+                        }
                         let json_item = JsonIdeaOutput::from(&updated_meta);
                         let body_str = serde_json::to_string(&json_item).unwrap_or_default();
                         send_response(
@@ -603,6 +654,127 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                     }
                 }
             }
+            if let Some(id_part) = stripped.strip_suffix("/run") {
+                let id = id_part.trim();
+
+                let mut body_bytes = vec![0u8; content_length];
+                if content_length > 0 && reader.read_exact(&mut body_bytes).is_err() {
+                    send_response(
+                        &mut stream,
+                        400,
+                        "Bad Request",
+                        "application/json; charset=utf-8",
+                        b"{\"error\":\"Failed to read body\"}",
+                        false,
+                        true,
+                        None,
+                    );
+                    return;
+                }
+
+                let payload: RunPayload = if content_length > 0 {
+                    match serde_json::from_slice(&body_bytes) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            let msg = format!("{{\"error\":\"Invalid JSON: {e}\"}}");
+                            send_response(
+                                &mut stream,
+                                400,
+                                "Bad Request",
+                                "application/json; charset=utf-8",
+                                msg.as_bytes(),
+                                false,
+                                true,
+                                None,
+                            );
+                            return;
+                        }
+                    }
+                } else {
+                    RunPayload { use_worktree: None }
+                };
+
+                match snapshot
+                    .acp_manager
+                    .start_run(id, payload.use_worktree.unwrap_or(false))
+                {
+                    Ok(()) => {
+                        send_response(
+                            &mut stream,
+                            200,
+                            "OK",
+                            "application/json; charset=utf-8",
+                            b"{\"status\":\"started\"}",
+                            true,
+                            true,
+                            None,
+                        );
+                        return;
+                    }
+                    Err(AcpManagerError::PrimaryBusy(active_id)) => {
+                        let msg = format!(
+                            "{{\"error\":\"Primary checkout is busy\",\"status\":\"primary_busy\",\"active_id\":\"{active_id}\"}}"
+                        );
+                        send_response(
+                            &mut stream,
+                            409,
+                            "Conflict",
+                            "application/json; charset=utf-8",
+                            msg.as_bytes(),
+                            true,
+                            true,
+                            None,
+                        );
+                        return;
+                    }
+                    Err(err) => {
+                        let msg = format!("{{\"error\":\"{err}\"}}");
+                        send_response(
+                            &mut stream,
+                            400,
+                            "Bad Request",
+                            "application/json; charset=utf-8",
+                            msg.as_bytes(),
+                            true,
+                            true,
+                            None,
+                        );
+                        return;
+                    }
+                }
+            }
+
+            if let Some(id_part) = stripped.strip_suffix("/cancel") {
+                let id = id_part.trim();
+                match snapshot.acp_manager.cancel_run(id) {
+                    Ok(()) => {
+                        send_response(
+                            &mut stream,
+                            200,
+                            "OK",
+                            "application/json; charset=utf-8",
+                            b"{\"status\":\"cancelled\"}",
+                            true,
+                            true,
+                            None,
+                        );
+                    }
+                    Err(err) => {
+                        let msg = format!("{{\"error\":\"{err}\"}}");
+                        send_response(
+                            &mut stream,
+                            400,
+                            "Bad Request",
+                            "application/json; charset=utf-8",
+                            msg.as_bytes(),
+                            true,
+                            true,
+                            None,
+                        );
+                    }
+                }
+                return;
+            }
         }
 
         send_response(
@@ -630,6 +802,63 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
             None,
         );
         return;
+    }
+
+    if subpath == "runs" {
+        #[derive(Serialize)]
+        struct RunsOutput {
+            running: Vec<String>,
+            primary_busy: Option<String>,
+        }
+        let out = RunsOutput {
+            running: snapshot.acp_manager.running_items(),
+            primary_busy: snapshot.acp_manager.is_primary_busy(),
+        };
+        let out_json = serde_json::to_string(&out).unwrap_or_else(|_| "{}".to_string());
+        send_response(
+            &mut stream,
+            200,
+            "OK",
+            "application/json; charset=utf-8",
+            out_json.as_bytes(),
+            true,
+            method == "GET",
+            None,
+        );
+        return;
+    }
+
+    if let Some(stripped) = subpath.strip_prefix("items/") {
+        if let Some(id) = stripped.strip_suffix("/stream") {
+            let id = id.trim();
+            let _ = stream.set_read_timeout(None);
+            let _ = stream.set_write_timeout(None);
+
+            let sse_headers = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\nAccess-Control-Allow-Origin: *\r\n\r\n";
+            if stream.write_all(sse_headers.as_bytes()).is_err() || stream.flush().is_err() {
+                return;
+            }
+
+            let buffered = snapshot.acp_manager.get_buffered_events(id);
+            for event in buffered {
+                let payload = serde_json::to_string(&event).unwrap_or_default();
+                let frame = format!("data: {payload}\n\n");
+                if stream.write_all(frame.as_bytes()).is_err() || stream.flush().is_err() {
+                    return;
+                }
+            }
+
+            if let Some(rx) = snapshot.acp_manager.subscribe(id) {
+                while let Ok(event) = rx.recv() {
+                    let payload = serde_json::to_string(&event).unwrap_or_default();
+                    let frame = format!("data: {payload}\n\n");
+                    if stream.write_all(frame.as_bytes()).is_err() || stream.flush().is_err() {
+                        return;
+                    }
+                }
+            }
+            return;
+        }
     }
 
     if subpath == "data.json" {
@@ -754,11 +983,28 @@ pub fn open_browser(url: &str) {
 }
 
 pub fn serve_view(
-    snapshot: ViewSnapshot,
+    mut snapshot: ViewSnapshot,
     port: u16,
     no_open: bool,
     format: OutputFormat,
+    acp_command: Option<String>,
 ) -> io::Result<()> {
+    if acp_command.is_some() {
+        snapshot.acp_command = acp_command.clone();
+    }
+    let repo_path = std::env::current_dir().unwrap_or_else(|_| {
+        snapshot
+            .vault_path
+            .parent()
+            .unwrap_or(&snapshot.vault_path)
+            .to_path_buf()
+    });
+    let acp_mgr = Arc::new(crate::acp::AcpManager::new(
+        snapshot.vault_path.clone(),
+        repo_path,
+        acp_command,
+    ));
+    snapshot.acp_manager = acp_mgr;
     let listener = TcpListener::bind(format!("127.0.0.1:{port}"))?;
     let local_addr = listener.local_addr()?;
     let base_url = format!("http://127.0.0.1:{}/{}/", local_addr.port(), snapshot.token);
@@ -790,13 +1036,11 @@ pub fn serve_view(
     let shared_snapshot = Arc::new(snapshot);
     let server_port = local_addr.port();
 
-    for stream in listener.incoming() {
-        if let Ok(stream) = stream {
-            let snap = Arc::clone(&shared_snapshot);
-            thread::spawn(move || {
-                handle_client(stream, &snap, server_port);
-            });
-        }
+    for stream in listener.incoming().flatten() {
+        let snap = Arc::clone(&shared_snapshot);
+        thread::spawn(move || {
+            handle_client(stream, &snap, server_port);
+        });
     }
 
     Ok(())
