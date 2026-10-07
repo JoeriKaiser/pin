@@ -37,7 +37,10 @@ pub fn init(args: &[String], command: &str, _vault_path: &Path) -> CliResult<()>
 
     let gitignore_path = local_vault.join(".gitignore");
     if !gitignore_path.exists() {
-        let _ = fs::write(&gitignore_path, "*.lock\n.*.lock\n.*.edit-recovery.tmp\nruns/\n");
+        let _ = fs::write(
+            &gitignore_path,
+            "*.lock\n.*.lock\n.*.edit-recovery.tmp\nruns/\n",
+        );
     }
 
     let config_path = root.join(".pin-project");

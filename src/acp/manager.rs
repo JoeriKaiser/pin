@@ -168,7 +168,10 @@ impl AcpManager {
         // Resolve filename and canonical ID first
         let filename = crate::vault::resolve_selector(&self.vault_path, item_id)
             .map_err(|e| AcpManagerError::ItemNotFound(format!("{item_id}: {e}")))?;
-        let canonical_id = filename.strip_suffix(".md").unwrap_or(&filename).to_string();
+        let canonical_id = filename
+            .strip_suffix(".md")
+            .unwrap_or(&filename)
+            .to_string();
 
         // 1. Reject if canonical_id or item_id is already running
         {
@@ -187,7 +190,6 @@ impl AcpManager {
                 }
             }
         }
-
 
         // 4. Determine working directory
         let (work_dir, worktree_path) = if use_worktree {
