@@ -5,10 +5,10 @@
   var BASE = rawBase ? (rawBase.endsWith('/') ? rawBase : rawBase + '/') : '';
 
   var PURIFY_CONFIG = {
-    ALLOWED_TAGS: ['p','br','strong','em','b','i','code','pre','blockquote','h1','h2','h3','h4','h5','h6','ul','ol','li','a','hr','table','thead','tbody','tr','th','td','del','ins','sub','sup'],
-    ALLOWED_ATTR: ['href','title','class'],
+    ALLOWED_TAGS: ['p','br','strong','em','b','i','code','pre','blockquote','h1','h2','h3','h4','h5','h6','ul','ol','li','a','hr','table','thead','tbody','tr','th','td','del','ins','sub','sup','input'],
+    ALLOWED_ATTR: ['href','title','class','type','checked','disabled','target','rel'],
     ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i,
-    FORBID_TAGS: ['script','iframe','object','embed','form','input','button','textarea','select','style','link','meta','base','img','svg','math'],
+    FORBID_TAGS: ['script','iframe','object','embed','form','button','textarea','select','style','link','meta','base','img','svg','math'],
     FORBID_ATTR: ['style','src','srcdoc','onerror','onclick','onload','onfocus','onblur','onsubmit'],
     KEEP_CONTENT: true
   };
@@ -32,7 +32,20 @@
     countBlocked: $('count-blocked'),
     countDoneReview: $('count-done_review'),
     countClosed: $('count-closed'),
+    btnNewTicket: $('btn-new-ticket'),
+    quickAddContainer: $('quick-add-container'), quickAddTrigger: $('quick-add-trigger'),
     quickAddForm: $('quick-add-form'), quickAddInput: $('quick-add-input'),
+    quickAddExpandBtn: $('quick-add-expand-btn'), quickAddCloseBtn: $('quick-add-close-btn'),
+    quickAddBody: $('quick-add-body'), quickAddType: $('quick-add-type'), quickAddKind: $('quick-add-kind'),
+    quickAddPriority: $('quick-add-priority'), quickAddTags: $('quick-add-tags'),
+    quickAddCancel: $('quick-add-cancel'), quickAddSubmit: $('quick-add-submit'),
+    specModal: $('spec-modal'), specModalForm: $('spec-modal-form'), specModalCloseBtn: $('spec-modal-close-btn'),
+    specModalError: $('spec-modal-error'), specModalTitle: $('spec-modal-title'),
+    specModalType: $('spec-modal-type'), specModalKind: $('spec-modal-kind'), specModalPriority: $('spec-modal-priority'),
+    specModalProject: $('spec-modal-project'), specModalTags: $('spec-modal-tags'),
+    specTabWrite: $('spec-tab-write'), specTabPreview: $('spec-tab-preview'),
+    specModalBody: $('spec-modal-body'), specModalPreview: $('spec-modal-preview'),
+    specModalCancelBtn: $('spec-modal-cancel-btn'), specModalSubmitBtn: $('spec-modal-submit-btn'),
     scope: $('scope'), search: $('search'), count: $('count'), filterToggle: $('filter-toggle'), filters: $('filters'),
     status: $('status-filter'), type: $('type-filter'), kind: $('kind-filter'), priority: $('priority-filter'),
     projectWrap: $('project-wrap'), project: $('project-filter'), projects: $('projects'), clear: $('clear-filters'),
@@ -48,7 +61,12 @@
     dialogCloseBtn: $('dialog-close-btn'), dialogCancelBtn: $('dialog-cancel-btn'),
     dialogSubmitBtn: $('dialog-submit-btn'),
     toast: $('toast'),
+    readerTabs: $('reader-tabs'),
+    tabTaskSpec: $('tab-task-spec'),
+    tabAgentTrajectory: $('tab-agent-trajectory'),
+    readerTrajectoryBadge: $('reader-trajectory-badge'),
     agentDrawer: $('agent-drawer'),
+    agentTaskTitle: $('agent-task-title'),
     agentItemId: $('agent-item-id'),
     agentStatusPill: $('agent-status-pill'),
     btnCancelAgent: $('btn-cancel-agent'),
@@ -58,11 +76,29 @@
     agentTools: $('agent-tools'),
     btnToggleTools: $('btn-toggle-tools'),
     agentLogInfo: $('agent-log-info'),
+    trajectoryStream: $('agent-trajectory-stream'),
+    metricDuration: $('agent-metric-duration'),
+    metricTurns: $('agent-metric-turns'),
+    metricCalls: $('agent-metric-calls'),
+    trajectorySearch: $('agent-trajectory-search'),
+    swimlaneSvg: $('agent-swimlane-svg'),
+    toolInspector: $('agent-tool-inspector'),
+    inspectorTitle: $('inspector-title'),
+    inspectorStatus: $('inspector-status'),
+    inspectorArgs: $('inspector-args'),
+    inspectorOutput: $('inspector-output'),
+    btnCloseInspector: $('btn-close-inspector'),
+    btnCopyToolOutput: $('btn-copy-tool-output'),
     worktreeModal: $('worktree-modal'),
+    worktreeModalTitle: $('worktree-modal-title'),
+    worktreeBusyMsg: $('worktree-busy-msg'),
+    worktreePromptMsg: $('worktree-prompt-msg'),
     worktreeBusyId: $('worktree-busy-id'),
     worktreeTargetId: $('worktree-target-id'),
+    worktreePromptTargetId: $('worktree-prompt-target-id'),
     btnWorktreeCancel: $('btn-worktree-cancel'),
     btnWorktreeClose: $('btn-worktree-close'),
+    btnWorktreePrimary: $('btn-worktree-primary'),
     btnWorktreeConfirm: $('btn-worktree-confirm')
   };
 
@@ -70,6 +106,7 @@
     viewMode: (function () {
       try { return localStorage.getItem('pin_view_mode') || 'board'; } catch (_) { return 'board'; }
     })(),
+    readerTab: 'spec',
     items: [],
     shown: [],
     selected: null,
@@ -81,7 +118,20 @@
     activeRuns: new Set(),
     currentStream: null,
     currentStreamingId: null,
-    pendingWorktreeItem: null
+    pendingWorktreeItem: null,
+    trajectory: {
+      startTime: 0,
+      turns: 0,
+      calls: 0,
+      timer: null,
+      activeAssistantRow: null,
+      activeAssistantTextEl: null,
+      intervals: { input: [], model: [], tools: [] },
+      currentModelInterval: null,
+      toolIntervals: {},
+      toolCalls: {},
+      filterQuery: ''
+    }
   };
 
   var activeModalConfig = null;
@@ -89,7 +139,14 @@
 
   function norm(value) { return String(value == null ? '' : value).toLowerCase(); }
   function text(node, value) { if (node) node.textContent = value == null ? '' : String(value); }
-  function clear(node) { if (node) while (node.firstChild) node.removeChild(node.firstChild); }
+  function clear(node) {
+    if (!node) return;
+    if (typeof node.replaceChildren === 'function') {
+      node.replaceChildren();
+    } else {
+      node.textContent = '';
+    }
+  }
   function node(tag, className, value) {
     var n = document.createElement(tag);
     if (className) n.className = className;
@@ -102,7 +159,7 @@
   function kind(item) { return item.kind || 'unspecified'; }
   function priority(item) { return item.priority || 'unset'; }
   function tags(item) { return Array.isArray(item.tags) ? item.tags.map(String) : []; }
-  function isNarrow() { return window.matchMedia('(max-width: 799.98px)').matches; }
+  function isNarrow() { return (typeof window !== 'undefined' && window && window.matchMedia) ? window.matchMedia('(max-width: 799.98px)').matches : false; }
 
   function date(value, long) {
     var n = Number(value); if (!isFinite(n)) return '';
@@ -124,33 +181,29 @@
     return date(value, false);
   }
 
-  function formatCountdown(expiresAt) {
-    if (!expiresAt) return null;
-    var target = Number(expiresAt);
-    if (target < 1e12) target *= 1000;
-    var now = Date.now();
-    var diff = target - now;
-    if (diff <= 0) return { text: 'Lease expired', expired: true };
-    var totalSec = Math.floor(diff / 1000);
-    var hours = Math.floor(totalSec / 3600);
-    var mins = Math.floor((totalSec % 3600) / 60);
-    var secs = totalSec % 60;
-    var parts = [];
-    if (hours > 0) parts.push(hours + 'h');
-    parts.push(mins + 'm');
-    parts.push((secs < 10 && hours > 0 ? '0' : '') + secs + 's');
-    return { text: parts.join(' '), expired: false };
-  }
-
   function route() {
-    var match = (location.hash || '').match(/^#\/(?:idea|item)\/(.+)$/);
+    var hash = '';
+    try {
+      if (typeof location !== 'undefined' && location && location.hash) {
+        hash = location.hash;
+      }
+    } catch (_) {}
+    if (!hash) return state ? state.selected : null;
+    var match = hash.match(/^#\/(?:idea|item)\/(.+)$/);
     if (!match) return null;
     try { return decodeURIComponent(match[1]); } catch (_) { return null; }
   }
 
   function setRoute(id) {
     var next = id ? '#/item/' + encodeURIComponent(id) : '#/';
-    if (location.hash !== next) location.hash = next; else applyRoute();
+    try {
+      if (typeof location !== 'undefined' && location) {
+        if (location.hash !== next) location.hash = next; else applyRoute();
+        return;
+      }
+    } catch (_) {}
+    state.selected = id;
+    applyRoute();
   }
 
   function find(id) {
@@ -262,6 +315,15 @@
     }, 3500);
   }
 
+  function escapeHtml(str) {
+    return String(str == null ? '' : str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
   function showDialogError(message) {
     if (!els.dialogError) return;
     if (message) {
@@ -274,6 +336,7 @@
   }
 
   function sendAction(id, payload) {
+    state.lastAction = { id: id, payload: payload };
     var url = BASE + 'items/' + encodeURIComponent(id) + '/action';
     return fetch(url, {
       method: 'POST',
@@ -301,7 +364,432 @@
     })
     .then(function (data) {
       refreshData();
-      return data;
+       return data;
+     });
+   }
+
+  function sendRunItem(id, useWorktree, errorPrefix) {
+    showToast('Starting agent...', false);
+    var payload = useWorktree ? { use_worktree: true } : {};
+    return fetch(BASE + 'items/' + encodeURIComponent(id) + '/run', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Pin-Action': 'true'
+      },
+      body: JSON.stringify(payload)
+    })
+    .then(function (res) {
+      if (!res.ok) {
+        return res.json().then(function (err) {
+          if (res.status === 409 && err.status === 'primary_busy') {
+            var it = find(id);
+            if (it) openWorktreeModal(it, err.active_id || 'another task');
+            return null;
+          }
+          throw new Error(err.error || 'Failed to start agent');
+        }).catch(function (pErr) {
+          if (pErr) throw pErr;
+        });
+      }
+      return res.json();
+    })
+    .then(function (data) {
+      if (!data) return;
+      showToast('Agent started', false);
+      updateActiveRuns();
+      openAgentDrawer(id);
+      setReaderTab('trajectory');
+    })
+    .catch(function (err) {
+      if (!err) return;
+      var message = err.message || 'Failed to start agent';
+      showToast(errorPrefix ? errorPrefix + message : message, true);
+    });
+  }
+
+  function sendCommitPrItem(id) {
+    showToast('Starting Commit & PR agent...', false);
+    return fetch(BASE + 'items/' + encodeURIComponent(id) + '/commit-pr', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Pin-Action': 'true'
+      }
+    })
+    .then(function (res) {
+      if (!res.ok) {
+        return res.json().then(function (err) {
+          if (res.status === 409 && err.status === 'primary_busy') {
+            var it = find(id);
+            if (it) openWorktreeModal(it, err.active_id || 'another task');
+            return null;
+          }
+          throw new Error(err.error || 'Failed to start Commit & PR agent');
+        }).catch(function (pErr) {
+          if (pErr) throw pErr;
+        });
+      }
+      return res.json();
+    })
+    .then(function (data) {
+      if (!data) return;
+      showToast('Commit & PR agent started', false);
+      updateActiveRuns();
+      openAgentDrawer(id);
+      setReaderTab('trajectory');
+      refreshData();
+    })
+    .catch(function (err) {
+      if (err) {
+        showToast('Commit & PR failed: ' + err.message, true);
+      }
+    });
+  }
+
+  var SPEC_SNIPPETS = {
+    ac: '## Acceptance Criteria\n- [ ] ',
+    template: '## Problem & Context\n\n## Implementation Proposal\n\n## Acceptance Criteria\n- [ ] '
+  };
+
+  function insertSnippetIntoTextarea(textarea, snippet) {
+    if (!textarea) return;
+    var start = typeof textarea.selectionStart === 'number' ? textarea.selectionStart : textarea.value.length;
+    var end = typeof textarea.selectionEnd === 'number' ? textarea.selectionEnd : start;
+    var val = textarea.value;
+    var before = val.substring(0, start);
+    var after = val.substring(end);
+    var prefix = '';
+    if (before && !before.endsWith('\n\n')) {
+      prefix = before.endsWith('\n') ? '\n' : '\n\n';
+    }
+    var inserted = prefix + snippet;
+    textarea.value = before + inserted + after;
+    var newPos = before.length + inserted.length;
+    textarea.selectionStart = newPos;
+    textarea.selectionEnd = newPos;
+    if (textarea.focus) textarea.focus();
+  }
+
+  function getClipboardImages(e) {
+    var cd = (e && e.clipboardData) || (window && window.clipboardData);
+    if (!cd) return [];
+    var images = [];
+    if (cd.items && cd.items.length) {
+      for (var i = 0; i < cd.items.length; i++) {
+        var item = cd.items[i];
+        if (item && item.type && item.type.indexOf('image') !== -1) {
+          var f = typeof item.getAsFile === 'function' ? item.getAsFile() : null;
+          if (f) images.push(f);
+        }
+      }
+    }
+    if (images.length === 0 && cd.files && cd.files.length) {
+      for (var j = 0; j < cd.files.length; j++) {
+        var file = cd.files[j];
+        if (file && file.type && file.type.indexOf('image') !== -1) {
+          images.push(file);
+        }
+      }
+    }
+    return images;
+  }
+
+  function uploadScreenshot(file) {
+    return fetch(BASE + 'screenshots', {
+      method: 'POST',
+      headers: {
+        'Content-Type': (file && file.type) || 'image/png',
+        'X-Pin-Action': 'true'
+      },
+      body: file
+    })
+    .then(function (res) {
+      if (!res.ok) {
+        return res.json().then(function (err) {
+          throw new Error(err.error || ('Failed to upload screenshot (' + res.status + ')'));
+        }).catch(function (pErr) {
+          throw new Error(pErr.message || ('Failed to upload screenshot (' + res.status + ')'));
+        });
+      }
+      return res.json();
+    });
+  }
+
+  function handleScreenshotPaste(e, textareaOverride) {
+    var images = getClipboardImages(e);
+    if (!images.length) return false;
+
+    if (e && typeof e.preventDefault === 'function') {
+      e.preventDefault();
+    }
+
+    var targetTa = textareaOverride || (e && (e.currentTarget || e.target));
+    if (!targetTa || typeof targetTa.value !== 'string') {
+      var modalOpen = els.specModal && (els.specModal.open || els.specModal.hasAttribute('open'));
+      targetTa = modalOpen ? els.specModalBody : els.quickAddBody;
+    }
+    if (!targetTa) return true;
+
+    for (var i = 0; i < images.length; i++) {
+      (function (img, idx) {
+        var placeholder = '![Uploading screenshot' + (images.length > 1 ? (' ' + (idx + 1)) : '') + '...]()';
+        insertSnippetIntoTextarea(targetTa, placeholder);
+
+        uploadScreenshot(img)
+          .then(function (res) {
+            var md = (res && res.markdown) || ('![screenshot](' + (res && res.path ? res.path : '') + ')');
+            if (targetTa.value.indexOf(placeholder) !== -1) {
+              targetTa.value = targetTa.value.replace(placeholder, md);
+            } else {
+              insertSnippetIntoTextarea(targetTa, md);
+            }
+            showToast('Screenshot pasted', false);
+          })
+          .catch(function (err) {
+            if (targetTa.value.indexOf(placeholder) !== -1) {
+              targetTa.value = targetTa.value.replace(placeholder, '');
+            }
+            showToast(err.message || 'Failed to paste screenshot', true);
+          });
+      })(images[i], i);
+    }
+    return true;
+  }
+
+  function createItem(payload) {
+    return fetch(BASE + 'items', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Pin-Action': 'true'
+      },
+      body: JSON.stringify(payload)
+    })
+    .then(function (res) {
+      if (!res.ok) {
+        return res.json().then(function (err) { throw new Error(err.error || 'Failed to create item'); })
+          .catch(function (pErr) { throw new Error(pErr.message || 'Failed to create item'); });
+      }
+      return res.json();
+    });
+  }
+
+  function expandQuickAdd(focusTarget) {
+    if (els.quickAddTrigger) els.quickAddTrigger.hidden = true;
+    if (els.quickAddForm) els.quickAddForm.hidden = false;
+    if (focusTarget === 'body' && els.quickAddBody && els.quickAddBody.focus) {
+      els.quickAddBody.focus();
+    } else if (els.quickAddInput && els.quickAddInput.focus) {
+      els.quickAddInput.focus();
+    }
+  }
+
+  function collapseQuickAdd() {
+    if (els.quickAddForm) els.quickAddForm.hidden = true;
+    if (els.quickAddTrigger) els.quickAddTrigger.hidden = false;
+  }
+
+  function resetQuickAdd() {
+    if (els.quickAddInput) els.quickAddInput.value = '';
+    if (els.quickAddBody) els.quickAddBody.value = '';
+    if (els.quickAddType) els.quickAddType.value = 'task';
+    if (els.quickAddKind) els.quickAddKind.value = 'technical';
+    if (els.quickAddPriority) els.quickAddPriority.value = '';
+    if (els.quickAddTags) els.quickAddTags.value = '';
+    collapseQuickAdd();
+  }
+
+  function setQuickAddDisabled(disabled) {
+    if (els.quickAddInput) els.quickAddInput.disabled = disabled;
+    if (els.quickAddBody) els.quickAddBody.disabled = disabled;
+    if (els.quickAddType) els.quickAddType.disabled = disabled;
+    if (els.quickAddKind) els.quickAddKind.disabled = disabled;
+    if (els.quickAddPriority) els.quickAddPriority.disabled = disabled;
+    if (els.quickAddTags) els.quickAddTags.disabled = disabled;
+    if (els.quickAddSubmit) {
+      els.quickAddSubmit.disabled = disabled;
+      text(els.quickAddSubmit, disabled ? 'Creating…' : 'Create Ticket');
+    }
+  }
+
+  function submitQuickAdd() {
+    var title = els.quickAddInput ? els.quickAddInput.value.trim() : '';
+    if (!title) {
+      if (els.quickAddInput) els.quickAddInput.focus();
+      showToast('Title is required', true);
+      return;
+    }
+    var body = els.quickAddBody ? els.quickAddBody.value.trim() : '';
+    var type = els.quickAddType ? els.quickAddType.value : 'task';
+    var kind = els.quickAddKind ? els.quickAddKind.value : 'technical';
+    var priority = els.quickAddPriority && els.quickAddPriority.value ? els.quickAddPriority.value : undefined;
+    var tags = els.quickAddTags && els.quickAddTags.value.trim() ? els.quickAddTags.value.trim() : undefined;
+    var activeProject = (state.scope && state.scope !== 'all') ? state.scope : undefined;
+
+    setQuickAddDisabled(true);
+    createItem({
+      title: title,
+      body: body || undefined,
+      type: type,
+      kind: kind,
+      priority: priority,
+      tags: tags,
+      status: 'created',
+      project: activeProject
+    })
+    .then(function (newItem) {
+      resetQuickAdd();
+      setQuickAddDisabled(false);
+      showToast('Created ' + (newItem.type || 'task') + ': ' + (newItem.title || title), false);
+      refreshData();
+      if (newItem && newItem.id) {
+        setRoute(newItem.id);
+      }
+    })
+    .catch(function (err) {
+      setQuickAddDisabled(false);
+      showToast(err.message || 'Failed to create task', true);
+    });
+  }
+
+  function showSpecModalError(msg) {
+    if (!els.specModalError) return;
+    if (msg) {
+      text(els.specModalError, msg);
+      els.specModalError.hidden = false;
+    } else {
+      text(els.specModalError, '');
+      els.specModalError.hidden = true;
+    }
+  }
+
+  function setSpecModalTab(tab) {
+    if (tab === 'preview') {
+      if (els.specTabWrite) els.specTabWrite.classList.remove('active');
+      if (els.specTabPreview) els.specTabPreview.classList.add('active');
+      if (els.specModalBody) els.specModalBody.hidden = true;
+      if (els.specModalPreview) {
+        els.specModalPreview.hidden = false;
+        var raw = els.specModalBody ? els.specModalBody.value.trim() : '';
+        if (!raw) {
+          els.specModalPreview.innerHTML = '<p style="color: var(--muted); font-style: italic;">Nothing to preview yet. Write Markdown in the editor.</p>';
+        } else {
+          var rendered = '';
+          try {
+            rendered = marked.parse(raw, { renderer: markedRenderer, gfm: true, async: false });
+          } catch (_) {
+            rendered = raw;
+          }
+          try {
+            els.specModalPreview.innerHTML = DOMPurify.sanitize(rendered, PURIFY_CONFIG);
+          } catch (_) {
+            text(els.specModalPreview, raw);
+          }
+        }
+      }
+    } else {
+      if (els.specTabWrite) els.specTabWrite.classList.add('active');
+      if (els.specTabPreview) els.specTabPreview.classList.remove('active');
+      if (els.specModalBody) els.specModalBody.hidden = false;
+      if (els.specModalPreview) els.specModalPreview.hidden = true;
+    }
+  }
+
+  function openSpecModal(initial) {
+    initial = initial || {};
+    var activeProject = (state.scope && state.scope !== 'all') ? state.scope : '';
+    if (els.specModalTitle) els.specModalTitle.value = initial.title || '';
+    if (els.specModalBody) els.specModalBody.value = initial.body || '';
+    if (els.specModalType) els.specModalType.value = initial.type || 'task';
+    if (els.specModalKind) els.specModalKind.value = initial.kind || 'technical';
+    if (els.specModalPriority) els.specModalPriority.value = initial.priority || '';
+    if (els.specModalTags) els.specModalTags.value = initial.tags || '';
+    if (els.specModalProject) els.specModalProject.value = initial.project || activeProject;
+
+    setSpecModalTab('write');
+    showSpecModalError('');
+
+    if (els.specModal) {
+      if (els.specModal.showModal) {
+        els.specModal.showModal();
+      } else {
+        els.specModal.setAttribute('open', '');
+      }
+    }
+
+    if (initial.title && els.specModalBody && els.specModalBody.focus) {
+      els.specModalBody.focus();
+    } else if (els.specModalTitle && els.specModalTitle.focus) {
+      els.specModalTitle.focus();
+    }
+  }
+
+  function closeSpecModal() {
+    showSpecModalError('');
+    if (els.specModal) {
+      if (els.specModal.close) {
+        els.specModal.close();
+      } else {
+        els.specModal.removeAttribute('open');
+      }
+    }
+  }
+
+  function setSpecModalDisabled(disabled) {
+    if (els.specModalTitle) els.specModalTitle.disabled = disabled;
+    if (els.specModalBody) els.specModalBody.disabled = disabled;
+    if (els.specModalType) els.specModalType.disabled = disabled;
+    if (els.specModalKind) els.specModalKind.disabled = disabled;
+    if (els.specModalPriority) els.specModalPriority.disabled = disabled;
+    if (els.specModalTags) els.specModalTags.disabled = disabled;
+    if (els.specModalProject) els.specModalProject.disabled = disabled;
+    if (els.specModalSubmitBtn) {
+      els.specModalSubmitBtn.disabled = disabled;
+      text(els.specModalSubmitBtn, disabled ? 'Creating…' : 'Create Ticket');
+    }
+  }
+
+  function submitSpecModal() {
+    var title = els.specModalTitle ? els.specModalTitle.value.trim() : '';
+    if (!title) {
+      showSpecModalError('Title is required');
+      if (els.specModalTitle) els.specModalTitle.focus();
+      return;
+    }
+    var body = els.specModalBody ? els.specModalBody.value.trim() : '';
+    var type = els.specModalType ? els.specModalType.value : 'task';
+    var kind = els.specModalKind ? els.specModalKind.value : 'technical';
+    var priority = els.specModalPriority && els.specModalPriority.value ? els.specModalPriority.value : undefined;
+    var tags = els.specModalTags && els.specModalTags.value.trim() ? els.specModalTags.value.trim() : undefined;
+    var projectVal = els.specModalProject ? els.specModalProject.value.trim() : '';
+    var activeProject = projectVal || ((state.scope && state.scope !== 'all') ? state.scope : undefined);
+
+    showSpecModalError('');
+    setSpecModalDisabled(true);
+
+    createItem({
+      title: title,
+      body: body || undefined,
+      type: type,
+      kind: kind,
+      priority: priority,
+      tags: tags,
+      status: 'created',
+      project: activeProject
+    })
+    .then(function (newItem) {
+      setSpecModalDisabled(false);
+      closeSpecModal();
+      showToast('Created ' + (newItem.type || 'task') + ': ' + (newItem.title || title), false);
+      refreshData();
+      if (newItem && newItem.id) {
+        setRoute(newItem.id);
+      }
+    })
+    .catch(function (err) {
+      setSpecModalDisabled(false);
+      showSpecModalError(err.message || 'Failed to create task');
     });
   }
 
@@ -353,7 +841,58 @@
           showToast('Action applied successfully', false);
         })
         .catch(function (err) {
-          showDialogError(err.message || 'Action failed');
+          // A busy primary checkout is not a revision conflict: offer the
+          // worktree instead of a "Sync & Retry" loop that cannot succeed.
+          if (err && err.data && err.data.status === 'primary_busy') {
+            var busyItem = state.lastAction ? find(state.lastAction.id) : null;
+            var activeId = err.data.active_id || 'another task';
+            closeActionModal();
+            if (busyItem) {
+              openWorktreeModal(busyItem, activeId);
+            } else {
+              showToast('Primary checkout is busy running ' + activeId, true);
+            }
+            return;
+          }
+          var isConflict = err && (err.status === 409 || /revision conflict/i.test(err.message || '') || (err.data && /revision conflict/i.test(err.data.error || '')));
+          if (isConflict && els.dialogError && state.lastAction) {
+            var lastAction = state.lastAction;
+            clear(els.dialogError);
+            var wrap = node('div', 'dialog-conflict-actions');
+            var msgSpan = node('span', 'conflict-msg', err.message || 'Revision conflict');
+            var retryBtn = node('button', 'action-btn-small', 'Sync & Retry');
+            retryBtn.type = 'button';
+            retryBtn.id = 'btn-dialog-retry';
+            retryBtn.addEventListener('click', function () {
+              retryBtn.disabled = true;
+              text(retryBtn, 'Syncing…');
+              fetch(BASE + 'data.json', { credentials: 'same-origin', cache: 'no-cache' })
+                .then(function (res) {
+                  if (!res.ok) throw new Error('Failed to refresh data (' + res.status + ')');
+                  return res.json();
+                })
+                .then(function (data) {
+                  if (data) ingest(data);
+                  var latestItem = find(lastAction.id);
+                  if (!latestItem) throw new Error('Item not found in vault after sync');
+                  lastAction.payload.expect_revision = latestItem.revision;
+                  return sendAction(lastAction.id, lastAction.payload);
+                })
+                .then(function () {
+                  closeActionModal();
+                  showToast('Action applied successfully', false);
+                })
+                .catch(function (retryErr) {
+                  showDialogError(retryErr.message || 'Retry failed');
+                });
+            });
+            wrap.appendChild(msgSpan);
+            wrap.appendChild(retryBtn);
+            els.dialogError.appendChild(wrap);
+            els.dialogError.hidden = false;
+          } else {
+            showDialogError(err.message || 'Action failed');
+          }
           if (els.dialogSubmitBtn) {
             els.dialogSubmitBtn.disabled = false;
             text(els.dialogSubmitBtn, activeModalConfig.submitText || 'Confirm');
@@ -424,59 +963,6 @@
     });
   }
 
-  function openClaimModal(item) {
-    var rev = item.revision;
-    var selectedLease = 3600;
-    var savedActor = '';
-    try { savedActor = localStorage.getItem('pin_actor') || ''; } catch (_) {}
-    if (!savedActor) savedActor = 'human:viewer';
-
-    openActionModal({
-      title: 'Claim: ' + (item.title || item.id),
-      submitText: 'Claim & Start',
-      render: function (body) {
-        var actorLabel = node('label');
-        actorLabel.appendChild(node('span', '', 'Actor identifier'));
-        var actorInput = node('input');
-        actorInput.id = 'action-input-actor';
-        actorInput.type = 'text';
-        actorInput.value = savedActor;
-        actorInput.placeholder = 'human:name or agent:model';
-        actorLabel.appendChild(actorInput);
-        body.appendChild(actorLabel);
-
-        var leaseLabel = node('label');
-        leaseLabel.appendChild(node('span', '', 'Lease duration'));
-        var pills = node('div', 'preset-pills');
-        var presets = [
-          { label: '15m', sec: 900 },
-          { label: '1h', sec: 3600 },
-          { label: '4h', sec: 14400 }
-        ];
-        presets.forEach(function (p) {
-          var btn = node('button', 'preset-pill' + (p.sec === selectedLease ? ' active' : ''), p.label);
-          btn.type = 'button';
-          btn.addEventListener('click', function () {
-            selectedLease = p.sec;
-            var siblings = pills.querySelectorAll('.preset-pill');
-            siblings.forEach(function (s) { s.classList.remove('active'); });
-            btn.classList.add('active');
-          });
-          pills.appendChild(btn);
-        });
-        leaseLabel.appendChild(pills);
-        body.appendChild(leaseLabel);
-      },
-      onSubmit: function () {
-        var actorEl = $('action-input-actor');
-        var actorVal = actorEl ? actorEl.value.trim() : '';
-        if (!actorVal) actorVal = 'human:viewer';
-        try { localStorage.setItem('pin_actor', actorVal); } catch (_) {}
-        return sendAction(item.id, { action: 'claim', actor: actorVal, lease: selectedLease, expect_revision: rev });
-      }
-    });
-  }
-
   function openCloseModal(item) {
     var rev = item.revision;
     openActionModal({
@@ -523,30 +1009,15 @@
 
     if (targetStatus === 'in_progress') {
       if (cur === 'in_progress') return;
-      sendAction(item.id, { action: 'transition', to: 'in_progress', expect_revision: rev })
-        .then(function () {
-          showToast('Moved to In Progress', false);
-        })
-        .catch(function (err) {
-          var isBusy = err.status === 409 || (err.data && err.data.status === 'primary_busy') || (err.message && err.message.indexOf('Primary checkout is busy') !== -1);
-          if (isBusy) {
-            var activeId = (err.data && err.data.active_id) || 'another task';
-            openWorktreeModal(item, activeId);
-          } else {
-            showToast('Action failed: ' + err.message, true);
-          }
-        });
+      openWorktreeModal(item, null);
       return;
     }
 
     if (targetStatus === 'planned') {
-      if (cur === 'in_progress') {
-        sendAction(item.id, { action: 'release', force: true, expect_revision: rev })
-          .catch(function (err) { showToast('Action failed: ' + err.message, true); });
-      } else {
-        sendAction(item.id, { action: 'transition', to: 'planned', expect_revision: rev })
-          .catch(function (err) { showToast('Action failed: ' + err.message, true); });
-      }
+      if (cur === 'planned') return;
+      sendAction(item.id, { action: 'transition', to: 'planned', expect_revision: rev })
+        .then(function () { showToast('Moved to Planned', false); })
+        .catch(function (err) { showToast('Action failed: ' + err.message, true); });
       return;
     }
 
@@ -587,21 +1058,6 @@
     var meta = node('div', 'board-card-meta');
     meta.appendChild(node('span', 'type-badge', itemType(item)));
 
-    if (item.claimed_by) {
-      meta.appendChild(node('span', 'claimer-badge', '@' + item.claimed_by));
-    }
-
-    if (item.claim_expires_at) {
-      var countdown = node('span', 'lease-countdown');
-      countdown.dataset.expiresAt = String(item.claim_expires_at);
-      var cd = formatCountdown(item.claim_expires_at);
-      if (cd) {
-        text(countdown, cd.text);
-        if (cd.expired) countdown.classList.add('expired');
-      }
-      meta.appendChild(countdown);
-    }
-
     if (state.activeRuns.has(item.id)) {
       var runBadge = node('span', 'card-running-indicator');
       runBadge.appendChild(node('span', 'card-running-dot'));
@@ -615,6 +1071,18 @@
         openAgentDrawer(item.id);
       });
       meta.appendChild(viewRunBtn);
+    } else {
+      var cardStatus = itemStatus(item);
+      if (cardStatus === 'review' || cardStatus === 'done') {
+        var commitPrBtn = node('button', 'btn-commit-pr', 'Commit + PR');
+        commitPrBtn.type = 'button';
+        commitPrBtn.title = 'Start agent to commit worktree and create PR';
+        commitPrBtn.addEventListener('click', function (e) {
+          e.stopPropagation();
+          sendCommitPrItem(item.id);
+        });
+        meta.appendChild(commitPrBtn);
+      }
     }
     if (hasUnresolvedPrereqs(item)) {
       card.classList.add('is-locked');
@@ -713,10 +1181,6 @@
       meta.appendChild(node('span', 'type-badge', itemType(item)));
       meta.appendChild(node('span', 'status-badge status-' + itemStatus(item), itemStatus(item)));
 
-      if (item.claimed_by) {
-        meta.appendChild(node('span', 'claimer-badge', '@' + item.claimed_by));
-      }
-
       if (priority(item) !== 'unset') {
         meta.appendChild(node('span', 'priority-' + priority(item), priority(item)));
       }
@@ -752,21 +1216,62 @@
       : source;
   }
 
+  var markedRenderer = null;
+  if (typeof marked !== 'undefined' && marked && typeof marked.Renderer === 'function') {
+    try {
+      markedRenderer = new marked.Renderer();
+      markedRenderer.listitem = function (item, task, checked) {
+        var textStr = '';
+        var isTask = false;
+        var isChecked = false;
+        if (item && typeof item === 'object') {
+          isTask = !!item.task;
+          isChecked = !!item.checked;
+          if (item.tokens) {
+            var filteredTokens = item.tokens.filter(function (t) { return t.type !== 'checkbox'; });
+            textStr = this.parser ? this.parser.parse(filteredTokens) : (item.text || '');
+          } else {
+            textStr = item.text || '';
+          }
+        } else {
+          textStr = String(item || '');
+          isTask = !!task;
+          isChecked = !!checked;
+        }
+
+        if (isTask || /^\[[ xX]\]\s*/.test(textStr)) {
+          isChecked = isChecked || /^\[[xX]\]\s*/.test(textStr);
+          var cleanText = textStr.replace(/^\[[ xX]\]\s*/, '');
+          return '<li class="task-list-item"><input type="checkbox" disabled ' + (isChecked ? 'checked ' : '') + '/> ' + cleanText + '</li>';
+        }
+        return '<li>' + textStr + '</li>';
+      };
+      markedRenderer.image = function (token, title, text) {
+        var src = (typeof token === 'object' && token) ? (token.href || '') : (token || '');
+        var label = (typeof token === 'object' && token) ? (token.text || '') : (text || '');
+        var filename = src.split('/').pop() || src;
+        var viewUrl = BASE + 'screenshots/' + encodeURIComponent(filename);
+        return '<p class="screenshot-ref">📷 <a href="' + escapeHtml(viewUrl) + '" target="_blank" rel="noopener"><code>' + escapeHtml(src || label || 'screenshot') + '</code></a></p>';
+      };
+      marked.use({ renderer: markedRenderer, gfm: true });
+    } catch (_) {}
+  }
+
   function renderMarkdown(item) {
     var source = bodyWithoutDuplicateTitle(item.content || item.body, item.title), dirty;
-    try { dirty = marked.parse(source, { async: false }); } catch (_) { text(els.body, source); return; }
+    try { dirty = marked.parse(source, { renderer: markedRenderer, gfm: true, async: false }); } catch (_) { text(els.body, source); return; }
     try { els.body.innerHTML = DOMPurify.sanitize(dirty, PURIFY_CONFIG); } catch (_) { text(els.body, source); }
   }
 
   function renderWorkerBox(item) {
     clear(els.workerCard);
-    els.workerCard.appendChild(node('h3', '', 'Active Worker & State'));
+    els.workerCard.appendChild(node('h3', '', 'Agent Run'));
 
     var header = node('div', 'worker-card-header');
-    if (item.claimed_by) {
-      header.appendChild(node('span', 'worker-actor', '@' + item.claimed_by));
+    if (state.activeRuns.has(item.id)) {
+      header.appendChild(node('span', 'worker-actor', item.claimed_by ? '@' + item.claimed_by : 'Agent running'));
     } else {
-      header.appendChild(node('span', 'worker-actor', 'Unclaimed'));
+      header.appendChild(node('span', 'worker-actor', 'No active run'));
     }
     if (item.revision != null) {
       header.appendChild(node('span', 'worker-revision', 'rev ' + item.revision));
@@ -774,16 +1279,6 @@
     els.workerCard.appendChild(header);
 
     var meta = node('div', 'worker-meta');
-    if (item.claim_expires_at) {
-      var timer = node('span', 'lease-countdown');
-      timer.dataset.expiresAt = String(item.claim_expires_at);
-      var cd = formatCountdown(item.claim_expires_at);
-      if (cd) {
-        text(timer, cd.text);
-        if (cd.expired) timer.classList.add('expired');
-      }
-      meta.appendChild(timer);
-    }
     if (item.created_by) {
       meta.appendChild(node('span', '', 'Created by @' + item.created_by));
     }
@@ -872,8 +1367,8 @@
     }
 
     if (st === 'planned') {
-      btn('Claim (Start Work)', true, function () {
-        openClaimModal(item);
+      btn('Start Agent', true, function () {
+        openWorktreeModal(item, null);
       });
       btn('Mark Blocked', false, function () {
         openBlockedModal(item);
@@ -885,14 +1380,13 @@
         btn('View Agent Run', true, function () {
           openAgentDrawer(item.id);
         });
+      } else {
+        btn('Resume Agent', true, function () {
+          openWorktreeModal(item, null);
+        });
       }
-      btn('Complete with Evidence', true, function () {
+      btn('Complete with Evidence', !state.activeRuns.has(item.id), function () {
         openCompleteModal(item);
-      });
-      btn('Release Claim', false, function () {
-        sendAction(item.id, { action: 'release', force: true, expect_revision: rev })
-          .then(function () { showToast('Claim released', false); })
-          .catch(function (err) { showToast('Action failed: ' + err.message, true); });
       });
       btn('Mark Blocked', false, function () {
         openBlockedModal(item);
@@ -907,8 +1401,17 @@
       });
     }
 
-    if (st === 'done') {
-      btn('Close Item', true, function () {
+    if (st === 'review') {
+      if (state.activeRuns.has(item.id)) {
+        btn('View Agent Run', true, function () {
+          openAgentDrawer(item.id);
+        });
+      } else {
+        btn('Commit + PR', true, function () {
+          sendCommitPrItem(item.id);
+        });
+      }
+      btn('Close Item', false, function () {
         openCloseModal(item);
       });
       btn('Reopen to Planned', false, function () {
@@ -918,7 +1421,27 @@
       });
     }
 
-    if (st !== 'closed' && st !== 'cancelled' && st !== 'done') {
+    if (st === 'done') {
+      if (state.activeRuns.has(item.id)) {
+        btn('View Agent Run', true, function () {
+          openAgentDrawer(item.id);
+        });
+      } else {
+        btn('Commit + PR', true, function () {
+          sendCommitPrItem(item.id);
+        });
+      }
+      btn('Close Item', false, function () {
+        openCloseModal(item);
+      });
+      btn('Reopen to Planned', false, function () {
+        sendAction(item.id, { action: 'transition', to: 'planned', expect_revision: rev })
+          .then(function () { showToast('Reopened to Planned', false); })
+          .catch(function (err) { showToast('Action failed: ' + err.message, true); });
+      });
+    }
+
+    if (st !== 'closed' && st !== 'cancelled' && st !== 'done' && st !== 'review') {
       btn('Close Item', false, function () {
         openCloseModal(item);
       });
@@ -988,17 +1511,44 @@
     });
   }
 
+  function setReaderTab(tab) {
+    state.readerTab = tab;
+    if (tab === 'trajectory') {
+      if (els.tabAgentTrajectory) els.tabAgentTrajectory.classList.add('active');
+      if (els.tabTaskSpec) els.tabTaskSpec.classList.remove('active');
+      if (els.proposal) els.proposal.hidden = true;
+      if (els.agentDrawer) els.agentDrawer.hidden = false;
+
+      if (state.currentStreamingId === state.selected && els.trajectoryStream && els.trajectoryStream.children.length > 0) {
+        return;
+      }
+      if (state.selected) {
+        openAgentDrawer(state.selected);
+      }
+    } else {
+      if (els.tabTaskSpec) els.tabTaskSpec.classList.add('active');
+      if (els.tabAgentTrajectory) els.tabAgentTrajectory.classList.remove('active');
+      if (els.proposal) els.proposal.hidden = false;
+      if (els.agentDrawer) els.agentDrawer.hidden = true;
+    }
+  }
+
   function renderDetail() {
     var item = find(state.selected);
     document.body.classList.toggle('detail-open', !!item);
-    els.proposal.hidden = !item;
     els.detailEmpty.hidden = !!item;
 
     if (!item) {
+      if (els.readerTabs) els.readerTabs.hidden = true;
+      if (els.proposal) els.proposal.hidden = true;
+      if (els.agentDrawer) els.agentDrawer.hidden = true;
       text(els.detailEmpty, state.selected ? 'This item is not in the vault.' : 'Select an item to view it.');
       return;
     }
 
+    if (els.readerTabs) els.readerTabs.hidden = false;
+    if (els.readerTrajectoryBadge) els.readerTrajectoryBadge.hidden = !state.activeRuns.has(item.id);
+    setReaderTab(state.readerTab === 'trajectory' ? 'trajectory' : 'spec');
     var context = [];
     if (item.project) context.push(item.project);
     context.push(itemType(item).toUpperCase());
@@ -1008,7 +1558,6 @@
 
     clear(els.summary);
     addSummary(itemStatus(item), 'status-badge status-' + itemStatus(item));
-    if (item.claimed_by) addSummary('@' + item.claimed_by, 'claimer-badge');
     if (priority(item) !== 'unset') addSummary(priority(item) + ' priority', 'priority-' + priority(item));
     addSummary(date(item.timestamp, true));
     if (tags(item).length) addSummary(tags(item).join(' · '));
@@ -1024,8 +1573,6 @@
     addMeta('Status', item.status);
     addMeta('Revision', item.revision != null ? String(item.revision) : '');
     addMeta('Created by', item.created_by);
-    addMeta('Claimed by', item.claimed_by);
-    if (item.claim_expires_at) addMeta('Claim lease expires', date(item.claim_expires_at, true));
     if (item.parent_id) addMeta('Parent ID', item.parent_id);
     if (item.depends_on && item.depends_on.length) addMeta('Depends on', item.depends_on.join(', '));
     if (item.related && item.related.length) addMeta('Related', item.related.join(', '));
@@ -1046,24 +1593,14 @@
 
   function applyRoute() {
     state.selected = route();
+    if (state.selected && state.viewMode !== 'detail') {
+      setViewMode('detail');
+    }
     renderList();
     renderDetail();
     if (state.selected && isNarrow()) {
       try { els.reader.focus({ preventScroll: true }); } catch (_) { els.reader.focus(); }
     }
-  }
-
-  function updateCountdowns() {
-    var timers = document.querySelectorAll('.lease-countdown');
-    timers.forEach(function (el) {
-      var exp = el.dataset.expiresAt;
-      if (!exp) return;
-      var info = formatCountdown(exp);
-      if (info) {
-        text(el, info.text);
-        el.classList.toggle('expired', info.expired);
-      }
-    });
   }
 
   function updateActiveRuns() {
@@ -1074,6 +1611,7 @@
       })
       .then(function (data) {
         if (!data || !Array.isArray(data.running)) return;
+        state.activeRunsTimings = data.timings || {};
         var newSet = new Set(data.running);
         var changed = newSet.size !== state.activeRuns.size;
         if (!changed) {
@@ -1086,6 +1624,9 @@
           if (state.viewMode === 'board') {
             renderBoard();
           }
+          if (state.selected && els.readerTrajectoryBadge) {
+            els.readerTrajectoryBadge.hidden = !state.activeRuns.has(state.selected);
+          }
         }
       })
       .catch(function () {});
@@ -1093,8 +1634,23 @@
 
   function openWorktreeModal(item, busyId) {
     state.pendingWorktreeItem = item;
+    var targetId = item ? item.id : '';
     text(els.worktreeBusyId, busyId || 'another task');
-    text(els.worktreeTargetId, item.id);
+    text(els.worktreeTargetId, targetId);
+    if (els.worktreePromptTargetId) {
+      text(els.worktreePromptTargetId, targetId);
+    }
+    if (busyId) {
+      if (els.worktreeModalTitle) text(els.worktreeModalTitle, 'Primary Working Tree Busy');
+      if (els.worktreeBusyMsg) els.worktreeBusyMsg.hidden = false;
+      if (els.worktreePromptMsg) els.worktreePromptMsg.hidden = true;
+      if (els.btnWorktreePrimary) els.btnWorktreePrimary.hidden = true;
+    } else {
+      if (els.worktreeModalTitle) text(els.worktreeModalTitle, 'Start Agent Run');
+      if (els.worktreeBusyMsg) els.worktreeBusyMsg.hidden = true;
+      if (els.worktreePromptMsg) els.worktreePromptMsg.hidden = false;
+      if (els.btnWorktreePrimary) els.btnWorktreePrimary.hidden = false;
+    }
     if (els.worktreeModal) {
       if (els.worktreeModal.showModal) {
         els.worktreeModal.showModal();
@@ -1115,7 +1671,407 @@
     }
   }
 
+  var scrollStreamPending = false;
+  function scrollTrajectoryStreamToBottom() {
+    if (!els.trajectoryStream || scrollStreamPending) return;
+    scrollStreamPending = true;
+    var raf = window.requestAnimationFrame || function (cb) { setTimeout(cb, 0); };
+    raf(function () {
+      scrollStreamPending = false;
+      if (els.trajectoryStream) {
+        els.trajectoryStream.scrollTop = els.trajectoryStream.scrollHeight;
+      }
+    });
+  }
+
+  var scrollThoughtsPending = false;
+  function scrollAgentThoughtsToBottom() {
+    if (!els.agentThoughts || scrollThoughtsPending) return;
+    scrollThoughtsPending = true;
+    var raf = window.requestAnimationFrame || function (cb) { setTimeout(cb, 0); };
+    raf(function () {
+      scrollThoughtsPending = false;
+      if (els.agentThoughts) {
+        els.agentThoughts.scrollTop = els.agentThoughts.scrollHeight;
+      }
+    });
+  }
+
+  function appendTrajectoryContextRow(message) {
+    if (!els.trajectoryStream) return null;
+    var row = node('div', 'trajectory-row trajectory-row-context');
+    var gutter = node('div', 'trajectory-gutter', '●');
+    var badge = node('span', 'trajectory-badge badge-context', 'CONTEXT');
+    var body = node('div', 'trajectory-body');
+    var textEl = node('div', 'trajectory-context-text');
+    if (typeof message === 'string') {
+      textEl.textContent = message;
+    } else if (message instanceof Node) {
+      textEl.appendChild(message);
+    } else {
+      textEl.textContent = String(message || '');
+    }
+    body.appendChild(textEl);
+    row.appendChild(gutter);
+    row.appendChild(badge);
+    row.appendChild(body);
+    els.trajectoryStream.appendChild(row);
+    scrollTrajectoryStreamToBottom();
+    if (state.trajectory && state.trajectory.filterQuery) {
+      var rowText = (row.textContent || '').toLowerCase();
+      row.hidden = rowText.indexOf(state.trajectory.filterQuery) === -1;
+    }
+    return row;
+  }
+
+  function formatToolCallInline(update) {
+    if (!update) return { name: '', argsStr: '', previewStr: '', status: 'running' };
+
+    var rawIn = update.rawInput || update.input || update.arguments || update.params || update.args;
+    var rawToolName = update.name || update.tool || '';
+    if (update.kind && update.name) rawToolName = update.kind + ': ' + update.name;
+    var rawTitle = update.title ? stripAnsi(update.title.trim()) : '';
+
+    var cmd = '';
+    if (rawIn && typeof rawIn === 'object' && rawIn.command) {
+      cmd = stripAnsi(String(rawIn.command)).trim();
+    } else if (rawIn && typeof rawIn === 'string' && (rawToolName === 'bash' || rawToolName === 'sh')) {
+      cmd = stripAnsi(rawIn).trim();
+    } else if (rawTitle && /^bash:\s*/i.test(rawTitle)) {
+      cmd = rawTitle.replace(/^bash:\s*/i, '').trim();
+    }
+
+    var path = '';
+    if (rawIn && typeof rawIn === 'object' && rawIn.path) {
+      path = stripAnsi(String(rawIn.path)).trim();
+    }
+
+    var pattern = '';
+    if (rawIn && typeof rawIn === 'object' && rawIn.pattern) {
+      pattern = stripAnsi(String(rawIn.pattern)).trim();
+    }
+
+    var isShell = !!cmd || rawToolName === 'bash' || rawToolName === 'sh';
+    var isFile = rawToolName === 'read' || rawToolName === 'write' || rawToolName === 'edit';
+    var isGrep = rawToolName === 'grep';
+
+    var name = '';
+    var argsStr = '';
+
+    if (isShell) {
+      name = '$ ' + (cmd || rawToolName || 'sh');
+      argsStr = '';
+    } else if (isFile) {
+      name = rawToolName + (path ? ': ' + path : '');
+      argsStr = '';
+    } else if (isGrep) {
+      name = 'grep: ' + pattern + (path ? ' in ' + path : '');
+      argsStr = '';
+    }
+    if (name.length > 80) name = name.slice(0, 77) + '...';
+    if (!name) {
+      name = rawTitle || formatToolTitle(update);
+      if (rawIn != null && typeof rawIn === 'object') {
+        var extraKeys = Object.keys(rawIn).filter(function (k) {
+          return k !== 'path' && k !== 'command' && k !== 'i';
+        });
+        if (extraKeys.length > 0) {
+          var filtered = {};
+          extraKeys.forEach(function (k) { filtered[k] = rawIn[k]; });
+          try {
+            argsStr = JSON.stringify(filtered).replace(/\s+/g, ' ');
+          } catch (_) {
+            argsStr = String(filtered);
+          }
+          if (argsStr.length > 90) argsStr = argsStr.slice(0, 87) + '...';
+        } else {
+          if (path && (!name || name === 'tool' || name === rawToolName)) {
+            name = (rawToolName || 'read') + ': ' + path;
+          }
+          argsStr = '';
+        }
+      } else if (typeof rawIn === 'string') {
+        argsStr = stripAnsi(rawIn).replace(/\s+/g, ' ').trim();
+        if (argsStr.length > 90) argsStr = argsStr.slice(0, 87) + '...';
+      }
+    }
+
+    var rawOut = update.rawOutput || update.output || update.result || update.error || update.content;
+    var previewStr = '';
+    if (rawOut != null) {
+      var formattedOut = formatToolPayload(rawOut);
+      previewStr = stripAnsi(formattedOut).replace(/\s+/g, ' ').trim();
+      if (previewStr.length > 90) previewStr = previewStr.slice(0, 87) + '...';
+    }
+
+    var status = update.status || 'running';
+    if (status === 'in_progress') status = 'running';
+
+    return {
+      name: name,
+      argsStr: argsStr,
+      previewStr: previewStr,
+      status: status
+    };
+  }
+
+  function renderSwimlaneSvg() {
+    if (!els.swimlaneSvg) return;
+    clear(els.swimlaneSvg);
+
+    if (els.swimlaneSvg.setAttribute) {
+      els.swimlaneSvg.setAttribute('viewBox', '0 0 800 64');
+    }
+
+    var createEl = document.createElementNS
+      ? function (t) { return document.createElementNS('http://www.w3.org/2000/svg', t); }
+      : function (t) { return document.createElement(t); };
+
+    var line1 = createEl('line');
+    line1.setAttribute('x1', '0');
+    line1.setAttribute('y1', '22');
+    line1.setAttribute('x2', '800');
+    line1.setAttribute('y2', '22');
+    line1.setAttribute('class', 'swimlane-lane-line');
+    els.swimlaneSvg.appendChild(line1);
+
+    var line2 = createEl('line');
+    line2.setAttribute('x1', '0');
+    line2.setAttribute('y1', '42');
+    line2.setAttribute('x2', '800');
+    line2.setAttribute('y2', '42');
+    line2.setAttribute('class', 'swimlane-lane-line');
+    els.swimlaneSvg.appendChild(line2);
+
+    var labels = [
+      { text: 'Input', y: 14 },
+      { text: 'Model', y: 34 },
+      { text: 'Tools', y: 54 }
+    ];
+    labels.forEach(function (l) {
+      var txt = createEl('text');
+      txt.setAttribute('x', '10');
+      txt.setAttribute('y', String(l.y));
+      txt.setAttribute('class', 'swimlane-lane-label');
+      txt.textContent = l.text;
+      els.swimlaneSvg.appendChild(txt);
+    });
+
+    if (!state.trajectory || !state.trajectory.steps || !state.trajectory.steps.length) return;
+
+    var steps = state.trajectory.steps;
+    var totalSteps = steps.length;
+    var trackW = 720;
+    var stepW = Math.max(14, Math.min(42, Math.floor((trackW / Math.max(totalSteps, 16)) - 4)));
+    var gap = Math.max(4, Math.min(8, Math.floor((trackW - (totalSteps * stepW)) / Math.max(totalSteps + 1, 1))));
+    var stepSpacing = stepW + Math.max(3, Math.min(6, gap));
+
+    for (var i = 0; i < steps.length; i++) {
+      var step = steps[i];
+      var x = 60 + i * stepSpacing;
+      if (x + stepW > 795) break;
+      var rect = createEl('rect');
+      rect.setAttribute('x', String(x));
+
+      if (step.lane === 'input') {
+        rect.setAttribute('y', '6');
+        rect.setAttribute('width', '8');
+        rect.setAttribute('height', '12');
+        rect.setAttribute('rx', '2');
+        rect.setAttribute('class', 'swimlane-bar-input');
+        rect.setAttribute('fill', '#c084fc');
+      } else if (step.lane === 'model') {
+        rect.setAttribute('y', '26');
+        rect.setAttribute('width', String(stepW));
+        rect.setAttribute('height', '12');
+        rect.setAttribute('rx', '2');
+        rect.setAttribute('class', 'swimlane-bar-model');
+        rect.setAttribute('fill', '#fb923c');
+      } else {
+        rect.setAttribute('y', '46');
+        rect.setAttribute('width', String(stepW));
+        rect.setAttribute('height', '12');
+        rect.setAttribute('rx', '2');
+        rect.setAttribute('class', 'swimlane-bar-tools');
+        rect.setAttribute('fill', '#34d399');
+      }
+
+      if (step.label) {
+        var titleEl = createEl('title');
+        titleEl.textContent = String(step.label);
+        rect.appendChild(titleEl);
+      }
+
+      if (step.callId) {
+        rect.setAttribute('data-call-id', step.callId);
+        rect.style.cursor = 'pointer';
+        (function (cid) {
+          rect.addEventListener('click', function () {
+            openToolInspector(cid);
+          });
+        })(step.callId);
+      }
+
+      els.swimlaneSvg.appendChild(rect);
+    }
+  }
+
+  function openToolInspector(callId) {
+    if (!els.toolInspector) return;
+    var record = (state.trajectory && state.trajectory.toolCalls && state.trajectory.toolCalls[callId])
+      ? state.trajectory.toolCalls[callId]
+      : { id: callId, name: 'Tool', status: 'running', rawInput: null, rawOutput: null };
+    els.toolInspector.dataset.activeCallId = callId;
+
+    if (els.inspectorTitle) {
+      text(els.inspectorTitle, record.name || 'Tool Call Details');
+    }
+    if (els.inspectorStatus) {
+      var st = record.status || 'running';
+      if (st === 'in_progress') st = 'running';
+      text(els.inspectorStatus, st);
+      els.inspectorStatus.className = 'inspector-status tool-status-badge ' + (st === 'completed' ? 'status-completed' : (st === 'failed' ? 'status-failed' : 'status-running'));
+    }
+    if (els.inspectorArgs) {
+      var rawIn = record.rawInput;
+      var formattedIn = '';
+      if (rawIn != null) {
+        if (typeof rawIn === 'string') {
+          formattedIn = stripAnsi(rawIn);
+        } else {
+          try {
+            formattedIn = JSON.stringify(rawIn, null, 2);
+          } catch (_) {
+            formattedIn = String(rawIn);
+          }
+        }
+      }
+      text(els.inspectorArgs, formattedIn || '(none)');
+    }
+    if (els.inspectorOutput) {
+      var rawOut = record.rawOutput;
+      var formattedOut = formatToolPayload(rawOut);
+      text(els.inspectorOutput, formattedOut || '(no output yet)');
+    }
+
+    if (els.btnCloseInspector && !els.btnCloseInspector._bound) {
+      els.btnCloseInspector.addEventListener('click', closeToolInspector);
+      els.btnCloseInspector._bound = true;
+    }
+    els.toolInspector.hidden = false;
+  }
+
+  function closeToolInspector() {
+    if (els.toolInspector) {
+      els.toolInspector.hidden = true;
+      delete els.toolInspector.dataset.activeCallId;
+    }
+  }
+
+  function fallbackCopy(str) {
+    try {
+      var ta = document.createElement('textarea');
+      ta.value = str;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      showToast('Tool output copied to clipboard', false);
+    } catch (_) {
+      showToast('Failed to copy output', true);
+    }
+  }
+
+  function copyToolOutput() {
+    if (!els.inspectorOutput) return;
+    var textToCopy = els.inspectorOutput.textContent || '';
+    if (!textToCopy) return;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(textToCopy).then(function () {
+        showToast('Tool output copied to clipboard', false);
+      }).catch(function () {
+        fallbackCopy(textToCopy);
+      });
+    } else {
+      fallbackCopy(textToCopy);
+    }
+  }
+
+  function filterTrajectoryRows() {
+    if (!els.trajectoryStream) return;
+    var q = (state.trajectory && state.trajectory.filterQuery) || '';
+    var rows = els.trajectoryStream.querySelectorAll('.trajectory-row');
+    rows.forEach(function (row) {
+      if (!q) {
+        row.hidden = false;
+      } else {
+        var rowText = (row.textContent || '').toLowerCase();
+        row.hidden = rowText.indexOf(q) === -1;
+      }
+    });
+  }
+
+  var cacheTrajectoryTimer = null;
+  function scheduleCacheTrajectory(itemId) {
+    if (cacheTrajectoryTimer) return;
+    cacheTrajectoryTimer = setTimeout(function () {
+      cacheTrajectoryTimer = null;
+      cacheTrajectory(itemId);
+    }, 1000);
+  }
+
+  function cacheTrajectory(itemId) {
+    if (cacheTrajectoryTimer) {
+      clearTimeout(cacheTrajectoryTimer);
+      cacheTrajectoryTimer = null;
+    }
+    if (!itemId || !state.trajectory) return;
+    state.trajectoryCache = state.trajectoryCache || {};
+    state.trajectoryCache[itemId] = {
+      trajectory: {
+        startTime: state.trajectory.startTime,
+        startedAt: state.trajectory.startedAt,
+        finishedAt: state.trajectory.finishedAt,
+        turns: state.trajectory.turns,
+        calls: state.trajectory.calls,
+        steps: state.trajectory.steps ? state.trajectory.steps.slice() : [],
+        intervals: {
+          input: (state.trajectory.intervals && state.trajectory.intervals.input) ? state.trajectory.intervals.input.slice() : [],
+          model: (state.trajectory.intervals && state.trajectory.intervals.model) ? state.trajectory.intervals.model.slice() : [],
+          tools: (state.trajectory.intervals && state.trajectory.intervals.tools) ? state.trajectory.intervals.tools.slice() : []
+        },
+        toolIntervals: Object.assign({}, state.trajectory.toolIntervals || {}),
+        toolCalls: Object.assign({}, state.trajectory.toolCalls || {}),
+        filterQuery: state.trajectory.filterQuery || ''
+      },
+      streamHtml: els.trajectoryStream ? els.trajectoryStream.innerHTML : '',
+      durationText: els.metricDuration ? els.metricDuration.textContent : '',
+      turnsText: els.metricTurns ? els.metricTurns.textContent : '',
+      callsText: els.metricCalls ? els.metricCalls.textContent : '',
+      statusText: els.agentStatusPill ? els.agentStatusPill.textContent : '',
+      statusClass: els.agentStatusPill ? els.agentStatusPill.className : ''
+    };
+  }
+
+  function updateDurationDisplay() {
+    if (!state.trajectory || !els.metricDuration) return;
+    var startedAt = state.trajectory.startedAt;
+    var finishedAt = state.trajectory.finishedAt;
+    if (startedAt != null) {
+      var s = finishedAt != null ? Math.max(0, finishedAt - startedAt) : Math.max(0, (Date.now() / 1000) - startedAt);
+      text(els.metricDuration, 'Duration: ' + s.toFixed(1) + 's');
+    } else if (state.trajectory.startTime) {
+      var elapsed = ((Date.now() - state.trajectory.startTime) / 1000).toFixed(1) + 's';
+      text(els.metricDuration, 'Duration: ' + elapsed);
+    }
+  }
+
   function closeAgentDrawer() {
+    if (state.currentStreamingId) {
+      cacheTrajectory(state.currentStreamingId);
+    }
     if (els.agentDrawer) {
       els.agentDrawer.hidden = true;
     }
@@ -1124,28 +2080,76 @@
       state.currentStream = null;
     }
     state.currentStreamingId = null;
+    if (state.trajectory && state.trajectory.timer) {
+      clearInterval(state.trajectory.timer);
+      state.trajectory.timer = null;
+    }
+    closeToolInspector();
+    setReaderTab('spec');
   }
 
   function openAgentDrawer(itemId) {
+    state.trajectoryCache = state.trajectoryCache || {};
+
+    if (state.currentStreamingId && state.currentStreamingId !== itemId) {
+      cacheTrajectory(state.currentStreamingId);
+    }
+
     if (state.currentStream) {
       state.currentStream.close();
       state.currentStream = null;
     }
     state.currentStreamingId = itemId;
 
-    if (els.agentDrawer) {
-      els.agentDrawer.hidden = false;
+    if (state.trajectory && state.trajectory.timer) {
+      clearInterval(state.trajectory.timer);
+      state.trajectory.timer = null;
     }
+
+    if (state.viewMode !== 'detail') {
+      setViewMode('detail');
+    }
+    if (state.selected !== itemId) {
+      state.selected = itemId;
+      applyRoute();
+    }
+
+    state.readerTab = 'trajectory';
+    if (els.tabAgentTrajectory) els.tabAgentTrajectory.classList.add('active');
+    if (els.tabTaskSpec) els.tabTaskSpec.classList.remove('active');
+    if (els.proposal) els.proposal.hidden = true;
+    if (els.agentDrawer) els.agentDrawer.hidden = false;
+
+    var itm = find(itemId);
+    if (els.agentTaskTitle) text(els.agentTaskTitle, (itm && itm.title) ? itm.title : '');
     if (els.agentItemId) {
       text(els.agentItemId, itemId.slice(0, 8));
       els.agentItemId.dataset.fullId = itemId;
     }
+    if (els.agentLogInfo) {
+      text(els.agentLogInfo, 'Logs: .pin_vault/runs/' + itemId + '.log');
+    }
+
+    var isRunning = state.activeRuns && state.activeRuns.has(itemId);
+    var itemObj = find(itemId);
+    var itemSt = itemObj ? itemStatus(itemObj) : '';
     if (els.agentStatusPill) {
-      els.agentStatusPill.className = 'agent-status-pill';
-      text(els.agentStatusPill, 'Running');
+      if (isRunning) {
+        els.agentStatusPill.className = 'agent-status-pill';
+        text(els.agentStatusPill, 'Running');
+      } else if (itemSt === 'in_progress') {
+        els.agentStatusPill.className = 'agent-status-pill status-interrupted';
+        text(els.agentStatusPill, 'Interrupted');
+      } else if (itemSt === 'done' || itemSt === 'review' || itemSt === 'closed') {
+        els.agentStatusPill.className = 'agent-status-pill status-completed';
+        text(els.agentStatusPill, 'Completed');
+      } else {
+        els.agentStatusPill.className = 'agent-status-pill';
+        text(els.agentStatusPill, 'Idle');
+      }
     }
     if (els.btnCancelAgent) {
-      els.btnCancelAgent.disabled = false;
+      els.btnCancelAgent.disabled = !isRunning;
     }
 
     var planSection = $('agent-plan-section');
@@ -1157,11 +2161,85 @@
       els.btnToggleTools.hidden = true;
       text(els.btnToggleTools, 'Expand all');
     }
-    clear(els.agentLogInfo);
-    if (els.agentLogInfo) {
-      text(els.agentLogInfo, 'Logs: .pin_vault/runs/' + itemId + '.log');
+
+    closeToolInspector();
+    var cached = (!isRunning && state.trajectoryCache[itemId]) ? state.trajectoryCache[itemId] : null;
+    var timingStartedAt = (state.activeRunsTimings && state.activeRunsTimings[itemId]) || null;
+    if (cached) {
+      state.trajectory = {
+        startTime: cached.trajectory.startTime,
+        startedAt: cached.trajectory.startedAt != null ? cached.trajectory.startedAt : timingStartedAt,
+        finishedAt: cached.trajectory.finishedAt,
+        turns: cached.trajectory.turns || 0,
+        calls: cached.trajectory.calls || 0,
+        timer: null,
+        steps: cached.trajectory.steps ? cached.trajectory.steps.slice() : [],
+        activeAssistantRow: null,
+        activeAssistantTextEl: null,
+        intervals: {
+          input: (cached.trajectory.intervals && cached.trajectory.intervals.input) ? cached.trajectory.intervals.input.slice() : [],
+          model: (cached.trajectory.intervals && cached.trajectory.intervals.model) ? cached.trajectory.intervals.model.slice() : [],
+          tools: (cached.trajectory.intervals && cached.trajectory.intervals.tools) ? cached.trajectory.intervals.tools.slice() : []
+        },
+        currentModelInterval: null,
+        toolIntervals: Object.assign({}, cached.trajectory.toolIntervals || {}),
+        toolCalls: Object.assign({}, cached.trajectory.toolCalls || {}),
+        toolRows: {},
+        filterQuery: ''
+      };
+      updateDurationDisplay();
+      if (els.metricTurns) text(els.metricTurns, cached.turnsText || 'Turns: ' + state.trajectory.turns);
+      if (els.metricCalls) text(els.metricCalls, cached.callsText || 'Calls: ' + state.trajectory.calls);
+      if (els.agentStatusPill) {
+        text(els.agentStatusPill, cached.statusText || 'Completed');
+        els.agentStatusPill.className = cached.statusClass || 'agent-status-pill status-completed';
+      }
+      if (els.btnCancelAgent) els.btnCancelAgent.disabled = true;
+      if (els.trajectoryStream) {
+        els.trajectoryStream.innerHTML = cached.streamHtml || '';
+      }
+      renderSwimlaneSvg();
+      return;
+    } else {
+      clear(els.trajectoryStream);
+      var now = Date.now();
+      state.trajectory = {
+        startTime: timingStartedAt ? (timingStartedAt * 1000) : now,
+        startedAt: timingStartedAt,
+        finishedAt: null,
+        turns: 0,
+        calls: 0,
+        timer: null,
+        steps: [{ lane: 'input', label: 'Start' }],
+        activeAssistantRow: null,
+        activeAssistantTextEl: null,
+        intervals: {
+          input: [{ start: now, end: now + 50 }],
+          model: [],
+          tools: []
+        },
+        currentModelInterval: null,
+        toolIntervals: {},
+        toolCalls: {},
+        toolRows: {},
+        filterQuery: ''
+      };
+
+      appendTrajectoryContextRow('Agent run started for ' + itemId);
+      renderSwimlaneSvg();
+      updateDurationDisplay();
+      if (els.metricTurns) text(els.metricTurns, 'Turns: 0');
+      if (els.metricCalls) text(els.metricCalls, 'Calls: 0');
     }
 
+    if (isRunning) {
+      updateDurationDisplay();
+      state.trajectory.timer = setInterval(function () {
+        updateDurationDisplay();
+      }, 1000);
+    }
+
+    var receivedEvents = 0;
     var streamUrl = BASE + 'items/' + encodeURIComponent(itemId) + '/stream';
     var source = new EventSource(streamUrl);
     state.currentStream = source;
@@ -1169,22 +2247,78 @@
     source.onmessage = function (e) {
       try {
         var data = JSON.parse(e.data);
+        if (receivedEvents === 0 && cached) {
+          clear(els.trajectoryStream);
+          var now = Date.now();
+          state.trajectory = {
+            startTime: now,
+            turns: 0,
+            calls: 0,
+            timer: null,
+            steps: [{ lane: 'input', label: 'Start' }],
+            activeAssistantRow: null,
+            activeAssistantTextEl: null,
+            intervals: {
+              input: [{ start: now, end: now + 50 }],
+              model: [],
+              tools: []
+            },
+            currentModelInterval: null,
+            toolIntervals: {},
+            toolCalls: {},
+            toolRows: {},
+            filterQuery: ''
+          };
+          appendTrajectoryContextRow('Agent run started for ' + itemId);
+        }
+        receivedEvents++;
         handleAgentStreamEvent(data);
+        scheduleCacheTrajectory(itemId);
       } catch (err) {
         console.error('Error parsing SSE event:', err);
       }
     };
 
     source.onerror = function () {
-      // If disconnected and run is no longer active, mark finished
       if (!state.activeRuns.has(itemId)) {
+        updateDurationDisplay();
+        if (state.trajectory && state.trajectory.startTime && els.metricDuration) {
+          var elapsed = ((Date.now() - state.trajectory.startTime) / 1000).toFixed(1) + 's';
+          text(els.metricDuration, 'Duration: ' + elapsed);
+        }
         if (els.agentStatusPill && els.agentStatusPill.textContent === 'Running') {
           text(els.agentStatusPill, 'Completed');
           els.agentStatusPill.className = 'agent-status-pill status-completed';
+          appendTrajectoryContextRow('Agent run completed.');
+          renderSwimlaneSvg();
         }
         if (els.btnCancelAgent) els.btnCancelAgent.disabled = true;
         source.close();
         if (state.currentStream === source) state.currentStream = null;
+
+        if (receivedEvents === 0) {
+          fetch(BASE + 'items/' + encodeURIComponent(itemId) + '/log')
+            .then(function (res) {
+              if (res.status === 200) {
+                var logLink = node('span');
+                text(logLink, 'Log available: ');
+                var a = node('a');
+                a.href = BASE + 'items/' + encodeURIComponent(itemId) + '/log';
+                a.target = '_blank';
+                a.rel = 'noopener';
+                text(a, '.pin_vault/runs/' + itemId + '.log');
+                logLink.appendChild(a);
+                appendTrajectoryContextRow(logLink);
+                if (els.agentLogInfo) {
+                  text(els.agentLogInfo, 'Logs: .pin_vault/runs/' + itemId + '.log');
+                }
+                cacheTrajectory(itemId);
+              }
+            })
+            .catch(function () {});
+        } else {
+          cacheTrajectory(itemId);
+        }
       }
     };
   }
@@ -1192,7 +2326,33 @@
   function handleAgentStreamEvent(data) {
     if (!data) return;
 
+    if (data.type === 'run_timing') {
+      if (state.trajectory) {
+        if (data.startedAt != null) {
+          state.trajectory.startedAt = data.startedAt;
+          state.trajectory.startTime = data.startedAt * 1000;
+        }
+        if (data.finishedAt != null) {
+          state.trajectory.finishedAt = data.finishedAt;
+        }
+        updateDurationDisplay();
+      }
+      return;
+    }
+
     if (data.type === 'finished') {
+      if (state.trajectory) {
+        if (data.startedAt != null) state.trajectory.startedAt = data.startedAt;
+        if (data.finishedAt != null) state.trajectory.finishedAt = data.finishedAt;
+        if (state.trajectory.timer) {
+          clearInterval(state.trajectory.timer);
+          state.trajectory.timer = null;
+        }
+        updateDurationDisplay();
+      }
+      if (state.activeRuns) state.activeRuns.delete(state.currentStreamingId);
+      if (els.readerTrajectoryBadge) els.readerTrajectoryBadge.hidden = true;
+      appendTrajectoryContextRow('Agent run completed.');
       if (els.agentStatusPill) {
         text(els.agentStatusPill, 'Completed');
         els.agentStatusPill.className = 'agent-status-pill status-completed';
@@ -1202,14 +2362,29 @@
         state.currentStream.close();
         state.currentStream = null;
       }
+      renderSwimlaneSvg();
       updateActiveRuns();
       refreshData();
+      cacheTrajectory(state.currentStreamingId);
       return;
     }
 
     if (data.type === 'error') {
+      if (state.trajectory) {
+        if (data.startedAt != null) state.trajectory.startedAt = data.startedAt;
+        if (data.finishedAt != null) state.trajectory.finishedAt = data.finishedAt;
+        if (state.trajectory.timer) {
+          clearInterval(state.trajectory.timer);
+          state.trajectory.timer = null;
+        }
+        updateDurationDisplay();
+      }
+      if (state.activeRuns) state.activeRuns.delete(state.currentStreamingId);
+      if (els.readerTrajectoryBadge) els.readerTrajectoryBadge.hidden = true;
+      var errMsg = data.message || data.error || 'Error';
+      appendTrajectoryContextRow('Agent run failed: ' + errMsg);
       if (els.agentStatusPill) {
-        text(els.agentStatusPill, 'Failed: ' + (data.message || data.error || 'Error'));
+        text(els.agentStatusPill, 'Failed: ' + errMsg);
         els.agentStatusPill.className = 'agent-status-pill status-failed';
       }
       if (els.btnCancelAgent) els.btnCancelAgent.disabled = true;
@@ -1217,23 +2392,235 @@
         state.currentStream.close();
         state.currentStream = null;
       }
+      renderSwimlaneSvg();
       updateActiveRuns();
       refreshData();
+      cacheTrajectory(state.currentStreamingId);
       return;
     }
 
     var update = (data.params && data.params.update) ? data.params.update : (data.update || data);
-    var updateType = update.sessionUpdate || update.type;
+    var updateType = (update && typeof update === 'object' && (update.sessionUpdate || update.type)) || (data.params && (data.params.sessionUpdate || data.params.type)) || data.sessionUpdate || data.type;
 
     if (updateType === 'plan') {
       renderAgentPlan(update);
-    } else if (updateType === 'agent_thought_chunk') {
-      appendAgentThought(extractThoughtContent(update));
-    } else if (updateType === 'agent_message_chunk') {
-      appendAgentThought(extractThoughtContent(update));
+    } else if (updateType === 'agent_thought_chunk' || updateType === 'agent_message_chunk') {
+      var rawThought = extractThoughtContent(update);
+      appendAgentThought(rawThought);
+
+      var cleaned = cleanThoughtText(rawThought);
+      if (!state.trajectory) return;
+
+      if (!state.trajectory.activeAssistantRow) {
+        state.trajectory.turns++;
+        if (els.metricTurns) {
+          text(els.metricTurns, 'Turns: ' + state.trajectory.turns);
+        }
+        var row = node('div', 'trajectory-row trajectory-row-assistant');
+        var gutter = node('div', 'trajectory-gutter', '●');
+        var badge = node('span', 'trajectory-badge badge-assistant', 'ASSISTANT');
+        var body = node('div', 'trajectory-body');
+        var thoughtEl = node('div', 'trajectory-thought-text');
+        body.appendChild(thoughtEl);
+        row.appendChild(gutter);
+        row.appendChild(badge);
+        row.appendChild(body);
+
+        if (els.trajectoryStream) {
+          els.trajectoryStream.appendChild(row);
+        }
+        state.trajectory.activeAssistantRow = row;
+        state.trajectory.activeAssistantTextEl = thoughtEl;
+
+        var mNow = Date.now();
+        var modelInterval = { start: mNow, end: mNow };
+        state.trajectory.intervals.model.push(modelInterval);
+        state.trajectory.currentModelInterval = modelInterval;
+
+        var lastStep = state.trajectory.steps && state.trajectory.steps[state.trajectory.steps.length - 1];
+        if (!lastStep || lastStep.lane !== 'model') {
+          if (!state.trajectory.steps) state.trajectory.steps = [];
+          state.trajectory.steps.push({ lane: 'model', label: 'Turn ' + state.trajectory.turns });
+          renderSwimlaneSvg();
+        }
+      }
+
+      if (cleaned && state.trajectory.activeAssistantTextEl) {
+        var aNodes = state.trajectory.activeAssistantTextEl.childNodes || state.trajectory.activeAssistantTextEl.children;
+        var aLast = aNodes && aNodes.length > 0 ? aNodes[aNodes.length - 1] : null;
+        if (aLast && (aLast.nodeType === 3 || typeof aLast.textContent === 'string') && aLast.parentNode === state.trajectory.activeAssistantTextEl) {
+          aLast.textContent = (aLast.textContent || '') + cleaned;
+          if (aLast.nodeValue !== undefined) aLast.nodeValue = aLast.textContent;
+        } else {
+          state.trajectory.activeAssistantTextEl.appendChild(document.createTextNode(cleaned));
+        }
+      }
+      scrollTrajectoryStreamToBottom();
+
+      if (state.trajectory.currentModelInterval) {
+        state.trajectory.currentModelInterval.end = Date.now();
+      }
+
+      if (state.trajectory.filterQuery && state.trajectory.activeAssistantRow) {
+        var rText = (state.trajectory.activeAssistantRow.textContent || '').toLowerCase();
+        state.trajectory.activeAssistantRow.hidden = rText.indexOf(state.trajectory.filterQuery) === -1;
+      }
     } else if (updateType === 'tool_call') {
+      if (!state.trajectory) return;
+
+      if (state.trajectory.currentModelInterval) {
+        state.trajectory.currentModelInterval.end = Date.now();
+        state.trajectory.currentModelInterval = null;
+      }
+      state.trajectory.activeAssistantRow = null;
+      state.trajectory.activeAssistantTextEl = null;
+
+      state.trajectory.calls++;
+      if (els.metricCalls) {
+        text(els.metricCalls, 'Calls: ' + state.trajectory.calls);
+      }
+
+      var callId = update.toolCallId || update.id || ('call_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7));
+      var tNow = Date.now();
+      var toolInterval = { id: callId, start: tNow, end: tNow };
+      state.trajectory.intervals.tools.push(toolInterval);
+      state.trajectory.toolIntervals[callId] = toolInterval;
+
+      state.trajectory.toolCalls[callId] = {
+        id: callId,
+        name: formatToolTitle(update),
+        title: update.title || '',
+        rawInput: update.rawInput || update.input || update.arguments || update.params || update.args || null,
+        rawOutput: update.rawOutput || update.output || update.result || update.content || null,
+        status: update.status || 'running',
+        startTime: tNow,
+        endTime: null
+      };
+
+      var inline = formatToolCallInline(update);
+      var row = node('div', 'trajectory-row trajectory-row-tool');
+      row.dataset.callId = callId;
+      if (state.trajectory && state.trajectory.toolRows) state.trajectory.toolRows[callId] = row;
+      var gutter = node('div', 'trajectory-gutter', '●');
+      var badge = node('span', 'trajectory-badge badge-tool', 'TOOL');
+      var body = node('div', 'trajectory-body');
+      var toolLine = node('div', 'trajectory-tool-line');
+      toolLine.dataset.callId = callId;
+
+      var nameEl = node('span', 'tool-name', inline.name);
+      var argsEl = node('span', 'tool-args', inline.argsStr);
+      var arrowEl = node('span', 'tool-arrow', '→');
+      var previewEl = node('span', 'tool-result-preview', inline.previewStr);
+      var stClass = inline.status === 'completed' ? 'status-completed' : (inline.status === 'failed' ? 'status-failed' : 'status-running');
+      var statusBadge = node('span', 'tool-status-badge ' + stClass, inline.status);
+
+      toolLine.appendChild(nameEl);
+      toolLine.appendChild(argsEl);
+      toolLine.appendChild(arrowEl);
+      toolLine.appendChild(previewEl);
+      toolLine.appendChild(statusBadge);
+
+      row.classList.add('clickable-tool-row');
+      toolLine.addEventListener('click', function (e) {
+        if (e && e.stopPropagation) e.stopPropagation();
+        openToolInspector(callId);
+      });
+      row.addEventListener('click', function () {
+        openToolInspector(callId);
+      });
+
+      body.appendChild(toolLine);
+      row.appendChild(gutter);
+      row.appendChild(badge);
+      row.appendChild(body);
+
+      if (els.trajectoryStream) {
+        els.trajectoryStream.appendChild(row);
+        scrollTrajectoryStreamToBottom();
+      }
+      if (state.trajectory.filterQuery) {
+        var rText = (row.textContent || '').toLowerCase();
+        row.hidden = rText.indexOf(state.trajectory.filterQuery) === -1;
+      }
+
       renderAgentToolCall(update);
+
+      if (!state.trajectory.steps) state.trajectory.steps = [];
+      state.trajectory.steps.push({ lane: 'tools', label: inline.name, callId: callId });
+      renderSwimlaneSvg();
     } else if (updateType === 'tool_call_update') {
+      if (!state.trajectory) return;
+
+      var callId = update.toolCallId || update.id;
+      if (!callId) return;
+
+      var record = state.trajectory.toolCalls[callId];
+      if (!record) {
+        record = {
+          id: callId,
+          name: formatToolTitle(update),
+          status: update.status || 'completed',
+          startTime: Date.now(),
+          endTime: null
+        };
+        state.trajectory.toolCalls[callId] = record;
+      }
+
+      if (update.rawOutput || update.output || update.result || update.error || update.content) {
+        record.rawOutput = update.rawOutput || update.output || update.result || update.error || update.content;
+      }
+      if (update.rawInput || update.input || update.arguments || update.params) {
+        record.rawInput = update.rawInput || update.input || update.arguments || update.params || update.args;
+      }
+      if (update.status) {
+        record.status = update.status;
+      }
+      record.endTime = Date.now();
+
+      var toolIv = state.trajectory.toolIntervals[callId];
+      if (toolIv) {
+        toolIv.end = Date.now();
+      }
+
+      if (els.trajectoryStream) {
+        var toolRow = (state.trajectory && state.trajectory.toolRows && state.trajectory.toolRows[callId]) || null;
+        if (!toolRow) {
+          try {
+            toolRow = els.trajectoryStream.querySelector('[data-call-id="' + callId + '"]');
+          } catch (_) {}
+          if (!toolRow && els.trajectoryStream.children) {
+            for (var rIdx = 0; rIdx < els.trajectoryStream.children.length; rIdx++) {
+              var cEl = els.trajectoryStream.children[rIdx];
+              if (cEl && cEl.dataset && cEl.dataset.callId === callId) {
+                toolRow = cEl;
+                break;
+              }
+            }
+          }
+          if (toolRow && state.trajectory && state.trajectory.toolRows) {
+            state.trajectory.toolRows[callId] = toolRow;
+          }
+        }
+        if (toolRow) {
+          var inline = formatToolCallInline(record);
+          var previewEl = toolRow.querySelector('.tool-result-preview');
+          if (previewEl) text(previewEl, inline.previewStr);
+          var statusBadge = toolRow.querySelector('.tool-status-badge');
+          if (statusBadge) {
+            var st = record.status || 'completed';
+            if (st === 'in_progress') st = 'running';
+            text(statusBadge, st);
+            statusBadge.className = 'tool-status-badge ' + (st === 'completed' ? 'status-completed' : (st === 'failed' ? 'status-failed' : 'status-running'));
+          }
+          var argsEl = toolRow.querySelector('.tool-args');
+          if (argsEl && !argsEl.textContent) text(argsEl, inline.argsStr);
+        }
+      }
+
+      if (els.toolInspector && !els.toolInspector.hidden && els.toolInspector.dataset.activeCallId === callId) {
+        openToolInspector(callId);
+      }
+
       updateAgentToolCall(update);
     }
   }
@@ -1301,18 +2688,25 @@
     var cleaned = cleanThoughtText(thoughtText);
     if (!cleaned) return;
 
-    var current = els.agentThoughts.textContent || '';
-    if (!current) {
+    var aNodes = els.agentThoughts.childNodes || els.agentThoughts.children;
+    var lastChild = aNodes && aNodes.length > 0 ? aNodes[aNodes.length - 1] : null;
+    var lastText = (lastChild && (lastChild.nodeValue || lastChild.textContent)) || '';
+    if (!lastText && !els.agentThoughts.textContent) {
       cleaned = cleaned.replace(/^\n+/, '');
-    } else if (current.endsWith('\n\n')) {
+    } else if (lastText.endsWith('\n\n')) {
       cleaned = cleaned.replace(/^\n+/, '');
-    } else if (current.endsWith('\n')) {
+    } else if (lastText.endsWith('\n')) {
       cleaned = cleaned.replace(/^\n{2,}/, '\n');
     }
 
     if (!cleaned) return;
-    els.agentThoughts.appendChild(document.createTextNode(cleaned));
-    els.agentThoughts.scrollTop = els.agentThoughts.scrollHeight;
+    if (lastChild && (lastChild.nodeType === 3 || typeof lastChild.textContent === 'string') && lastChild.parentNode === els.agentThoughts) {
+      lastChild.textContent = (lastChild.textContent || '') + cleaned;
+      if (lastChild.nodeValue !== undefined) lastChild.nodeValue = lastChild.textContent;
+    } else {
+      els.agentThoughts.appendChild(document.createTextNode(cleaned));
+    }
+    scrollAgentThoughtsToBottom();
   }
 
   function formatToolTitle(update) {
@@ -1426,18 +2820,39 @@
     updateToggleToolsButtonState();
   }
 
+  var toggleToolsPending = false;
   function updateToggleToolsButtonState() {
     if (!els.btnToggleTools || !els.agentTools) return;
-    var cards = els.agentTools.querySelectorAll('.agent-tool-card');
-    if (!cards.length) {
+    if (toggleToolsPending) return;
+    toggleToolsPending = true;
+    var raf = window.requestAnimationFrame || function (cb) { setTimeout(cb, 0); };
+    raf(function () {
+      toggleToolsPending = false;
+      syncToggleToolsButtonState();
+    });
+  }
+
+  function syncToggleToolsButtonState() {
+    if (!els.btnToggleTools || !els.agentTools) return;
+    var cards = els.agentTools.children;
+    if (!cards || !cards.length) {
+      els.btnToggleTools.hidden = true;
+      return;
+    }
+    var cardCount = 0;
+    var allOpen = true;
+    for (var i = 0; i < cards.length; i++) {
+      var c = cards[i];
+      if (c && c.classList && c.classList.contains('agent-tool-card')) {
+        cardCount++;
+        if (!c.open) allOpen = false;
+      }
+    }
+    if (!cardCount) {
       els.btnToggleTools.hidden = true;
       return;
     }
     els.btnToggleTools.hidden = false;
-    var allOpen = true;
-    cards.forEach(function (c) {
-      if (!c.open) allOpen = false;
-    });
     text(els.btnToggleTools, allOpen ? 'Collapse all' : 'Expand all');
   }
 
@@ -1479,6 +2894,16 @@
     })
     .then(function () {
       showToast('Agent cancelled', false);
+      if (state.trajectory && state.trajectory.timer) {
+        clearInterval(state.trajectory.timer);
+        state.trajectory.timer = null;
+      }
+      if (state.trajectory && state.trajectory.currentModelInterval) {
+        state.trajectory.currentModelInterval.end = Date.now();
+        state.trajectory.currentModelInterval = null;
+      }
+      appendTrajectoryContextRow('Agent run cancelled.');
+      renderSwimlaneSvg();
       if (els.agentStatusPill) {
         text(els.agentStatusPill, 'Cancelled');
         els.agentStatusPill.className = 'agent-status-pill status-cancelled';
@@ -1525,6 +2950,12 @@
     if (els.viewDetailBtn) {
       els.viewDetailBtn.addEventListener('click', function () { setViewMode('detail'); });
     }
+    if (els.tabTaskSpec) {
+      els.tabTaskSpec.addEventListener('click', function () { setReaderTab('spec'); });
+    }
+    if (els.tabAgentTrajectory) {
+      els.tabAgentTrajectory.addEventListener('click', function () { setReaderTab('trajectory'); });
+    }
 
     if (els.dialogSubmitBtn) {
       els.dialogSubmitBtn.addEventListener('click', triggerModalSubmit);
@@ -1552,26 +2983,49 @@
         }
       });
     }
+    if (els.trajectorySearch) {
+      els.trajectorySearch.addEventListener('input', function () {
+        if (!state.trajectory) return;
+        state.trajectory.filterQuery = this.value.toLowerCase().trim();
+        filterTrajectoryRows();
+      });
+    }
+    if (els.trajectoryStream) {
+      els.trajectoryStream.addEventListener('click', function (e) {
+        var r = e.target && e.target.closest && e.target.closest('.trajectory-row-tool');
+        if (r && r.dataset && r.dataset.callId) {
+          openToolInspector(r.dataset.callId);
+        }
+      });
+    }
+    if (els.btnCloseInspector) {
+      els.btnCloseInspector.addEventListener('click', closeToolInspector);
+    }
+    if (els.btnCopyToolOutput) {
+      els.btnCopyToolOutput.addEventListener('click', copyToolOutput);
+    }
     if (els.btnWorktreeClose) {
       els.btnWorktreeClose.addEventListener('click', closeWorktreeModal);
     }
     if (els.btnWorktreeCancel) {
       els.btnWorktreeCancel.addEventListener('click', closeWorktreeModal);
     }
+    if (els.btnWorktreePrimary) {
+      els.btnWorktreePrimary.addEventListener('click', function () {
+        var item = state.pendingWorktreeItem;
+        closeWorktreeModal();
+        if (!item) return;
+        sendRunItem(item.id, false);
+      });
+    }
     if (els.btnWorktreeConfirm) {
       els.btnWorktreeConfirm.addEventListener('click', function () {
         var item = state.pendingWorktreeItem;
         closeWorktreeModal();
         if (!item) return;
-        var rev = item.revision;
-        sendAction(item.id, { action: 'transition', to: 'in_progress', use_worktree: true, expect_revision: rev })
-          .then(function () {
-            showToast('Started in isolated worktree', false);
-            updateActiveRuns();
-          })
-          .catch(function (err) {
-            showToast('Worktree start failed: ' + err.message, true);
-          });
+        // One dispatcher for every run trigger. A success toast only fires on a
+        // 200, so failed worktree provisioning is reported as an error.
+        sendRunItem(item.id, true, 'Worktree start failed: ');
       });
     }
 
@@ -1606,48 +3060,157 @@
         if (id && status) handleCardDrop(id, status);
       });
     });
-    if (els.quickAddForm && els.quickAddInput) {
+    if (els.quickAddTrigger) {
+      els.quickAddTrigger.addEventListener('click', function () {
+        expandQuickAdd('title');
+      });
+    }
+    if (els.quickAddCloseBtn) {
+      els.quickAddCloseBtn.addEventListener('click', function () {
+        collapseQuickAdd();
+      });
+    }
+    if (els.quickAddCancel) {
+      els.quickAddCancel.addEventListener('click', function () {
+        collapseQuickAdd();
+      });
+    }
+    if (els.quickAddExpandBtn) {
+      els.quickAddExpandBtn.addEventListener('click', function () {
+        var initial = {
+          title: els.quickAddInput ? els.quickAddInput.value : '',
+          body: els.quickAddBody ? els.quickAddBody.value : '',
+          type: els.quickAddType ? els.quickAddType.value : 'task',
+          kind: els.quickAddKind ? els.quickAddKind.value : 'technical',
+          priority: els.quickAddPriority ? els.quickAddPriority.value : '',
+          tags: els.quickAddTags ? els.quickAddTags.value : ''
+        };
+        collapseQuickAdd();
+        openSpecModal(initial);
+      });
+    }
+    if (els.quickAddInput) {
+      els.quickAddInput.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey) {
+          e.preventDefault();
+          if (els.quickAddBody) {
+            els.quickAddBody.focus();
+          }
+        }
+      });
+    }
+    if (els.quickAddForm) {
       els.quickAddForm.addEventListener('submit', function (e) {
         e.preventDefault();
-        var title = els.quickAddInput.value.trim();
-        if (!title) return;
-        var activeProject = (state.scope && state.scope !== 'all') ? state.scope : undefined;
-        els.quickAddInput.disabled = true;
-        fetch(BASE + 'items', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Pin-Action': 'true'
-          },
-          body: JSON.stringify({
-            title: title,
-            type: 'task',
-            status: 'created',
-            project: activeProject
-          })
-        })
-        .then(function (res) {
-          if (!res.ok) {
-            return res.json().then(function (err) { throw new Error(err.error || 'Failed to create task'); })
-              .catch(function (pErr) { throw new Error(pErr.message || 'Failed to create task'); });
-          }
-          return res.json();
-        })
-        .then(function (newItem) {
-          els.quickAddInput.value = '';
-          els.quickAddInput.disabled = false;
-          showToast('Created task: ' + (newItem.title || title), false);
-          refreshData();
-        })
-        .catch(function (err) {
-          els.quickAddInput.disabled = false;
-          showToast(err.message || 'Failed to create task', true);
-        });
+        submitQuickAdd();
+      });
+      els.quickAddForm.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+          e.preventDefault();
+          submitQuickAdd();
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          collapseQuickAdd();
+        }
+      });
+    }
+
+    if (els.btnNewTicket) {
+      els.btnNewTicket.addEventListener('click', function () {
+        openSpecModal();
+      });
+    }
+    if (els.specModalCloseBtn) {
+      els.specModalCloseBtn.addEventListener('click', function () {
+        closeSpecModal();
+      });
+    }
+    if (els.specModalCancelBtn) {
+      els.specModalCancelBtn.addEventListener('click', function () {
+        closeSpecModal();
+      });
+    }
+    if (els.specTabWrite) {
+      els.specTabWrite.addEventListener('click', function () {
+        setSpecModalTab('write');
+      });
+    }
+    if (els.specTabPreview) {
+      els.specTabPreview.addEventListener('click', function () {
+        setSpecModalTab('preview');
+      });
+    }
+    if (els.specModalForm) {
+      els.specModalForm.addEventListener('submit', function (e) {
+        e.preventDefault();
+        submitSpecModal();
+      });
+      els.specModalForm.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+          e.preventDefault();
+          submitSpecModal();
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          closeSpecModal();
+        }
+      });
+    }
+    document.querySelectorAll('.snippet-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var key = btn.dataset.insert;
+        var snippet = SPEC_SNIPPETS[key];
+        if (!snippet) return;
+        var modalWrap = btn.closest('.spec-modal-body') || btn.closest('.spec-modal-content');
+        if (modalWrap && els.specModalBody) {
+          setSpecModalTab('write');
+          insertSnippetIntoTextarea(els.specModalBody, snippet);
+        } else if (els.quickAddBody) {
+          insertSnippetIntoTextarea(els.quickAddBody, snippet);
+        }
+      });
+    });
+    if (els.quickAddBody) {
+      els.quickAddBody.addEventListener('paste', function (e) {
+        handleScreenshotPaste(e, els.quickAddBody);
+      });
+    }
+    if (els.specModalBody) {
+      els.specModalBody.addEventListener('paste', function (e) {
+        handleScreenshotPaste(e, els.specModalBody);
+      });
+    }
+    if (els.quickAddForm) {
+      els.quickAddForm.addEventListener('paste', function (e) {
+        if (e.target === els.quickAddBody) return;
+        if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT')) return;
+        handleScreenshotPaste(e, els.quickAddBody);
+      });
+    }
+    if (els.specModal) {
+      els.specModal.addEventListener('paste', function (e) {
+        if (e.target === els.specModalBody) return;
+        if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT')) return;
+        setSpecModalTab('write');
+        handleScreenshotPaste(e, els.specModalBody);
       });
     }
 
     document.addEventListener('keydown', function (event) {
-      if (els.actionDialog && els.actionDialog.open) {
+      if (els.specModal && (els.specModal.open || els.specModal.hasAttribute('open'))) {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          closeSpecModal();
+          return;
+        }
+        if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+          event.preventDefault();
+          submitSpecModal();
+          return;
+        }
+        return;
+      }
+
+      if (els.actionDialog && (els.actionDialog.open || els.actionDialog.hasAttribute('open'))) {
         if (event.key === 'Escape') {
           event.preventDefault();
           closeActionModal();
@@ -1661,18 +3224,110 @@
         return;
       }
 
+      if (event.key === 'Escape') {
+        if (els.quickAddForm && !els.quickAddForm.hidden) {
+          event.preventDefault();
+          collapseQuickAdd();
+          return;
+        }
+        if (els.worktreeModal && (els.worktreeModal.open || els.worktreeModal.hasAttribute('open'))) {
+          event.preventDefault();
+          closeWorktreeModal();
+          return;
+        }
+        if (els.toolInspector && !els.toolInspector.hidden) {
+          event.preventDefault();
+          closeToolInspector();
+          return;
+        }
+        if (els.filters && !els.filters.hidden) {
+          event.preventDefault();
+          els.filters.hidden = true;
+          if (els.filterToggle) els.filterToggle.setAttribute('aria-expanded', 'false');
+          return;
+        }
+        if (state.viewMode === 'detail') {
+          event.preventDefault();
+          setViewMode('board');
+          return;
+        }
+        var isInput = /^(INPUT|SELECT|TEXTAREA)$/.test(event.target.tagName);
+        if (isInput) {
+          event.target.blur();
+          return;
+        }
+        if (state.selected) {
+          setRoute(null);
+          return;
+        }
+        return;
+      }
+
       var input = /^(INPUT|SELECT|TEXTAREA)$/.test(event.target.tagName);
       if (event.key === '/' && !input) {
         event.preventDefault();
         els.search.focus();
         return;
       }
-      if (event.key === 'Escape') {
-        if (input) event.target.blur();
-        else if (state.selected) setRoute(null);
+
+      var card = event.target && event.target.closest && event.target.closest('.board-card');
+      if (card && (event.key === 'ArrowUp' || event.key === 'ArrowDown' || event.key === 'ArrowLeft' || event.key === 'ArrowRight' || event.key === 'Enter')) {
+        if (event.key === 'Enter') {
+          if (event.target === card || !/^(BUTTON|A|INPUT)$/.test(event.target.tagName)) {
+            event.preventDefault();
+            card.click();
+            return;
+          }
+        }
+        var cardContainer = card.closest('.board-col-cards');
+        if (cardContainer) {
+          var colCards = Array.from(cardContainer.querySelectorAll('.board-card'));
+          var cardIndex = colCards.indexOf(card);
+
+          if (event.key === 'ArrowDown') {
+            event.preventDefault();
+            if (cardIndex >= 0 && cardIndex < colCards.length - 1) {
+              colCards[cardIndex + 1].focus();
+            }
+            return;
+          }
+          if (event.key === 'ArrowUp') {
+            event.preventDefault();
+            if (cardIndex > 0) {
+              colCards[cardIndex - 1].focus();
+            }
+            return;
+          }
+          if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+            event.preventDefault();
+            var columns = Array.from(document.querySelectorAll('.board-columns .board-col'));
+            var currentCol = card.closest('.board-col');
+            var colIndex = columns.indexOf(currentCol);
+            if (colIndex !== -1) {
+              var step = event.key === 'ArrowRight' ? 1 : -1;
+              var targetIdx = colIndex + step;
+              while (targetIdx >= 0 && targetIdx < columns.length) {
+                var targetCards = Array.from(columns[targetIdx].querySelectorAll('.board-card'));
+                if (targetCards.length > 0) {
+                  var destIdx = Math.min(cardIndex, targetCards.length - 1);
+                  if (destIdx < 0) destIdx = 0;
+                  targetCards[destIdx].focus();
+                  return;
+                }
+                targetIdx += step;
+              }
+            }
+            return;
+          }
+        }
+      }
+
+      if (input || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.key === 'n' || event.key === 'c') {
+        event.preventDefault();
+        openSpecModal();
         return;
       }
-      if (input || event.metaKey || event.ctrlKey || event.altKey) return;
       if (event.key !== 'j' && event.key !== 'k' && event.key !== 'Enter') return;
 
       var index = state.shown.findIndex(function (item) { return item.id === state.selected; });
@@ -1685,8 +3340,6 @@
         setRoute(state.shown[index].id);
       }
     });
-
-    setInterval(updateCountdowns, 1000);
   }
 
   function ingest(data) {
@@ -1696,7 +3349,13 @@
     state.captured = String(data.captured_at || '');
 
     text(els.scope, state.scope === 'all' ? 'All projects' : state.scope);
-    text(els.snapshot, 'Vault: ' + state.scope + (state.archive ? ' · ' + state.archive : ''));
+    var serverFilters = data.filters || {};
+    var filterBits = [];
+    if (serverFilters.status) filterBits.push('status: ' + serverFilters.status);
+    if (serverFilters.kind) filterBits.push('kind: ' + serverFilters.kind);
+    if (serverFilters.item_type) filterBits.push('type: ' + serverFilters.item_type);
+    if (serverFilters.tag) filterBits.push('tag: ' + serverFilters.tag);
+    text(els.snapshot, 'Vault: ' + state.scope + (state.archive ? ' · ' + state.archive : '') + (filterBits.length ? ' · ' + filterBits.join(' · ') : ''));
     setupFilters();
 
     var currentRoute = route();
@@ -1712,7 +3371,7 @@
     if (state.etag) {
       headers['If-None-Match'] = state.etag;
     }
-    fetch(BASE + 'data.json', { credentials: 'same-origin', cache: 'no-store', headers: headers })
+    fetch(BASE + 'data.json', { credentials: 'same-origin', cache: 'no-cache', headers: headers })
       .then(function (res) {
         if (res.status === 304) {
           return null;
@@ -1744,7 +3403,7 @@
     if (state.etag) {
       headers['If-None-Match'] = state.etag;
     }
-    fetch(BASE + 'data.json', { credentials: 'same-origin', cache: 'no-store', headers: headers })
+    fetch(BASE + 'data.json', { credentials: 'same-origin', cache: 'no-cache', headers: headers })
       .then(function (res) {
         if (!res.ok) throw new Error('Could not load vault (' + res.status + ')');
         var etag = res.headers.get('ETag');
@@ -1765,8 +3424,50 @@
         fatal(err.message || 'Could not load vault.');
       });
   }
+  window.setReaderTab = setReaderTab;
   window.openAgentDrawer = openAgentDrawer;
-
+  window.closeAgentDrawer = closeAgentDrawer;
+  window.handleAgentStreamEvent = handleAgentStreamEvent;
+  window.formatToolCallInline = formatToolCallInline;
+  window.renderSwimlaneSvg = renderSwimlaneSvg;
+  window.openToolInspector = openToolInspector;
+  window.closeToolInspector = closeToolInspector;
+  window.cleanThoughtText = cleanThoughtText;
+  window.stripAnsi = stripAnsi;
+  window.submitActionDialog = triggerModalSubmit;
+  window.escapeHtml = escapeHtml;
+  window._test = {
+    els: els,
+    state: state,
+    setReaderTab: setReaderTab,
+    formatToolCallInline: formatToolCallInline,
+    renderSwimlaneSvg: renderSwimlaneSvg,
+    openToolInspector: openToolInspector,
+    closeToolInspector: closeToolInspector,
+    handleAgentStreamEvent: handleAgentStreamEvent,
+    appendTrajectoryContextRow: appendTrajectoryContextRow,
+    filterTrajectoryRows: filterTrajectoryRows,
+    cleanThoughtText: cleanThoughtText,
+    stripAnsi: stripAnsi,
+    bind: bind,
+    submitActionDialog: triggerModalSubmit,
+    escapeHtml: escapeHtml,
+    openSpecModal: openSpecModal,
+    closeSpecModal: closeSpecModal,
+    setSpecModalTab: setSpecModalTab,
+    createItem: createItem,
+    SPEC_SNIPPETS: SPEC_SNIPPETS,
+    expandQuickAdd: expandQuickAdd,
+    collapseQuickAdd: collapseQuickAdd,
+    getClipboardImages: getClipboardImages,
+    uploadScreenshot: uploadScreenshot,
+    handleScreenshotPaste: handleScreenshotPaste,
+    openWorktreeModal: openWorktreeModal,
+    closeWorktreeModal: closeWorktreeModal,
+    sendCommitPrItem: sendCommitPrItem,
+    buildBoardCard: buildBoardCard,
+    renderActions: renderActions,
+  };
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', boot);
   } else {

@@ -32,6 +32,8 @@ pub enum WorkflowError {
     DependencyCycle(String),
     ItemNotFound(String),
     ParseError(String),
+    UnknownAction(String),
+    MissingTransitionTarget,
 }
 
 impl fmt::Display for WorkflowError {
@@ -65,6 +67,10 @@ impl fmt::Display for WorkflowError {
             WorkflowError::DependencyCycle(msg) => write!(f, "Dependency cycle detected: {msg}"),
             WorkflowError::ItemNotFound(id) => write!(f, "Item '{id}' not found"),
             WorkflowError::ParseError(msg) => write!(f, "Failed to parse item: {msg}"),
+            WorkflowError::UnknownAction(action) => write!(f, "Unknown action '{action}'"),
+            WorkflowError::MissingTransitionTarget => {
+                write!(f, "Missing 'to' status for transition")
+            }
         }
     }
 }
@@ -267,6 +273,86 @@ pub fn claim_item(
     Ok(meta)
 }
 
+/// Attributes an item to the agent that is about to execute it and moves it to
+/// `in_progress`.
+///
+/// Unlike `claim_item`, this is not a lease: there is no expiry, no conflict
+/// check, and no other actor to negotiate with. Agents own execution, so
+/// starting a run always wins the item. `claimed_by` survives purely as
+/// telemetry for the duration of the run.
+pub fn begin_agent_run(
+    vault_path: &Path,
+    filename: &str,
+    actor: &str,
+) -> Result<IdeaMeta, WorkflowError> {
+    let (mut meta, _lock) = load_and_lock(vault_path, filename, None)?;
+    let now = chrono::Utc::now().timestamp();
+    let from_status = meta.current_status();
+
+    if from_status.is_finished() {
+        return Err(WorkflowError::InvalidTransition {
+            from: from_status,
+            to: Status::InProgress,
+            reason: "finished work cannot be started".to_string(),
+        });
+    }
+
+    meta.claimed_by = Some(actor.to_string());
+    meta.claim_expires_at = None;
+    if from_status != Status::InProgress {
+        meta.status = Some(Status::InProgress);
+    }
+
+    meta.activity.push(ActivityEvent {
+        at: now,
+        actor: actor.to_string(),
+        action: "started".to_string(),
+        from: Some(from_status),
+        to: Some(Status::InProgress),
+        note: None,
+    });
+
+    save_item(vault_path, &mut meta)?;
+    Ok(meta)
+}
+
+/// Attributes an item in `review` or `done` status to the agent that is about
+/// to commit the worktree and create a PR. Moves `done` items to `review`.
+pub fn begin_commit_pr_run(
+    vault_path: &Path,
+    filename: &str,
+    actor: &str,
+) -> Result<IdeaMeta, WorkflowError> {
+    let (mut meta, _lock) = load_and_lock(vault_path, filename, None)?;
+    let now = chrono::Utc::now().timestamp();
+    let from_status = meta.current_status();
+
+    if from_status != Status::Review && from_status != Status::Done {
+        return Err(WorkflowError::InvalidTransition {
+            from: from_status,
+            to: Status::Review,
+            reason: "commit+pr requires the task to be in review or done status".to_string(),
+        });
+    }
+
+    meta.claimed_by = Some(actor.to_string());
+    meta.claim_expires_at = None;
+    let target_status = Status::Review;
+    meta.status = Some(target_status);
+
+    meta.activity.push(ActivityEvent {
+        at: now,
+        actor: actor.to_string(),
+        action: "commit_pr_started".to_string(),
+        from: Some(from_status),
+        to: Some(target_status),
+        note: Some("Started agent for commit and PR".to_string()),
+    });
+
+    save_item(vault_path, &mut meta)?;
+    Ok(meta)
+}
+
 pub fn release_item(
     vault_path: &Path,
     filename: &str,
@@ -294,14 +380,20 @@ pub fn release_item(
 
     meta.claimed_by = None;
     meta.claim_expires_at = None;
-    meta.status = Some(Status::Planned);
+
+    // Only an item that is still running goes back to Planned. A user may have
+    // moved it to Blocked, Review, or Done while the run was active, and that
+    // decision outranks the end of the run.
+    if from_status == Status::InProgress {
+        meta.status = Some(Status::Planned);
+    }
 
     meta.activity.push(ActivityEvent {
         at: now,
         actor: actor_str,
         action: "released".to_string(),
         from: Some(from_status),
-        to: Some(Status::Planned),
+        to: meta.status,
         note: None,
     });
 
@@ -720,6 +812,120 @@ mod tests {
         assert_eq!(released.current_status(), Status::Planned);
         assert!(released.claimed_by.is_none());
         assert_eq!(released.current_revision(), 3);
+    }
+
+    #[test]
+    fn test_release_preserves_user_status() {
+        let dir = tempdir().unwrap();
+        let filename = setup_test_item(dir.path(), "0123456789cc", Status::Planned, None);
+
+        claim_item(dir.path(), &filename, "agent:omp", 60, None).unwrap();
+        let blocked = transition_item(
+            dir.path(),
+            &filename,
+            Status::Blocked,
+            Some("human:viewer"),
+            Some("Waiting on upstream"),
+            None,
+        )
+        .unwrap();
+        assert_eq!(blocked.current_status(), Status::Blocked);
+
+        // The run ends after the user already moved the item: their decision wins.
+        let released = release_item(dir.path(), &filename, Some("agent:omp"), true, None).unwrap();
+        assert_eq!(released.current_status(), Status::Blocked);
+        assert!(released.claimed_by.is_none());
+        assert_eq!(
+            released.activity.last().and_then(|a| a.to),
+            Some(Status::Blocked)
+        );
+    }
+
+    #[test]
+    fn test_release_still_returns_running_item_to_planned() {
+        let dir = tempdir().unwrap();
+        let filename = setup_test_item(dir.path(), "0123456789dd", Status::Planned, None);
+
+        claim_item(dir.path(), &filename, "agent:omp", 60, None).unwrap();
+        let released = release_item(dir.path(), &filename, Some("agent:omp"), true, None).unwrap();
+        assert_eq!(released.current_status(), Status::Planned);
+    }
+
+    #[test]
+    fn test_begin_agent_run_has_no_claim_conflict() {
+        let dir = tempdir().unwrap();
+        let filename = setup_test_item(dir.path(), "0123456789ee", Status::Planned, None);
+
+        // A human claim must not block an agent run.
+        claim_item(dir.path(), &filename, "human:viewer", 3600, None).unwrap();
+
+        let started = begin_agent_run(dir.path(), &filename, "agent:omp").unwrap();
+        assert_eq!(started.current_status(), Status::InProgress);
+        assert_eq!(started.claimed_by.as_deref(), Some("agent:omp"));
+        assert!(started.claim_expires_at.is_none());
+        assert_eq!(
+            started.activity.last().map(|a| a.action.as_str()),
+            Some("started")
+        );
+
+        // Re-running an in_progress item keeps it in progress and re-attributes it.
+        let resumed = begin_agent_run(dir.path(), &filename, "agent:omp").unwrap();
+        assert_eq!(resumed.current_status(), Status::InProgress);
+    }
+
+    #[test]
+    fn test_begin_agent_run_rejects_finished_work() {
+        let dir = tempdir().unwrap();
+        let filename = setup_test_item(dir.path(), "0123456789ff", Status::Done, None);
+
+        let result = begin_agent_run(dir.path(), &filename, "agent:omp");
+        assert!(matches!(
+            result,
+            Err(WorkflowError::InvalidTransition { .. })
+        ));
+    }
+
+    #[test]
+    fn test_begin_commit_pr_run_success() {
+        let dir = tempdir().unwrap();
+        let fn_review = setup_test_item(dir.path(), "0123456789aa", Status::Review, None);
+        let fn_done = setup_test_item(dir.path(), "0123456789ab", Status::Done, None);
+
+        // Review item transitions smoothly
+        let r1 = begin_commit_pr_run(dir.path(), &fn_review, "agent:omp").unwrap();
+        assert_eq!(r1.current_status(), Status::Review);
+        assert_eq!(r1.claimed_by.as_deref(), Some("agent:omp"));
+
+        // Done item transitions to Review
+        let r2 = begin_commit_pr_run(dir.path(), &fn_done, "agent:omp").unwrap();
+        assert_eq!(r2.current_status(), Status::Review);
+        assert_eq!(r2.claimed_by.as_deref(), Some("agent:omp"));
+    }
+
+    #[test]
+    fn test_begin_commit_pr_run_rejects_other_statuses() {
+        let dir = tempdir().unwrap();
+        let fn_planned = setup_test_item(dir.path(), "0123456789ac", Status::Planned, None);
+        let fn_prog = setup_test_item(dir.path(), "0123456789ad", Status::InProgress, None);
+        let fn_blocked = setup_test_item(dir.path(), "0123456789ae", Status::Blocked, None);
+        let fn_closed = setup_test_item(dir.path(), "0123456789af", Status::Closed, None);
+
+        assert!(begin_commit_pr_run(dir.path(), &fn_planned, "agent:omp").is_err());
+        assert!(begin_commit_pr_run(dir.path(), &fn_prog, "agent:omp").is_err());
+        assert!(begin_commit_pr_run(dir.path(), &fn_blocked, "agent:omp").is_err());
+        assert!(begin_commit_pr_run(dir.path(), &fn_closed, "agent:omp").is_err());
+    }
+
+    #[test]
+    fn test_action_error_messages() {
+        assert_eq!(
+            WorkflowError::UnknownAction("bogus".to_string()).to_string(),
+            "Unknown action 'bogus'"
+        );
+        assert_eq!(
+            WorkflowError::MissingTransitionTarget.to_string(),
+            "Missing 'to' status for transition"
+        );
     }
 
     #[test]

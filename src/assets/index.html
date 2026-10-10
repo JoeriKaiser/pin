@@ -12,6 +12,7 @@
   <div class="identity"><strong>pin</strong><span id="scope"></span></div>
   <label class="search"><span class="visually-hidden">Search items</span><input id="search" type="search" placeholder="Search items" autocomplete="off" spellcheck="false"><kbd>/</kbd></label>
   <div class="topbar-actions">
+    <button id="btn-new-ticket" class="control action-btn-accent" type="button" title="New spec ticket (n)">+ New Task</button>
     <div class="view-switch" role="group" aria-label="View mode">
       <button id="view-board-btn" class="control view-btn" type="button" aria-pressed="true">Board</button>
       <button id="view-detail-btn" class="control view-btn" type="button" aria-pressed="false">Detail</button>
@@ -38,9 +39,53 @@
           <span class="board-col-title">Backlog</span>
           <span class="board-col-count" id="count-created">0</span>
         </div>
-        <form id="quick-add-form" class="quick-add-form">
-          <input id="quick-add-input" class="quick-add-input" type="text" placeholder="+ Add task, press Enter..." autocomplete="off">
-        </form>
+        <div id="quick-add-container" class="quick-add-container">
+          <button id="quick-add-trigger" class="quick-add-trigger" type="button">+ Add task or spec ticket…</button>
+          <form id="quick-add-form" class="quick-add-form" hidden>
+            <div class="quick-add-header">
+              <input id="quick-add-input" class="quick-add-input" type="text" placeholder="Task or spec title…" autocomplete="off" required>
+              <div class="quick-add-header-actions">
+                <button id="quick-add-expand-btn" class="control icon-btn" type="button" title="Open in full modal editor">⤢</button>
+                <button id="quick-add-close-btn" class="control icon-btn" type="button" title="Collapse editor">✕</button>
+              </div>
+            </div>
+            <div class="quick-add-editor-wrap">
+              <textarea id="quick-add-body" class="quick-add-body" placeholder="Specification details, requirements, acceptance criteria… (Markdown)" rows="4"></textarea>
+              <div class="quick-add-snippets">
+                <button type="button" class="snippet-btn" data-insert="ac">+ Acceptance Criteria</button>
+                <button type="button" class="snippet-btn" data-insert="template">+ Spec Template</button>
+              </div>
+            </div>
+            <div class="quick-add-meta">
+              <select id="quick-add-type" title="Type">
+                <option value="task" selected>Task</option>
+                <option value="bug">Bug</option>
+                <option value="idea">Idea</option>
+                <option value="decision">Decision</option>
+              </select>
+              <select id="quick-add-kind" title="Kind">
+                <option value="technical" selected>Technical</option>
+                <option value="product">Product</option>
+                <option value="business">Business</option>
+                <option value="project">Project</option>
+              </select>
+              <select id="quick-add-priority" title="Priority">
+                <option value="">No priority</option>
+                <option value="high">High</option>
+                <option value="medium">Medium</option>
+                <option value="low">Low</option>
+              </select>
+              <input id="quick-add-tags" class="quick-add-tags" type="text" placeholder="Tags (comma-separated)" autocomplete="off">
+            </div>
+            <div class="quick-add-footer">
+              <span class="quick-add-hint">Cmd+Enter to create · Esc to cancel</span>
+              <div class="quick-add-buttons">
+                <button id="quick-add-cancel" class="control text-button" type="button">Cancel</button>
+                <button id="quick-add-submit" class="action-btn primary" type="submit">Create Ticket</button>
+              </div>
+            </div>
+          </form>
+        </div>
         <div class="board-col-cards" data-drop-status="created"></div>
       </div>
       <div class="board-col" data-col="planned">
@@ -87,6 +132,10 @@
 
   <section id="reader" class="reader" tabindex="-1" aria-labelledby="proposal-title">
     <button id="back" class="back control" type="button">← Work items</button>
+    <div class="reader-tabs" id="reader-tabs" hidden>
+      <button type="button" class="reader-tab active" id="tab-task-spec">Task Spec</button>
+      <button type="button" class="reader-tab" id="tab-agent-trajectory">Agent Trajectory <span id="reader-trajectory-badge" class="badge-mini" hidden>Running</span></button>
+    </div>
     <div id="detail-empty" class="empty reader-empty"><p>Select an item to view it.</p></div>
     <article id="proposal" hidden>
       <div class="split-detail">
@@ -115,6 +164,63 @@
         </aside>
       </div>
     </article>
+    <aside id="agent-drawer" class="agent-drawer" aria-label="Agent Execution" hidden>
+      <div class="agent-drawer-header">
+        <div class="agent-drawer-title-group">
+          <h2>Agent Execution</h2>
+          <span id="agent-task-title" class="agent-task-title"></span>
+          <span id="agent-item-id" class="agent-badge-id"></span>
+          <span id="agent-status-pill" class="agent-status-pill">Running</span>
+        </div>
+        <div class="agent-drawer-actions">
+          <button id="btn-cancel-agent" class="action-btn danger" type="button">Cancel Agent</button>
+          <button id="btn-close-agent-drawer" class="dialog-close" type="button" aria-label="Close drawer">✕</button>
+        </div>
+      </div>
+      <div class="agent-drawer-content">
+        <section id="agent-plan-section" class="agent-section" hidden>
+          <h3>Plan</h3>
+          <ul id="agent-plan-list" class="agent-plan-list"></ul>
+        </section>
+        <div class="agent-trajectory-toolbar">
+          <span class="trajectory-metric" id="agent-metric-duration">Duration: 0.0s</span>
+          <span class="trajectory-metric" id="agent-metric-turns">Turns: 0</span>
+          <span class="trajectory-metric" id="agent-metric-calls">Calls: 0</span>
+          <span id="agent-log-info" class="agent-log-info trajectory-metric"></span>
+          <input type="search" id="agent-trajectory-search" class="agent-trajectory-search" placeholder="Search..." aria-label="Search trajectory">
+        </div>
+        <div id="agent-swimlane-container" class="agent-swimlane-container">
+          <svg id="agent-swimlane-svg" class="agent-swimlane-svg" viewBox="0 0 800 64" preserveAspectRatio="none" aria-label="Execution timeline"></svg>
+        </div>
+        <div id="agent-trajectory-stream" class="agent-trajectory-stream" role="log" aria-label="Trajectory log" tabindex="0"></div>
+        <div id="agent-tool-inspector" class="agent-tool-inspector" hidden>
+          <div class="inspector-header">
+            <div class="inspector-header-left">
+              <span id="inspector-title" class="inspector-title">Tool Call Details</span>
+              <span id="inspector-status" class="inspector-status"></span>
+            </div>
+            <button id="btn-close-inspector" class="dialog-close" type="button" aria-label="Close inspector">✕</button>
+          </div>
+          <div class="inspector-body">
+            <div class="inspector-section">
+              <h4>Arguments</h4>
+              <pre><code id="inspector-args" class="inspector-code"></code></pre>
+            </div>
+            <div class="inspector-section">
+              <div class="inspector-section-header">
+                <h4>Output</h4>
+                <button id="btn-copy-tool-output" class="control text-button" type="button">Copy</button>
+              </div>
+              <pre><code id="inspector-output" class="inspector-code"></code></pre>
+            </div>
+          </div>
+        </div>
+        <div id="agent-thoughts" class="agent-thoughts-stream visually-hidden" aria-hidden="true"></div>
+        <div id="agent-tools" class="agent-tools-list visually-hidden" aria-hidden="true">
+          <button id="btn-toggle-tools" class="control text-button" type="button" hidden>Expand all</button>
+        </div>
+      </div>
+    </aside>
   </section>
 </main>
 
@@ -133,49 +239,91 @@
   </div>
 </dialog>
 
-<aside id="agent-drawer" class="agent-drawer" aria-label="Agent Execution" hidden>
-  <div class="agent-drawer-header">
-    <div class="agent-drawer-title-group">
-      <h2>Agent Execution</h2>
-      <span id="agent-item-id" class="agent-badge-id"></span>
-      <span id="agent-status-pill" class="agent-status-pill">Running</span>
+<dialog id="spec-modal" class="action-dialog spec-modal">
+  <form id="spec-modal-form" class="dialog-content spec-modal-content">
+    <div class="dialog-header">
+      <h2>New Spec Ticket</h2>
+      <button id="spec-modal-close-btn" class="dialog-close" type="button" aria-label="Close">✕</button>
     </div>
-    <div class="agent-drawer-actions">
-      <button id="btn-cancel-agent" class="action-btn danger" type="button">Cancel Agent</button>
-      <button id="btn-close-agent-drawer" class="dialog-close" type="button" aria-label="Close drawer">✕</button>
-    </div>
-  </div>
-  <div class="agent-drawer-content">
-    <section id="agent-plan-section" class="agent-section" hidden>
-      <h3>Plan</h3>
-      <ul id="agent-plan-list" class="agent-plan-list"></ul>
-    </section>
-    <section class="agent-section">
-      <h3>Live Thoughts</h3>
-      <div id="agent-thoughts" class="agent-thoughts-stream"></div>
-    </section>
-    <section class="agent-section">
-      <div class="agent-section-header">
-        <h3>Tool Activity</h3>
-        <button id="btn-toggle-tools" class="control text-button" type="button" style="font-size: .72rem; padding: .1rem .4rem;" hidden>Expand all</button>
+    <div id="spec-modal-error" class="dialog-error" hidden></div>
+    <div class="dialog-body spec-modal-body">
+      <div class="spec-modal-field">
+        <label for="spec-modal-title">Title</label>
+        <input id="spec-modal-title" class="spec-modal-title-input" type="text" placeholder="Summary of the spec or task…" autocomplete="off" required>
       </div>
-      <div id="agent-tools" class="agent-tools-list"></div>
-    </section>
-    <div id="agent-log-info" class="agent-log-info"></div>
-  </div>
-</aside>
+
+      <div class="spec-modal-grid">
+        <label>Type
+          <select id="spec-modal-type">
+            <option value="task" selected>Task</option>
+            <option value="bug">Bug</option>
+            <option value="idea">Idea</option>
+            <option value="decision">Decision</option>
+          </select>
+        </label>
+        <label>Kind
+          <select id="spec-modal-kind">
+            <option value="technical" selected>Technical</option>
+            <option value="product">Product</option>
+            <option value="business">Business</option>
+            <option value="project">Project</option>
+          </select>
+        </label>
+        <label>Priority
+          <select id="spec-modal-priority">
+            <option value="">None</option>
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
+          </select>
+        </label>
+        <label>Project
+          <input id="spec-modal-project" list="projects" placeholder="Current project" autocomplete="off">
+        </label>
+        <label class="spec-modal-tags-label">Tags
+          <input id="spec-modal-tags" placeholder="e.g. backend, auth" autocomplete="off">
+        </label>
+      </div>
+
+      <div class="spec-modal-editor-group">
+        <div class="spec-modal-toolbar">
+          <div class="spec-modal-tabs">
+            <button type="button" id="spec-tab-write" class="control tab-btn active">Write</button>
+            <button type="button" id="spec-tab-preview" class="control tab-btn">Preview</button>
+          </div>
+          <div class="spec-modal-snippets">
+            <button type="button" class="snippet-btn" data-insert="ac">+ Acceptance Criteria</button>
+            <button type="button" class="snippet-btn" data-insert="template">+ Spec Template</button>
+          </div>
+        </div>
+        <div class="spec-modal-pane-wrap">
+          <textarea id="spec-modal-body" class="spec-modal-textarea" rows="12" placeholder="Detailed specification, context, requirements, and acceptance criteria… (Markdown)"></textarea>
+          <div id="spec-modal-preview" class="prose spec-modal-preview" hidden></div>
+        </div>
+      </div>
+    </div>
+    <div class="dialog-footer">
+      <span class="spec-modal-hint">Cmd+Enter to create · Esc to cancel</span>
+      <button id="spec-modal-cancel-btn" class="control text-button" type="button">Cancel</button>
+      <button id="spec-modal-submit-btn" class="action-btn primary" type="submit">Create Ticket</button>
+    </div>
+  </form>
+</dialog>
+
 
 <dialog id="worktree-modal" class="action-dialog">
   <div class="dialog-content">
     <div class="dialog-header">
-      <h2>Primary Working Tree Busy</h2>
+      <h2 id="worktree-modal-title">Primary Working Tree Busy</h2>
       <button id="btn-worktree-close" class="dialog-close" type="button" aria-label="Close">✕</button>
     </div>
     <div class="dialog-body">
-      <p>The primary repository is already running task <span id="worktree-busy-id" class="agent-badge-id"></span>. Start this task in an isolated Git worktree under .pin_worktrees/<span id="worktree-target-id" class="agent-badge-id"></span>?</p>
+      <p id="worktree-busy-msg">The primary repository is already running task <span id="worktree-busy-id" class="agent-badge-id"></span>. Start this task in an isolated Git worktree under .pin_worktrees/<span id="worktree-target-id" class="agent-badge-id"></span>?</p>
+      <p id="worktree-prompt-msg" hidden>Start this task inside an isolated Git worktree based off the up-to-date main branch under .pin_worktrees/<span id="worktree-prompt-target-id" class="agent-badge-id"></span>, or run in the primary checkout?</p>
     </div>
     <div class="dialog-footer">
       <button id="btn-worktree-cancel" class="control text-button" type="button">Cancel</button>
+      <button id="btn-worktree-primary" class="control text-button" type="button" hidden>Run in Primary</button>
       <button id="btn-worktree-confirm" class="action-btn primary" type="button">Run in Worktree</button>
     </div>
   </div>

@@ -46,9 +46,9 @@ pub fn print_usage() {
          [--limit <n>] [--group kind] [--archived|--all] [--format json|plain]\n  \
          next [--project <name>] [--limit <n>] [--format json|plain]\n  \
          transition <id|prefix|filename> --to <status> [--actor <name>]\n              \
-         [--note <text>] [--expect-revision <n>] [--format json|plain]\n  \
+         [--note <text>] [--expect-revision <n>] [--worktree] [--format json|plain]\n  \
          claim <id|prefix|filename> [--actor <name>] [--lease <seconds>]\n        \
-         [--expect-revision <n>] [--format json|plain]\n  \
+         [--expect-revision <n>] [--worktree] [--format json|plain]\n  \
          release <id|prefix|filename> [--actor <name>] [--force]\n          \
          [--expect-revision <n>] [--format json|plain]\n  \
          handoff <id|prefix|filename> [--actor <name>] [--progress <text>]\n          \
