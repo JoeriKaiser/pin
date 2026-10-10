@@ -87,6 +87,10 @@ pub fn view(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> 
         vault_path.to_path_buf(),
         scope_label,
         archive_filter,
+        filter_status,
+        filter_tag.clone(),
+        filter_kind,
+        filter_type,
     );
     let fmt = format.unwrap_or(OutputFormat::Plain);
 

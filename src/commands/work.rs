@@ -1,11 +1,31 @@
 use crate::cli::{resolve_actor, ArgReader, CliError, CliResult};
 use crate::frontmatter::parse_front_matter_detailed;
 use crate::model::{OutputFormat, Status};
-use crate::output::{default_format, emit_single_idea};
+use crate::output::{default_format, emit_single_idea, JsonIdeaOutput};
 use crate::vault::resolve_selector;
 use crate::workflow;
 use std::fs;
 use std::path::Path;
+
+fn emit_with_worktree(
+    meta: &crate::model::IdeaMeta,
+    worktree_path: Option<&Path>,
+    format: Option<crate::model::OutputFormat>,
+) {
+    let fmt = format.unwrap_or_else(|| default_format(OutputFormat::Plain));
+    if let Some(wt) = worktree_path {
+        if fmt == OutputFormat::Json {
+            let mut val = serde_json::to_value(JsonIdeaOutput::from(meta)).unwrap_or_default();
+            val["worktree"] = serde_json::json!(wt.to_string_lossy());
+            println!("{}", serde_json::to_string(&val).unwrap_or_default());
+        } else {
+            emit_single_idea(meta, fmt);
+            println!("Worktree: {}", wt.display());
+        }
+    } else {
+        emit_single_idea(meta, fmt);
+    }
+}
 
 pub fn transition(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> {
     let mut reader = ArgReader::new(args, command);
@@ -15,6 +35,7 @@ pub fn transition(args: &[String], command: &str, vault_path: &Path) -> CliResul
     let mut note = None;
     let mut expect_revision = None;
     let mut format = None;
+    let mut worktree = false;
 
     while let Some(arg) = reader.peek()? {
         match arg {
@@ -35,6 +56,7 @@ pub fn transition(args: &[String], command: &str, vault_path: &Path) -> CliResul
                 );
             }
             "--format" => format = Some(reader.parse_format(false)?),
+            "--worktree" => worktree = true,
             _ => return Err(CliError::usage(format!("Unknown flag '{arg}'"))),
         }
         reader.idx += 1;
@@ -62,8 +84,17 @@ pub fn transition(args: &[String], command: &str, vault_path: &Path) -> CliResul
         expect_revision,
     ) {
         Ok(meta) => {
-            let fmt = format.unwrap_or_else(|| default_format(OutputFormat::Plain));
-            emit_single_idea(&meta, fmt);
+            let worktree_path = if worktree {
+                let repo_path = crate::acp::WorktreeManager::repo_root(vault_path)
+                    .or_else(|| std::env::current_dir().ok())
+                    .unwrap_or_else(|| vault_path.parent().unwrap_or(vault_path).to_path_buf());
+                let wt = crate::acp::WorktreeManager::provision_worktree(&repo_path, &meta.id)
+                    .map_err(|e| CliError::usage(format!("Failed to provision worktree: {e}")))?;
+                Some(wt)
+            } else {
+                None
+            };
+            emit_with_worktree(&meta, worktree_path.as_deref(), format);
         }
         Err(e) => return Err(CliError::usage(e.to_string())),
     }
@@ -77,6 +108,7 @@ pub fn claim(args: &[String], command: &str, vault_path: &Path) -> CliResult<()>
     let mut lease = 3600;
     let mut expect_revision = None;
     let mut format = None;
+    let mut worktree = false;
 
     while let Some(arg) = reader.peek()? {
         match arg {
@@ -95,6 +127,7 @@ pub fn claim(args: &[String], command: &str, vault_path: &Path) -> CliResult<()>
                 );
             }
             "--format" => format = Some(reader.parse_format(false)?),
+            "--worktree" => worktree = true,
             _ => return Err(CliError::usage(format!("Unknown flag '{arg}'"))),
         }
         reader.idx += 1;
@@ -112,8 +145,17 @@ pub fn claim(args: &[String], command: &str, vault_path: &Path) -> CliResult<()>
         expect_revision,
     ) {
         Ok(meta) => {
-            let fmt = format.unwrap_or_else(|| default_format(OutputFormat::Plain));
-            emit_single_idea(&meta, fmt);
+            let worktree_path = if worktree {
+                let repo_path = crate::acp::WorktreeManager::repo_root(vault_path)
+                    .or_else(|| std::env::current_dir().ok())
+                    .unwrap_or_else(|| vault_path.parent().unwrap_or(vault_path).to_path_buf());
+                let wt = crate::acp::WorktreeManager::provision_worktree(&repo_path, &meta.id)
+                    .map_err(|e| CliError::usage(format!("Failed to provision worktree: {e}")))?;
+                Some(wt)
+            } else {
+                None
+            };
+            emit_with_worktree(&meta, worktree_path.as_deref(), format);
         }
         Err(e) => return Err(CliError::usage(e.to_string())),
     }

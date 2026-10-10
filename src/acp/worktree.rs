@@ -37,6 +37,19 @@ impl From<io::Error> for WorktreeError {
 pub struct WorktreeManager;
 
 impl WorktreeManager {
+    /// The standard folder convention where all worktrees are stored.
+    pub const WORKTREES_DIR_NAME: &'static str = ".pin_worktrees";
+
+    /// Returns the root directory where all worktrees are stored by convention.
+    pub fn worktrees_root(repo_path: &Path) -> PathBuf {
+        repo_path.join(Self::WORKTREES_DIR_NAME)
+    }
+
+    /// Returns the target directory for a specific item's worktree.
+    pub fn worktree_path(repo_path: &Path, item_id: &str) -> PathBuf {
+        Self::worktrees_root(repo_path).join(item_id)
+    }
+
     /// Returns true if `repo_path` is inside a git working tree.
     pub fn is_git_repo(repo_path: &Path) -> bool {
         let output = Command::new("git")
@@ -51,15 +64,71 @@ impl WorktreeManager {
         }
     }
 
-    /// Resolves the default branch for `repo_path`.
+    /// Resolves the git repository root from a starting directory.
+    pub fn repo_root(start_path: &Path) -> Option<PathBuf> {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(start_path)
+            .args(["rev-parse", "--show-toplevel"])
+            .output()
+            .ok()?;
+        if output.status.success() {
+            let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !s.is_empty() {
+                return Some(PathBuf::from(s));
+            }
+        }
+        None
+    }
+
+    /// Attempts to fetch the remote origin tracking refs quietly to ensure
+    /// remote branches are up to date before resolving default branch.
+    pub fn fetch_origin_quietly(repo_path: &Path) {
+        let _ = Command::new("git")
+            .arg("-C")
+            .arg(repo_path)
+            .args(["fetch", "--quiet", "origin"])
+            .output();
+    }
+
+    /// Resolves the default branch for `repo_path`, prioritizing an up-to-date main branch.
     ///
     /// Tries:
-    /// 1. `symbolic-ref --short refs/remotes/origin/HEAD` (e.g. "origin/main")
-    /// 2. `rev-parse --verify origin/main`
-    /// 3. `rev-parse --verify origin/master`
-    /// 4. Fallback to `"HEAD"`
+    /// 1. `rev-parse --verify origin/main` (up-to-date remote main)
+    /// 2. `rev-parse --verify refs/heads/main` (local main)
+    /// 3. `symbolic-ref --short refs/remotes/origin/HEAD` (e.g. "origin/main")
+    /// 4. `rev-parse --verify origin/master`
+    /// 5. `rev-parse --verify refs/heads/master` (local master)
+    /// 6. Fallback to `"HEAD"`
     pub fn resolve_default_branch(repo_path: &Path) -> String {
-        // Try origin/HEAD symbolic ref
+        // Attempt best-effort fetch if remote origin exists
+        Self::fetch_origin_quietly(repo_path);
+
+        // 1. Try origin/main (up-to-date remote main branch)
+        if let Ok(out) = Command::new("git")
+            .arg("-C")
+            .arg(repo_path)
+            .args(["rev-parse", "--verify", "origin/main"])
+            .output()
+        {
+            if out.status.success() {
+                return "origin/main".to_string();
+            }
+        }
+
+        // 2. Try local main branch
+        if let Ok(out) = Command::new("git")
+            .arg("-C")
+            .arg(repo_path)
+            .args(["rev-parse", "--verify", "refs/heads/main"])
+            .output()
+        {
+            if out.status.success() {
+                return "main".to_string();
+            }
+        }
+
+        // 3. Try origin/HEAD symbolic ref
         if let Ok(out) = Command::new("git")
             .arg("-C")
             .arg(repo_path)
@@ -74,19 +143,7 @@ impl WorktreeManager {
             }
         }
 
-        // Try origin/main
-        if let Ok(out) = Command::new("git")
-            .arg("-C")
-            .arg(repo_path)
-            .args(["rev-parse", "--verify", "origin/main"])
-            .output()
-        {
-            if out.status.success() {
-                return "origin/main".to_string();
-            }
-        }
-
-        // Try origin/master
+        // 4. Try origin/master
         if let Ok(out) = Command::new("git")
             .arg("-C")
             .arg(repo_path)
@@ -98,9 +155,20 @@ impl WorktreeManager {
             }
         }
 
+        // 5. Try local master branch
+        if let Ok(out) = Command::new("git")
+            .arg("-C")
+            .arg(repo_path)
+            .args(["rev-parse", "--verify", "refs/heads/master"])
+            .output()
+        {
+            if out.status.success() {
+                return "master".to_string();
+            }
+        }
+
         "HEAD".to_string()
     }
-
     /// Provisions a git worktree for concurrent execution on `item_id`.
     ///
     /// - Target dir: `repo_path.join(".pin_worktrees").join(item_id)`
@@ -110,9 +178,8 @@ impl WorktreeManager {
     /// - Attempts to create a new branch with `git worktree add -b pin/{item_id} <target_path> <base_branch>`
     /// - If the branch already exists, falls back to checking out existing branch: `git worktree add <target_path> pin/{item_id}`
     pub fn provision_worktree(repo_path: &Path, item_id: &str) -> Result<PathBuf, WorktreeError> {
-        let worktrees_dir = repo_path.join(".pin_worktrees");
-        let target_dir = worktrees_dir.join(item_id);
-
+        let worktrees_dir = Self::worktrees_root(repo_path);
+        let target_dir = Self::worktree_path(repo_path, item_id);
         if target_dir.exists() {
             return Ok(target_dir);
         }
@@ -163,6 +230,7 @@ impl WorktreeManager {
 
             if !second_add.status.success() {
                 let second_err = String::from_utf8_lossy(&second_add.stderr);
+                Self::cleanup_failed_provision(repo_path, &worktrees_dir, &target_dir);
                 return Err(WorktreeError::GitCommand(format!(
                     "Failed to create worktree: initial attempt failed: {stderr_msg}; fallback attempt failed: {second_err}"
                 )));
@@ -170,6 +238,7 @@ impl WorktreeManager {
         }
 
         if !target_dir.exists() {
+            Self::cleanup_failed_provision(repo_path, &worktrees_dir, &target_dir);
             return Err(WorktreeError::GitCommand(format!(
                 "Worktree command succeeded but target directory does not exist: {}",
                 target_dir.display()
@@ -179,6 +248,28 @@ impl WorktreeManager {
         Ok(target_dir)
     }
 
+    /// Removes what a failed `git worktree add` left behind: the target
+    /// directory, the stale worktree registration, and `.pin_worktrees` itself
+    /// when nothing else is in it.
+    fn cleanup_failed_provision(repo_path: &Path, worktrees_dir: &Path, target_dir: &Path) {
+        if target_dir.exists() {
+            let _ = fs::remove_dir_all(target_dir);
+        }
+
+        let _ = Command::new("git")
+            .arg("-C")
+            .arg(repo_path)
+            .args(["worktree", "prune"])
+            .output();
+
+        let is_empty = fs::read_dir(worktrees_dir)
+            .map(|mut entries| entries.next().is_none())
+            .unwrap_or(false);
+        if is_empty {
+            let _ = fs::remove_dir(worktrees_dir);
+        }
+    }
+
     /// Removes a git worktree for `item_id`.
     ///
     /// - Runs `git -C <repo_path> worktree remove --force .pin_worktrees/{item_id}`
@@ -186,7 +277,7 @@ impl WorktreeManager {
     /// - Cleans up directory if still present on disk
     /// - Runs `git -C <repo_path> worktree prune`
     pub fn remove_worktree(repo_path: &Path, item_id: &str) -> Result<(), WorktreeError> {
-        let target_dir = repo_path.join(".pin_worktrees").join(item_id);
+        let target_dir = Self::worktree_path(repo_path, item_id);
         let target_str = target_dir
             .to_str()
             .ok_or_else(|| WorktreeError::GitCommand("Invalid non-UTF-8 path".to_string()))?;
@@ -277,5 +368,78 @@ mod tests {
             .output()
             .unwrap();
         assert!(branch_check.status.success());
+    }
+
+    #[test]
+    fn test_failed_provision_cleans_up() {
+        let dir = tempdir().unwrap();
+        let repo = dir.path();
+
+        // A directory that is not a git checkout: `git worktree add` fails, and
+        // provisioning must not leave an empty `.pin_worktrees` behind.
+        let result = WorktreeManager::provision_worktree(repo, "task456");
+        assert!(result.is_err());
+        assert!(!repo.join(".pin_worktrees").exists());
+    }
+
+    #[test]
+    fn test_resolve_default_branch_with_main() {
+        let dir = tempdir().unwrap();
+        let repo = dir.path();
+
+        Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["init", "-b", "main"])
+            .output()
+            .unwrap();
+
+        std::fs::write(repo.join("README.md"), "hello").unwrap();
+        Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["config", "user.email", "test@test.com"])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["config", "user.name", "Test"])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["add", "."])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["commit", "-m", "init main"])
+            .output()
+            .unwrap();
+
+        // Switch to a feature branch
+        Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["checkout", "-b", "feature-xyz"])
+            .output()
+            .unwrap();
+
+        // Even though current branch is feature-xyz, resolve_default_branch should find "main"
+        let resolved = WorktreeManager::resolve_default_branch(repo);
+        assert_eq!(resolved, "main");
+
+        // Convention path helper check
+        assert_eq!(
+            WorktreeManager::worktrees_root(repo),
+            repo.join(".pin_worktrees")
+        );
+        assert_eq!(
+            WorktreeManager::worktree_path(repo, "task99"),
+            repo.join(".pin_worktrees").join("task99")
+        );
     }
 }

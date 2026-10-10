@@ -31,6 +31,31 @@ assert_contains() {
     esac
 }
 
+start_view() {
+    # start_view <vault> <logfile> <agent command> [extra view args...]
+    view_vault=$1
+    view_log=$2
+    view_agent=$3
+    shift 3
+    PIN_VAULT="$view_vault" "$PIN_BIN" view --no-open --format plain --acp-command "$view_agent" "$@" >"$view_log" 2>&1 &
+    view_pid=$!
+    view_url=""
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+        sleep 0.1
+        if [ -s "$view_log" ]; then
+            view_url=$(tr -d '\r' <"$view_log" | head -n 1)
+            break
+        fi
+    done
+    [ -n "$view_url" ] || fail "view server did not start for $view_vault"
+}
+
+stop_view() {
+    kill "$view_pid" 2>/dev/null || true
+    wait "$view_pid" 2>/dev/null || true
+    view_pid=
+}
+
 "$PIN_BIN" --help >/dev/null 2>&1
 assert_contains "$("$PIN_BIN" --version)" "pin 2.2.0"
 
@@ -66,6 +91,14 @@ HOME="$TMP/home" PIN_ACTOR=agent:test "$PIN_BIN" claim "$wf_id" --format json >/
 HOME="$TMP/home" PIN_ACTOR=agent:test "$PIN_BIN" complete "$wf_id" --evidence 'Direct completion path' --format json | grep -q '"status":"done"'
 HOME="$TMP/home" PIN_ACTOR=agent:test "$PIN_BIN" close "$wf_id" --format json | grep -q '"status":"closed"'
 HOME="$TMP/home" "$PIN_BIN" rm "$wf_id" --format json >/dev/null
+
+# A run that ends after the user moved the item must not reset the status
+preserve_item=$(HOME="$TMP/home" "$PIN_BIN" add '# Status preservation' --kind technical --type task --format json)
+preserve_id=$(printf '%s' "$preserve_item" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+HOME="$TMP/home" PIN_ACTOR=agent:omp "$PIN_BIN" claim "$preserve_id" --format json >/dev/null
+HOME="$TMP/home" PIN_ACTOR=human:viewer "$PIN_BIN" transition "$preserve_id" --to blocked --note 'Blocked mid-run' --format json >/dev/null
+HOME="$TMP/home" PIN_ACTOR=agent:omp "$PIN_BIN" release "$preserve_id" --force --format json | grep -q '"status":"blocked"'
+HOME="$TMP/home" "$PIN_BIN" rm "$preserve_id" --format json >/dev/null
 
 if HOME="$TMP/home" "$PIN_BIN" add '# Missing kind' >/dev/null 2>&1; then
     fail "add accepted a proposal without --kind"
@@ -322,7 +355,7 @@ while IFS= read -r line; do
       ;;
     *session/prompt*)
       req_id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
-      printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"mock-session-1","update":{"text":"## Summary\\nMock agent finished\\n\\n## Verification\\nMock tests passed"}}}\n'
+      printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"mock-session-1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"## Summary\\nMock agent finished\\n\\n## Verification\\nMock tests passed"}}}}\n'
       sleep 0.05
       printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "$req_id"
       ;;
@@ -386,10 +419,14 @@ curl -s -S "$url" >"$curl_html"
 assert_contains "$(cat "$curl_html")" '<title>pin</title>'
 assert_contains "$(cat "$curl_html")" 'id="filter-toggle"'
 assert_contains "$(cat "$curl_html")" 'id="proposal-more"'
+assert_contains "$(cat "$curl_html")" 'id="btn-new-ticket"'
+assert_contains "$(cat "$curl_html")" 'id="spec-modal"'
+assert_contains "$(cat "$curl_html")" 'id="quick-add-trigger"'
 curl -s -S "$url"app.js >"$TMP/app.js"
 assert_contains "$(cat "$TMP/app.js")" 'DOMPurify.sanitize'
 assert_contains "$(cat "$TMP/app.js")" 'bodyWithoutDuplicateTitle'
-
+assert_contains "$(cat "$TMP/app.js")" 'openSpecModal'
+assert_contains "$(cat "$TMP/app.js")" 'expandQuickAdd'
 origin=$(printf '%s' "$url" | cut -d/ -f1-3)
 mutation_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H 'Content-Type: application/json' --data '{"action":"transition","to":"planned"}' "${url}items/${view_id}/action")
 [ "$mutation_code" = "403" ] || fail "viewer accepted a mutation without same-origin headers"
@@ -397,12 +434,58 @@ mutation=$(curl -s -S -X POST -H "Origin: $origin" -H 'Content-Type: application
 assert_contains "$mutation" '"status":"planned"'
 curl -s -S "${url}data.json" | grep -q '"status":"planned"' || fail "viewer data did not refresh after mutation"
 
+# Action errors must name the real problem, not a parse failure
+unknown_err=$(curl -s -S -X POST -H "Origin: $origin" -H 'Content-Type: application/json' -H 'X-Pin-Action: true' --data '{"action":"bogus"}' "${url}items/${view_id}/action")
+assert_contains "$unknown_err" "Unknown action 'bogus'"
+missing_target_err=$(curl -s -S -X POST -H "Origin: $origin" -H 'Content-Type: application/json' -H 'X-Pin-Action: true' --data '{"action":"transition"}' "${url}items/${view_id}/action")
+assert_contains "$missing_target_err" "Missing 'to' status for transition"
+
 # Test POST items (quick-add from viewer)
 created_from_view=$(curl -s -S -X POST -H "Origin: $origin" -H 'Content-Type: application/json' -H 'X-Pin-Action: true' --data '{"title":"Created from viewer","type":"task","status":"created","project":"view"}' "${url}items")
 assert_contains "$created_from_view" '"title":"Created from viewer"'
 assert_contains "$created_from_view" '"status":"created"'
 curl -s -S "${url}data.json" | grep -q '"title":"Created from viewer"' || fail "viewer data did not contain newly created item"
 
+# Test POST items with detailed spec ticket payload (body, kind, priority, tags)
+created_spec=$(curl -s -S -X POST -H "Origin: $origin" -H 'Content-Type: application/json' -H 'X-Pin-Action: true' --data '{"title":"Spec ticket test","body":"## Description\nDetailed spec.\n\n## Acceptance Criteria\n- [ ] Spec criteria","type":"task","kind":"technical","priority":"high","tags":"frontend,spec","status":"created","project":"view"}' "${url}items")
+assert_contains "$created_spec" '"title":"Spec ticket test"'
+assert_contains "$created_spec" '"priority":"high"'
+assert_contains "$created_spec" '"tags":["frontend","spec"]'
+spec_id=$(echo "$created_spec" | grep -o '"id":"[^"]*"' | head -n 1 | cut -d'"' -f4)
+[ -n "$spec_id" ] || fail "failed to extract id from created spec item"
+curl -s -S "${url}data.json" | grep -q '"title":"Spec ticket test"' || fail "viewer data did not contain spec ticket test item"
+spec_file_content=$(cat "$TMP/view-vault/${spec_id}.md")
+assert_contains "$spec_file_content" "## Acceptance Criteria"
+assert_contains "$spec_file_content" "priority: \"high\""
+assert_contains "$spec_file_content" "tags: \"frontend,spec\""
+
+
+# Test POST screenshots endpoint
+printf '\x89PNG\r\n\x1a\nfake-screenshot-data' >"$TMP/fake_screenshot.png"
+screenshot_resp=$(curl -s -S -X POST -H "Origin: $origin" -H 'X-Pin-Action: true' -H 'Content-Type: image/png' --data-binary @"$TMP/fake_screenshot.png" "${url}screenshots")
+assert_contains "$screenshot_resp" '"path":'
+assert_contains "$screenshot_resp" '"filename":'
+assert_contains "$screenshot_resp" '"markdown":'
+screenshot_path=$(echo "$screenshot_resp" | grep -o '"path":"[^"]*"' | cut -d'"' -f4)
+screenshot_file=$(echo "$screenshot_resp" | grep -o '"filename":"[^"]*"' | cut -d'"' -f4)
+[ -f "$screenshot_path" ] || fail "uploaded screenshot file was not created on disk: $screenshot_path"
+cmp "$TMP/fake_screenshot.png" "$screenshot_path" || fail "uploaded screenshot file content mismatch"
+
+# Test GET screenshots/{filename}
+curl -s -S "${url}screenshots/${screenshot_file}" >"$TMP/downloaded_screenshot.png"
+cmp "$TMP/fake_screenshot.png" "$TMP/downloaded_screenshot.png" || fail "downloaded screenshot mismatch"
+
+# Test path traversal rejected
+bad_ss_code=$(curl --path-as-is -s -o /dev/null -w "%{http_code}" "${url}screenshots/../secret.png")
+[ "$bad_ss_code" = "400" ] || fail "expected 400 for path traversal screenshot request, got $bad_ss_code"
+bad_ss_code2=$(curl -s -o /dev/null -w "%{http_code}" "${url}screenshots/secret..png")
+[ "$bad_ss_code2" = "400" ] || fail "expected 400 for invalid screenshot name request, got $bad_ss_code2"
+
+# Create a ticket containing the screenshot path in its description (simulating paste + create)
+ticket_with_ss=$(curl -s -S -X POST -H "Origin: $origin" -H 'Content-Type: application/json' -H 'X-Pin-Action: true' --data "{\"title\":\"Ticket with screenshot\",\"body\":\"## Description\\n![screenshot](${screenshot_path})\",\"type\":\"task\",\"status\":\"created\",\"project\":\"view\"}" "${url}items")
+ss_ticket_id=$(echo "$ticket_with_ss" | grep -o '"id":"[^"]*"' | head -n 1 | cut -d'"' -f4)
+ss_ticket_content=$(cat "$TMP/view-vault/${ss_ticket_id}.md")
+assert_contains "$ss_ticket_content" "$screenshot_path"
 # Oversized request bodies are rejected rather than allocated
 head -c 2000000 /dev/zero | tr '\0' 'a' >"$TMP/oversized.json"
 oversized_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "Origin: $origin" -H 'X-Pin-Action: true' --data-binary @"$TMP/oversized.json" "${url}items")
@@ -449,6 +532,12 @@ assert_contains "$(cat "$TMP/app.js")" 'EventSource'
 assert_contains "$(cat "$TMP/app.js")" 'cleanThoughtText'
 assert_contains "$(cat "$TMP/app.js")" 'card.open = false'
 assert_contains "$(cat "$TMP/app.js")" 'stripAnsi'
+# Human claiming is gone, and every run trigger uses one dispatcher
+assert_contains "$(cat "$TMP/app.js")" 'Start Agent'
+assert_contains "$(cat "$TMP/app.js")" "sendRunItem(item.id, true, 'Worktree start failed: ')"
+if grep -q 'openClaimModal\|openReleaseModal\|Release Claim\|lease-countdown\|claimer-badge' "$TMP/app.js"; then
+    fail "app.js still carries the human claim UI"
+fi
 
 # Verify JavaScript thought cleaning and collapsed tool cards via node
 node -e '
@@ -479,7 +568,85 @@ if (!appJs.includes("card.open = false;")) {
   console.error("card.open = false not in app.js"); process.exit(1);
 }
 ' "$TMP/app.js"
+
+# Verify the unified run dispatcher: success opens the trajectory drawer,
+# primary_busy offers the worktree, and failures surface as error toasts.
+node -e '
+const fs = require("fs");
+const appJs = fs.readFileSync(process.argv[1], "utf8");
+const match = appJs.match(/function sendRunItem\(id, useWorktree, errorPrefix\) \{([\s\S]*?)\n  \}/);
+if (!match) { console.error("sendRunItem missing"); process.exit(1); }
+
+function runCase(id, useWorktree, response) {
+  const log = { url: null, opts: null, toasts: [], drawer: [], tab: [], worktree: [] };
+  const fn = new Function(
+    "id", "useWorktree", "errorPrefix", "BASE", "fetch", "showToast", "find",
+    "openWorktreeModal", "updateActiveRuns", "openAgentDrawer", "setReaderTab",
+    "JSON", "encodeURIComponent", match[1]
+  );
+  const promise = fn(
+    id,
+    useWorktree,
+    undefined,
+    "base/",
+    function (url, opts) {
+      log.url = url;
+      log.opts = opts;
+      return Promise.resolve({
+        ok: response.ok,
+        status: response.status,
+        json: function () { return Promise.resolve(response.body); }
+      });
+    },
+    function (message, isError) { log.toasts.push([message, !!isError]); },
+    function (itemId) { return { id: itemId, title: "Item" }; },
+    function (item, busy) { log.worktree.push([item.id, busy]); },
+    function () {},
+    function (itemId) { log.drawer.push(itemId); },
+    function (tab) { log.tab.push(tab); },
+    JSON,
+    encodeURIComponent
+  );
+  return promise.then(function () { return log; });
+}
+
+const success = runCase("abc", false, { ok: true, status: 200, body: { status: "started" } })
+  .then(function (log) {
+    if (log.url !== "base/items/abc/run") { console.error("wrong run URL: " + log.url); process.exit(1); }
+    if (log.opts.body !== "{}") { console.error("default run must not request a worktree"); process.exit(1); }
+    if (log.drawer[0] !== "abc") { console.error("success did not open the trajectory drawer"); process.exit(1); }
+    if (log.tab[log.tab.length - 1] !== "trajectory") { console.error("success did not select the trajectory tab"); process.exit(1); }
+    if (log.toasts.some(function (t) { return t[1]; })) { console.error("success toasted an error"); process.exit(1); }
+  });
+
+const busy = runCase("abc", false, { ok: false, status: 409, body: { status: "primary_busy", active_id: "xyz" } })
+  .then(function (log) {
+    if (log.worktree.length !== 1 || log.worktree[0][1] !== "xyz") {
+      console.error("primary_busy did not open the worktree modal: " + JSON.stringify(log.worktree));
+      process.exit(1);
+    }
+    if (log.toasts.some(function (t) { return t[1]; })) { console.error("primary_busy must not toast an error"); process.exit(1); }
+    if (log.drawer.length) { console.error("primary_busy must not open the trajectory drawer"); process.exit(1); }
+  });
+
+const failed = runCase("abc", true, { ok: false, status: 500, body: { error: "git exploded" } })
+  .then(function (log) {
+    if (log.opts.body !== JSON.stringify({ use_worktree: true })) { console.error("worktree run did not send use_worktree"); process.exit(1); }
+    if (!log.toasts.some(function (t) { return t[1] && t[0].indexOf("git exploded") !== -1; })) {
+      console.error("failed worktree run was not toasted: " + JSON.stringify(log.toasts));
+      process.exit(1);
+    }
+    if (log.drawer.length) { console.error("failed run must not open the trajectory drawer"); process.exit(1); }
+  });
+
+Promise.all([success, busy, failed]).then(function () {
+  console.log("run dispatcher checks passed");
+});
+' "$TMP/app.js"
+
 # Test ACP agent execution and automatic handoff/review transition
+# A human claim must not block the run: agents own execution
+PIN_VAULT="$TMP/view-vault" "$PIN_BIN" claim "$view_id" --actor human:audit --lease 3600 --format json | grep -q '"status":"in_progress"'
 run_res=$(curl -s -S -X POST -H "Origin: $origin" -H 'Content-Type: application/json' -H 'X-Pin-Action: true' "${url}items/${view_id}/run")
 assert_contains "$run_res" '"status":"started"'
 
@@ -495,9 +662,196 @@ assert_contains "$read_item" 'status: "review"'
 assert_contains "$read_item" 'progress: "Mock agent finished"'
 assert_contains "$read_item" 'verification: "Mock tests passed"'
 [ -f "$TMP/view-vault/runs/${view_id}.log" ] || fail "run log file was not created"
+[ -f "$TMP/view-vault/runs/${view_id}.events.jsonl" ] || fail "run events file was not created"
+if printf '%s' "$read_item" | grep -q 'claimed_by:'; then
+    fail "a finished run kept its claim attribution"
+fi
+
+# Test commit-pr endpoint on unready item rejects with 400
+bad_commit_pr_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "Origin: $origin" -H 'Content-Type: application/json' -H 'X-Pin-Action: true' "${url}items/${ss_ticket_id}/commit-pr")
+[ "$bad_commit_pr_code" = "400" ] || fail "expected 400 when calling commit-pr on created item, got $bad_commit_pr_code"
+
+# Test commit-pr endpoint on review item starts successfully
+commit_pr_res=$(curl -s -S -X POST -H "Origin: $origin" -H 'Content-Type: application/json' -H 'X-Pin-Action: true' "${url}items/${view_id}/commit-pr")
+assert_contains "$commit_pr_res" '"status":"started"'
+assert_contains "$commit_pr_res" '"mode":"commit_pr"'
+
+# Wait for mock agent to complete commit-pr run
+for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+    sleep 0.1
+    read_item=$(PIN_VAULT="$TMP/view-vault" "$PIN_BIN" read "$view_id" 2>/dev/null || true)
+    if printf '%s' "$read_item" | grep -q 'status: "review"' && ! printf '%s' "$read_item" | grep -q 'claimed_by:'; then
+        break
+    fi
+done
+assert_contains "$read_item" 'status: "review"'
+if printf '%s' "$read_item" | grep -q 'claimed_by:'; then
+    fail "commit-pr finished run kept its claim attribution"
+fi
 
 kill "$view_pid" 2>/dev/null || true
 wait "$view_pid" 2>/dev/null || true
 view_pid=
+
+# ── CLI filters must survive into the served snapshot ───────────────────
+mkdir -p "$TMP/filter-vault"
+filter_match=$(PIN_VAULT="$TMP/filter-vault" PIN_PROJECT=filter "$PIN_BIN" add '# Filter match' --kind technical --type bug --tags 'perf' --format json)
+filter_match_id=$(printf '%s' "$filter_match" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+PIN_VAULT="$TMP/filter-vault" "$PIN_BIN" transition "$filter_match_id" --to planned >/dev/null
+PIN_VAULT="$TMP/filter-vault" "$PIN_BIN" transition "$filter_match_id" --to blocked >/dev/null
+PIN_VAULT="$TMP/filter-vault" PIN_PROJECT=filter "$PIN_BIN" add '# Filter miss' --kind technical --type bug --tags 'perf' --format json >/dev/null
+
+start_view "$TMP/filter-vault" "$TMP/filter-view.log" "$TMP/mock-agent.sh" --status blocked --tag perf --kind technical --type bug
+filter_json=$(curl -s -S "${view_url}data.json")
+assert_contains "$filter_json" '"title":"Filter match"'
+assert_contains "$filter_json" '"filters":{"status":"blocked","tag":"perf","kind":"technical","item_type":"bug"}'
+if printf '%s' "$filter_json" | grep -q '"title":"Filter miss"'; then
+    stop_view
+    fail "viewer ignored the CLI filters and served a non-matching item"
+fi
+stop_view
+
+# A different --status value must change what is served
+start_view "$TMP/filter-vault" "$TMP/filter-view.log" "$TMP/mock-agent.sh" --status created
+filter_json=$(curl -s -S "${view_url}data.json")
+assert_contains "$filter_json" '"title":"Filter miss"'
+if printf '%s' "$filter_json" | grep -q '"title":"Filter match"'; then
+    stop_view
+    fail "viewer served a blocked item for --status created"
+fi
+stop_view
+
+# ── A second primary run must report primary_busy, not fail silently ────
+cat >"$TMP/slow-agent.sh" <<'EOF'
+#!/bin/sh
+while IFS= read -r line; do
+  case "$line" in
+    *initialize*)
+      req_id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentCapabilities":{}}}\n' "$req_id"
+      ;;
+    *session/new*)
+      req_id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"slow-session-1"}}\n' "$req_id"
+      ;;
+    *session/prompt*)
+      req_id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+      sleep 3
+      printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"slow-session-1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"## Summary\\nSlow agent finished"}}}}\n'
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "$req_id"
+      ;;
+    *session/cancel*)
+      exit 0
+      ;;
+  esac
+done
+EOF
+chmod +x "$TMP/slow-agent.sh"
+
+mkdir -p "$TMP/busy-vault"
+busy_holder=$(PIN_VAULT="$TMP/busy-vault" PIN_PROJECT=busy "$PIN_BIN" add '# Busy holder' --kind technical --type task --format json)
+busy_holder_id=$(printf '%s' "$busy_holder" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+busy_waiter=$(PIN_VAULT="$TMP/busy-vault" PIN_PROJECT=busy "$PIN_BIN" add '# Busy waiter' --kind technical --type task --format json)
+busy_waiter_id=$(printf '%s' "$busy_waiter" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+
+start_view "$TMP/busy-vault" "$TMP/busy-view.log" "$TMP/slow-agent.sh"
+busy_origin=$(printf '%s' "$view_url" | cut -d/ -f1-3)
+holder_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "Origin: $busy_origin" -H 'Content-Type: application/json' -H 'X-Pin-Action: true' "${view_url}items/${busy_holder_id}/run")
+[ "$holder_code" = "200" ] || {
+    stop_view
+    fail "first primary run did not start: $holder_code"
+}
+busy_body=$(curl -s -S -X POST -H "Origin: $busy_origin" -H 'Content-Type: application/json' -H 'X-Pin-Action: true' "${view_url}items/${busy_waiter_id}/run")
+assert_contains "$busy_body" '"status":"primary_busy"'
+assert_contains "$busy_body" "\"active_id\":\"${busy_holder_id}\""
+assert_contains "$(PIN_VAULT="$TMP/busy-vault" "$PIN_BIN" read "$busy_waiter_id")" 'status: "created"'
+stop_view
+
+# ── Worktree provisioning failure must surface, not report success ──────
+mkdir -p "$TMP/no-commits" "$TMP/wt-vault"
+# An empty repository: `git worktree add` cannot resolve HEAD, so provisioning fails
+git -C "$TMP/no-commits" init -q
+wt_item=$(PIN_VAULT="$TMP/wt-vault" PIN_PROJECT=wt "$PIN_BIN" add '# Worktree failure' --kind technical --type task --format json)
+wt_id=$(printf '%s' "$wt_item" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+
+(
+    cd "$TMP/no-commits"
+    exec env PIN_VAULT="$TMP/wt-vault" "$PIN_BIN" view --no-open --format plain --acp-command "$TMP/mock-agent.sh" >"$TMP/wt-view.log" 2>&1
+) &
+view_pid=$!
+view_url=""
+for i in 1 2 3 4 5 6 7 8 9 10; do
+    sleep 0.1
+    if [ -s "$TMP/wt-view.log" ]; then
+        view_url=$(tr -d '\r' <"$TMP/wt-view.log" | head -n 1)
+        break
+    fi
+done
+[ -n "$view_url" ] || fail "view server did not start for the worktree failure case"
+wt_origin=$(printf '%s' "$view_url" | cut -d/ -f1-3)
+wt_code=$(curl -s -o "$TMP/wt-run.json" -w "%{http_code}" -X POST -H "Origin: $wt_origin" -H 'Content-Type: application/json' -H 'X-Pin-Action: true' --data '{"use_worktree":true}' "${view_url}items/${wt_id}/run")
+[ "$wt_code" = "500" ] || fail "expected 500 when worktree provisioning fails, got $wt_code"
+assert_contains "$(cat "$TMP/wt-run.json")" '"error"'
+[ ! -d "$TMP/no-commits/.pin_worktrees" ] || fail ".pin_worktrees was left behind after a failed worktree add"
+assert_contains "$(PIN_VAULT="$TMP/wt-vault" "$PIN_BIN" read "$wt_id")" 'status: "created"'
+stop_view
+
+# ── Worktree run from main: CLI claim, transition, and agent confirmation ──
+mkdir -p "$TMP/wt-repo" "$TMP/wt-main-vault"
+git -C "$TMP/wt-repo" init -q -b main
+git -C "$TMP/wt-repo" config user.email "test@test.com"
+git -C "$TMP/wt-repo" config user.name "Test User"
+echo "hello main" >"$TMP/wt-repo/README.md"
+git -C "$TMP/wt-repo" add README.md
+git -C "$TMP/wt-repo" commit -q -m "initial main commit"
+
+# 1. pin claim --worktree provisions worktree from main
+claim_wt_item=$(PIN_VAULT="$TMP/wt-main-vault" PIN_PROJECT=wt-repo "$PIN_BIN" add '# Worktree claim item' --kind technical --type task --format json)
+claim_wt_id=$(printf '%s' "$claim_wt_item" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+
+(
+    cd "$TMP/wt-repo"
+    claim_res=$(PIN_VAULT="$TMP/wt-main-vault" "$PIN_BIN" claim "$claim_wt_id" --worktree --format json)
+    assert_contains "$claim_res" '"status":"in_progress"'
+    assert_contains "$claim_res" '"worktree":'
+    [ -d "$TMP/wt-repo/.pin_worktrees/$claim_wt_id" ] || fail "worktree folder .pin_worktrees/$claim_wt_id was not created"
+    wt_branch=$(git -C "$TMP/wt-repo/.pin_worktrees/$claim_wt_id" rev-parse --abbrev-ref HEAD)
+    [ "$wt_branch" = "pin/$claim_wt_id" ] || fail "expected branch pin/$claim_wt_id, got $wt_branch"
+)
+
+# 2. pin transition --worktree provisions worktree
+trans_wt_item=$(PIN_VAULT="$TMP/wt-main-vault" PIN_PROJECT=wt-repo "$PIN_BIN" add '# Worktree trans item' --kind technical --type task --format json)
+trans_wt_id=$(printf '%s' "$trans_wt_item" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+
+(
+    cd "$TMP/wt-repo"
+    trans_res=$(PIN_VAULT="$TMP/wt-main-vault" "$PIN_BIN" transition "$trans_wt_id" --to in_progress --worktree --format plain)
+    assert_contains "$trans_res" "Worktree:"
+    [ -d "$TMP/wt-repo/.pin_worktrees/$trans_wt_id" ] || fail "worktree folder .pin_worktrees/$trans_wt_id was not created"
+)
+
+# 3. POST /items/:id/run with confirm_worktree alias
+confirm_wt_item=$(PIN_VAULT="$TMP/wt-main-vault" PIN_PROJECT=wt-repo "$PIN_BIN" add '# Confirm worktree item' --kind technical --type task --format json)
+confirm_wt_id=$(printf '%s' "$confirm_wt_item" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+
+(
+    cd "$TMP/wt-repo"
+    exec env PIN_VAULT="$TMP/wt-main-vault" "$PIN_BIN" view --no-open --format plain --acp-command "$TMP/mock-agent.sh" >"$TMP/wt-confirm-view.log" 2>&1
+) &
+view_pid=$!
+view_url=""
+for i in 1 2 3 4 5 6 7 8 9 10; do
+    sleep 0.1
+    if [ -s "$TMP/wt-confirm-view.log" ]; then
+        view_url=$(tr -d '\r' <"$TMP/wt-confirm-view.log" | head -n 1)
+        break
+    fi
+done
+[ -n "$view_url" ] || fail "view server did not start for confirm_worktree"
+confirm_origin=$(printf '%s' "$view_url" | cut -d/ -f1-3)
+confirm_code=$(curl -s -o "$TMP/wt-confirm-run.json" -w "%{http_code}" -X POST -H "Origin: $confirm_origin" -H 'Content-Type: application/json' -H 'X-Pin-Action: true' --data '{"confirm_worktree":true}' "${view_url}items/${confirm_wt_id}/run")
+[ "$confirm_code" = "200" ] || fail "expected 200 for confirm_worktree, got $confirm_code: $(cat "$TMP/wt-confirm-run.json")"
+assert_contains "$(cat "$TMP/wt-confirm-run.json")" '"status":"started"'
+stop_view
 
 echo "CLI tests passed"
