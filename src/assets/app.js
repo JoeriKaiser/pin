@@ -1450,6 +1450,42 @@
     els.actions.hidden = !els.actions.children.length;
   }
 
+  function sanitizeHtml(dirty) {
+    if (!dirty) return '';
+    if (typeof DOMPurify !== 'undefined' && DOMPurify) {
+      if (typeof DOMPurify.sanitize === 'function') {
+        return DOMPurify.sanitize(dirty, PURIFY_CONFIG);
+      }
+      if (typeof DOMPurify === 'function') {
+        try {
+          var instance = DOMPurify(window);
+          if (instance && typeof instance.sanitize === 'function') {
+            return instance.sanitize(dirty, PURIFY_CONFIG);
+          }
+        } catch (_) {}
+      }
+    }
+    return dirty;
+  }
+
+  function renderMarkdownSnippet(raw, container) {
+    if (!raw) return;
+    var trimmed = String(raw).trim();
+    if (!trimmed) return;
+    if (typeof marked !== 'undefined' && marked) {
+      try {
+        var dirty = marked.parse(trimmed, { renderer: markedRenderer, gfm: true, async: false });
+        var clean = sanitizeHtml(dirty);
+        container.innerHTML = clean;
+        if (!container.textContent && !container.childNodes.length) {
+          container.textContent = trimmed;
+        }
+        return;
+      } catch (_) {}
+    }
+    container.textContent = trimmed;
+  }
+
   function renderHandoff(item) {
     clear(els.handoffCard);
     var h = item.handoff;
@@ -1461,29 +1497,38 @@
     els.handoffCard.hidden = false;
     els.handoffCard.appendChild(node('h3', '', 'Agent Handoff & Evidence'));
 
-    if (h.progress) {
-      var p = node('div', 'handoff-field');
-      p.appendChild(node('strong', '', 'Progress:'));
-      p.appendChild(node('div', 'handoff-text', h.progress));
-      els.handoffCard.appendChild(p);
+    var st = itemStatus(item);
+
+    function addField(type, labelText, pillText, pillClass, content, isPreformatted) {
+      if (!content || !String(content).trim()) return;
+      var field = node('div', 'handoff-field handoff-field-' + type);
+      var header = node('div', 'handoff-field-header');
+      header.appendChild(node('strong', '', labelText));
+      if (pillText) {
+        header.appendChild(node('span', 'handoff-pill ' + pillClass, pillText));
+      }
+      field.appendChild(header);
+
+      if (isPreformatted) {
+        field.appendChild(node('pre', 'handoff-evidence', String(content).trim()));
+      } else {
+        var body = node('div', 'handoff-text');
+        renderMarkdownSnippet(content, body);
+        field.appendChild(body);
+      }
+      els.handoffCard.appendChild(field);
     }
-    if (h.next) {
-      var n = node('div', 'handoff-field');
-      n.appendChild(node('strong', '', 'Next steps:'));
-      n.appendChild(node('div', 'handoff-text', h.next));
-      els.handoffCard.appendChild(n);
-    }
-    if (h.blocker) {
-      var b = node('div', 'handoff-field');
-      b.appendChild(node('strong', '', 'Blocker:'));
-      b.appendChild(node('div', 'handoff-text', h.blocker));
-      els.handoffCard.appendChild(b);
-    }
-    if (h.verification) {
-      var v = node('div', 'handoff-field');
-      v.appendChild(node('strong', '', 'Verification evidence:'));
-      v.appendChild(node('pre', 'handoff-evidence', h.verification));
-      els.handoffCard.appendChild(v);
+
+    if (st === 'blocked') {
+      addField('blocker', 'Blocker:', 'Blocked', 'handoff-pill-blocker', h.blocker, false);
+      addField('verification', 'Verification evidence:', 'Evidence', 'handoff-pill-verification', h.verification, true);
+      addField('progress', 'Progress:', null, null, h.progress, false);
+      addField('next', 'Next steps:', null, null, h.next, false);
+    } else {
+      addField('verification', 'Verification evidence:', 'Evidence', 'handoff-pill-verification', h.verification, true);
+      addField('progress', 'Progress:', null, null, h.progress, false);
+      addField('next', 'Next steps:', null, null, h.next, false);
+      addField('blocker', 'Blocker:', 'Blocker', 'handoff-pill-blocker', h.blocker, false);
     }
   }
 
@@ -1563,9 +1608,9 @@
     if (tags(item).length) addSummary(tags(item).join(' · '));
 
     renderWorkerBox(item);
+    renderActions(item);
     renderHandoff(item);
     renderDependencies(item);
-    renderActions(item);
 
     clear(els.meta);
     addMeta('ID', item.id);
@@ -3467,6 +3512,7 @@
     sendCommitPrItem: sendCommitPrItem,
     buildBoardCard: buildBoardCard,
     renderActions: renderActions,
+    renderHandoff: renderHandoff,
   };
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', boot);
