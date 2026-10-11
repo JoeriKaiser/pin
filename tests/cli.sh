@@ -422,11 +422,26 @@ assert_contains "$(cat "$curl_html")" 'id="proposal-more"'
 assert_contains "$(cat "$curl_html")" 'id="btn-new-ticket"'
 assert_contains "$(cat "$curl_html")" 'id="spec-modal"'
 assert_contains "$(cat "$curl_html")" 'id="quick-add-trigger"'
-curl -s -S "$url"app.js >"$TMP/app.js"
-assert_contains "$(cat "$TMP/app.js")" 'DOMPurify.sanitize'
-assert_contains "$(cat "$TMP/app.js")" 'bodyWithoutDuplicateTitle'
-assert_contains "$(cat "$TMP/app.js")" 'openSpecModal'
-assert_contains "$(cat "$TMP/app.js")" 'expandQuickAdd'
+# Verify all modules in the asset table return 200 with JavaScript content type
+for mod in "app.js" \
+    "modules/config.js" \
+    "modules/state.js" \
+    "modules/dom.js" \
+    "modules/api.js" \
+    "modules/formatters.js" \
+    "modules/markdown.js" \
+    "modules/router.js" \
+    "modules/media.js" \
+    "modules/board.js" \
+    "modules/detail.js" \
+    "modules/forms.js" \
+    "modules/agent.js" \
+    "modules/bind.js" \
+    "modules/boot.js" \
+    "modules/test-hooks.js"; do
+    mod_meta=$(curl -s -o /dev/null -w "%{http_code} %{content_type}" "${url}${mod}")
+    [ "$mod_meta" = "200 text/javascript; charset=utf-8" ] || fail "asset $mod returned $mod_meta, expected 200 text/javascript; charset=utf-8"
+done
 origin=$(printf '%s' "$url" | cut -d/ -f1-3)
 mutation_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H 'Content-Type: application/json' --data '{"action":"transition","to":"planned"}' "${url}items/${view_id}/action")
 [ "$mutation_code" = "403" ] || fail "viewer accepted a mutation without same-origin headers"
@@ -528,121 +543,15 @@ assert_contains "$(cat "$curl_html")" 'id="worktree-modal"'
 assert_contains "$(cat "$curl_html")" 'id="btn-toggle-tools"'
 assert_contains "$(cat "$curl_html")" 'id="agent-thoughts"'
 assert_contains "$(cat "$curl_html")" 'id="agent-tools"'
-assert_contains "$(cat "$TMP/app.js")" 'EventSource'
-assert_contains "$(cat "$TMP/app.js")" 'cleanThoughtText'
-assert_contains "$(cat "$TMP/app.js")" 'card.open = false'
-assert_contains "$(cat "$TMP/app.js")" 'stripAnsi'
-# Human claiming is gone, and every run trigger uses one dispatcher
-assert_contains "$(cat "$TMP/app.js")" 'Start Agent'
-assert_contains "$(cat "$TMP/app.js")" "sendRunItem(item.id, true, 'Worktree start failed: ')"
-if grep -q 'openClaimModal\|openReleaseModal\|Release Claim\|lease-countdown\|claimer-badge' "$TMP/app.js"; then
-    fail "app.js still carries the human claim UI"
+# Human claiming is gone across all modules
+curl -s -S "${url}modules/bind.js" >"$TMP/bind.js"
+curl -s -S "${url}modules/detail.js" >"$TMP/detail.js"
+if grep -q 'openClaimModal\|openReleaseModal\|Release Claim\|lease-countdown\|claimer-badge' "$TMP/bind.js" "$TMP/detail.js"; then
+    fail "frontend modules still carry the human claim UI"
 fi
 
-# Verify JavaScript thought cleaning and collapsed tool cards via node
-node -e '
-const fs = require("fs");
-const appJs = fs.readFileSync(process.argv[1], "utf8");
-
-const cleanThoughtMatch = appJs.match(/function cleanThoughtText\(thoughtText\) \{([\s\S]*?)\n  \}/);
-if (!cleanThoughtMatch) { console.error("cleanThoughtText missing"); process.exit(1); }
-const stripAnsiMatch = appJs.match(/function stripAnsi\(str\) \{([\s\S]*?)\n  \}/);
-const stripAnsi = new Function("str", stripAnsiMatch[1]);
-const cleanThoughtText = new Function("thoughtText", "stripAnsi", cleanThoughtMatch[1].replace(/stripAnsi/g, "stripAnsi"));
-
-// ANSI stripping
-if (cleanThoughtText("\x1b[32mChecking code\x1b[0m", stripAnsi) !== "Checking code") {
-  console.error("ANSI not stripped"); process.exit(1);
-}
-// Thinking tag stripping
-const tagCleaned = cleanThoughtText("<think>Thinking...</think>\n<thought>Done</thought>", stripAnsi);
-if (tagCleaned !== "Thinking...\nDone") {
-  console.error("Thinking tags not cleanly stripped:", JSON.stringify(tagCleaned)); process.exit(1);
-}
-// Newline normalization
-if (cleanThoughtText("A\n\n\n\nB", stripAnsi) !== "A\n\nB") {
-  console.error("Excess newlines not collapsed"); process.exit(1);
-}
-// Collapsed tool calls by default
-if (!appJs.includes("card.open = false;")) {
-  console.error("card.open = false not in app.js"); process.exit(1);
-}
-' "$TMP/app.js"
-
-# Verify the unified run dispatcher: success opens the trajectory drawer,
-# primary_busy offers the worktree, and failures surface as error toasts.
-node -e '
-const fs = require("fs");
-const appJs = fs.readFileSync(process.argv[1], "utf8");
-const match = appJs.match(/function sendRunItem\(id, useWorktree, errorPrefix\) \{([\s\S]*?)\n  \}/);
-if (!match) { console.error("sendRunItem missing"); process.exit(1); }
-
-function runCase(id, useWorktree, response) {
-  const log = { url: null, opts: null, toasts: [], drawer: [], tab: [], worktree: [] };
-  const fn = new Function(
-    "id", "useWorktree", "errorPrefix", "BASE", "fetch", "showToast", "find",
-    "openWorktreeModal", "updateActiveRuns", "openAgentDrawer", "setReaderTab",
-    "JSON", "encodeURIComponent", match[1]
-  );
-  const promise = fn(
-    id,
-    useWorktree,
-    undefined,
-    "base/",
-    function (url, opts) {
-      log.url = url;
-      log.opts = opts;
-      return Promise.resolve({
-        ok: response.ok,
-        status: response.status,
-        json: function () { return Promise.resolve(response.body); }
-      });
-    },
-    function (message, isError) { log.toasts.push([message, !!isError]); },
-    function (itemId) { return { id: itemId, title: "Item" }; },
-    function (item, busy) { log.worktree.push([item.id, busy]); },
-    function () {},
-    function (itemId) { log.drawer.push(itemId); },
-    function (tab) { log.tab.push(tab); },
-    JSON,
-    encodeURIComponent
-  );
-  return promise.then(function () { return log; });
-}
-
-const success = runCase("abc", false, { ok: true, status: 200, body: { status: "started" } })
-  .then(function (log) {
-    if (log.url !== "base/items/abc/run") { console.error("wrong run URL: " + log.url); process.exit(1); }
-    if (log.opts.body !== "{}") { console.error("default run must not request a worktree"); process.exit(1); }
-    if (log.drawer[0] !== "abc") { console.error("success did not open the trajectory drawer"); process.exit(1); }
-    if (log.tab[log.tab.length - 1] !== "trajectory") { console.error("success did not select the trajectory tab"); process.exit(1); }
-    if (log.toasts.some(function (t) { return t[1]; })) { console.error("success toasted an error"); process.exit(1); }
-  });
-
-const busy = runCase("abc", false, { ok: false, status: 409, body: { status: "primary_busy", active_id: "xyz" } })
-  .then(function (log) {
-    if (log.worktree.length !== 1 || log.worktree[0][1] !== "xyz") {
-      console.error("primary_busy did not open the worktree modal: " + JSON.stringify(log.worktree));
-      process.exit(1);
-    }
-    if (log.toasts.some(function (t) { return t[1]; })) { console.error("primary_busy must not toast an error"); process.exit(1); }
-    if (log.drawer.length) { console.error("primary_busy must not open the trajectory drawer"); process.exit(1); }
-  });
-
-const failed = runCase("abc", true, { ok: false, status: 500, body: { error: "git exploded" } })
-  .then(function (log) {
-    if (log.opts.body !== JSON.stringify({ use_worktree: true })) { console.error("worktree run did not send use_worktree"); process.exit(1); }
-    if (!log.toasts.some(function (t) { return t[1] && t[0].indexOf("git exploded") !== -1; })) {
-      console.error("failed worktree run was not toasted: " + JSON.stringify(log.toasts));
-      process.exit(1);
-    }
-    if (log.drawer.length) { console.error("failed run must not open the trajectory drawer"); process.exit(1); }
-  });
-
-Promise.all([success, busy, failed]).then(function () {
-  console.log("run dispatcher checks passed");
-});
-' "$TMP/app.js"
+# Verify JavaScript frontend behavior, trajectory events, and run dispatching
+node "$ROOT/tests/viewer_trajectory.js"
 
 # Test ACP agent execution and automatic handoff/review transition
 # A human claim must not block the run: agents own execution

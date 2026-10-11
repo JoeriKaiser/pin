@@ -1,0 +1,100 @@
+import { state, ORDER, unique, fillSelect, itemStatus, itemType, kind, priority } from './state.js';
+import { els } from './dom.js';
+import { fetchData } from './api.js';
+import { text, clear, node, isNarrow } from './formatters.js';
+import { route, applyRoute } from './router.js';
+import { setViewMode } from './board.js';
+import { updateActiveRuns } from './agent.js';
+import { bind } from './bind.js';
+
+export function setupFilters() {
+  fillSelect(els.status, unique(itemStatus), 'Any status', ORDER.status);
+  fillSelect(els.type, unique(itemType), 'Any type', ORDER.type);
+  fillSelect(els.kind, unique(kind), 'Any kind', ORDER.kind);
+  fillSelect(els.priority, unique(priority), 'Any priority', ORDER.priority);
+
+  var projects = unique(function (item) { return item.project || ''; }).filter(Boolean).sort();
+  if (els.projects) {
+    clear(els.projects);
+    projects.forEach(function (value) {
+      var option = node('option');
+      option.value = value;
+      els.projects.appendChild(option);
+    });
+  }
+  if (els.projectWrap) {
+    els.projectWrap.hidden = projects.length < 2;
+  }
+}
+
+export function fatal(message) {
+  text(els.count, 'Unavailable');
+  clear(els.listEmpty);
+  if (els.listEmpty) {
+    els.listEmpty.hidden = false;
+    els.listEmpty.appendChild(node('p', '', message));
+  }
+}
+
+export function ingest(data) {
+  state.items = Array.isArray(data.items) ? data.items : [];
+  state.scope = String(data.scope || 'all');
+  state.archive = String(data.archive_filter || '');
+  state.captured = String(data.captured_at || '');
+
+  text(els.scope, state.scope === 'all' ? 'All projects' : state.scope);
+  var serverFilters = data.filters || {};
+  var filterBits = [];
+  if (serverFilters.status) filterBits.push('status: ' + serverFilters.status);
+  if (serverFilters.kind) filterBits.push('kind: ' + serverFilters.kind);
+  if (serverFilters.item_type) filterBits.push('type: ' + serverFilters.item_type);
+  if (serverFilters.tag) filterBits.push('tag: ' + serverFilters.tag);
+  text(els.snapshot, 'Vault: ' + state.scope + (state.archive ? ' · ' + state.archive : '') + (filterBits.length ? ' · ' + filterBits.join(' · ') : ''));
+  setupFilters();
+
+  var currentRoute = route();
+  if (!currentRoute && !isNarrow() && state.items.length && state.viewMode === 'detail') {
+    if (typeof history !== 'undefined' && history.replaceState) {
+      history.replaceState(null, '', '#/item/' + encodeURIComponent(state.items[0].id));
+    }
+  }
+  setViewMode(state.viewMode);
+  applyRoute();
+}
+
+export function load(isInitial) {
+  return fetchData(state.etag)
+    .then(function (res) {
+      if (res.status === 304) return null;
+      if (!res.ok) throw new Error((isInitial ? 'Could not load vault (' : 'Data load error: ') + res.status + (isInitial ? ')' : ''));
+      var etag = res.headers && res.headers.get ? res.headers.get('ETag') : null;
+      if (etag) state.etag = etag;
+      return res.json();
+    })
+    .then(function (data) {
+      if (data) ingest(data);
+      updateActiveRuns();
+    })
+    .catch(function (err) {
+      if (isInitial) fatal(err.message || 'Could not load vault.');
+    });
+}
+
+export function refreshData() {
+  return load(false);
+}
+
+export function boot() {
+  bind({
+    refreshData: refreshData,
+    ingest: ingest
+  });
+
+  load(true).then(function () {
+    setInterval(function () {
+      if (typeof document !== 'undefined' && !document.hidden) {
+        refreshData();
+      }
+    }, 3000);
+  });
+}
