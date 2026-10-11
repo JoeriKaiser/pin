@@ -619,6 +619,81 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
             );
             return;
         }
+        if subpath == "update" {
+            let valid_origin = origin_header.as_deref().is_some_and(|orig| {
+                orig == format!("http://127.0.0.1:{port}")
+                    || orig == format!("http://localhost:{port}")
+            });
+
+            if !valid_origin || !has_pin_action_header {
+                send_response(
+                    &mut stream,
+                    403,
+                    "Forbidden",
+                    "application/json; charset=utf-8",
+                    b"{\"error\":\"Forbidden request\"}",
+                    false,
+                    true,
+                    None,
+                );
+                return;
+            }
+
+            #[derive(Deserialize, Default)]
+            struct UpdatePayload {
+                #[serde(default)]
+                force: Option<bool>,
+            }
+            let force = if content_length > 0 {
+                let mut body_bytes = vec![0u8; content_length];
+                let _ = reader.read_exact(&mut body_bytes);
+                serde_json::from_slice::<UpdatePayload>(&body_bytes)
+                    .ok()
+                    .and_then(|p| p.force)
+                    .unwrap_or(false)
+            } else {
+                false
+            };
+
+            match crate::update::install_update(force) {
+                Ok(outcome) => {
+                    let out_json = serde_json::to_string(&outcome).unwrap_or_default();
+                    send_response(
+                        &mut stream,
+                        200,
+                        "OK",
+                        "application/json; charset=utf-8",
+                        out_json.as_bytes(),
+                        false,
+                        true,
+                        None,
+                    );
+                }
+                Err(e) => {
+                    #[derive(Serialize)]
+                    struct InstallErr {
+                        success: bool,
+                        error: String,
+                    }
+                    let out_json = serde_json::to_string(&InstallErr {
+                        success: false,
+                        error: e,
+                    })
+                    .unwrap_or_default();
+                    send_response(
+                        &mut stream,
+                        500,
+                        "Internal Server Error",
+                        "application/json; charset=utf-8",
+                        out_json.as_bytes(),
+                        false,
+                        true,
+                        None,
+                    );
+                }
+            }
+            return;
+        }
 
         if subpath == "items" || subpath == "items/create" {
             let valid_origin = origin_header.as_deref().is_some_and(|orig| {
@@ -1459,6 +1534,41 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
             b"Screenshot not found",
             false,
             true,
+            None,
+        );
+        return;
+    }
+
+    if subpath == "update" || subpath.starts_with("update?") {
+        let force = subpath.contains("force=true");
+        let update_res = crate::update::check_for_updates(!force);
+        let out_json = match update_res {
+            Ok(check) => serde_json::to_string(&check).unwrap_or_else(|_| "{}".to_string()),
+            Err(e) => {
+                #[derive(Serialize)]
+                struct UpdateErr<'a> {
+                    current_version: &'a str,
+                    latest_version: Option<String>,
+                    update_available: bool,
+                    error: String,
+                }
+                serde_json::to_string(&UpdateErr {
+                    current_version: crate::update::CURRENT_VERSION,
+                    latest_version: None,
+                    update_available: false,
+                    error: e,
+                })
+                .unwrap_or_else(|_| "{}".to_string())
+            }
+        };
+        send_response(
+            &mut stream,
+            200,
+            "OK",
+            "application/json; charset=utf-8",
+            out_json.as_bytes(),
+            false,
+            method == "GET",
             None,
         );
         return;
