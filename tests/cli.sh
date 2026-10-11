@@ -854,4 +854,40 @@ confirm_code=$(curl -s -o "$TMP/wt-confirm-run.json" -w "%{http_code}" -X POST -
 assert_contains "$(cat "$TMP/wt-confirm-run.json")" '"status":"started"'
 stop_view
 
+# 4. pin to-spec CLI command converts an idea into a task
+idea_item=$(PIN_VAULT="$TMP/view-vault" PIN_PROJECT=view "$PIN_BIN" add '# Explore Caching Idea' --kind technical --type idea --format json)
+idea_id=$(printf '%s' "$idea_item" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+[ -n "$idea_id" ] || fail "failed to create idea item"
+
+to_spec_res=$(PIN_VAULT="$TMP/view-vault" "$PIN_BIN" to-spec "$idea_id" --title "Cached Cache Layer" --format json)
+assert_contains "$to_spec_res" '"type":"task"'
+assert_contains "$to_spec_res" '"title":"Cached Cache Layer"'
+
+# 5. Idea Mode interactive run & chat endpoints
+start_view "$TMP/view-vault" "$TMP/idea-view.log" "$TMP/mock-agent.sh"
+idea_item2=$(PIN_VAULT="$TMP/view-vault" PIN_PROJECT=view "$PIN_BIN" add '# Broad Architecture Idea' --kind technical --type idea --format json)
+idea_id2=$(printf '%s' "$idea_item2" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+
+idea_origin=$(printf '%s' "$view_url" | cut -d/ -f1-3)
+start_idea_code=$(curl -s -o "$TMP/idea-run.json" -w "%{http_code}" -X POST -H "Origin: $idea_origin" -H 'Content-Type: application/json' -H 'X-Pin-Action: true' --data '{"mode":"idea"}' "${view_url}items/${idea_id2}/run")
+[ "$start_idea_code" = "200" ] || fail "expected 200 starting idea mode, got $start_idea_code: $(cat "$TMP/idea-run.json")"
+assert_contains "$(cat "$TMP/idea-run.json")" '"status":"started"'
+
+# Wait briefly for agent to complete turn 1 and enter waiting state
+sleep 0.15
+
+msg_code=$(curl -s -o "$TMP/idea-msg.json" -w "%{http_code}" -X POST -H "Origin: $idea_origin" -H 'Content-Type: application/json' -H 'X-Pin-Action: true' --data '{"message":"Let us use SQLite instead"}' "${view_url}items/${idea_id2}/message")
+[ "$msg_code" = "200" ] || fail "expected 200 sending message to idea agent, got $msg_code: $(cat "$TMP/idea-msg.json")"
+assert_contains "$(cat "$TMP/idea-msg.json")" '"status":"sent"'
+
+finish_code=$(curl -s -o "$TMP/idea-finish.json" -w "%{http_code}" -X POST -H "Origin: $idea_origin" -H 'Content-Type: application/json' -H 'X-Pin-Action: true' "${view_url}items/${idea_id2}/finish")
+[ "$finish_code" = "200" ] || fail "expected 200 finishing idea run, got $finish_code: $(cat "$TMP/idea-finish.json")"
+assert_contains "$(cat "$TMP/idea-finish.json")" '"status":"finished"'
+
+trans_code=$(curl -s -o "$TMP/idea-trans.json" -w "%{http_code}" -X POST -H "Origin: $idea_origin" -H 'Content-Type: application/json' -H 'X-Pin-Action: true' --data '{"action":"to_spec","title":"Agreed Spec Task"}' "${view_url}items/${idea_id2}/action")
+[ "$trans_code" = "200" ] || fail "expected 200 for action to_spec, got $trans_code: $(cat "$TMP/idea-trans.json")"
+assert_contains "$(cat "$TMP/idea-trans.json")" '"type":"task"'
+assert_contains "$(cat "$TMP/idea-trans.json")" '"title":"Agreed Spec Task"'
+stop_view
+
 echo "CLI tests passed"

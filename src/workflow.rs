@@ -519,6 +519,52 @@ pub fn close_item(
     Ok(meta)
 }
 
+pub fn transform_item_to_spec(
+    vault_path: &Path,
+    filename: &str,
+    actor: Option<&str>,
+    new_title: Option<&str>,
+    new_body: Option<&str>,
+    expect_revision: Option<u64>,
+) -> Result<IdeaMeta, WorkflowError> {
+    let (mut meta, _lock) = load_and_lock(vault_path, filename, expect_revision)?;
+    let old_type = meta.work_type();
+    let now = chrono::Utc::now().timestamp();
+    let actor_str = actor.unwrap_or("agent:default").to_string();
+
+    meta.item_type = Some(WorkType::Task);
+
+    if let Some(t) = new_title {
+        let trimmed = t.trim();
+        if !trimmed.is_empty() {
+            meta.title = trimmed.to_string();
+        }
+    }
+
+    if let Some(b) = new_body {
+        let trimmed = b.trim();
+        if !trimmed.is_empty() {
+            meta.body = if trimmed.starts_with('#') {
+                format!("{trimmed}\n")
+            } else {
+                format!("# {}\n\n{trimmed}\n", meta.title)
+            };
+        }
+    }
+
+    meta.activity.push(ActivityEvent {
+        at: now,
+        actor: actor_str,
+        action: "transform".to_string(),
+        from: None,
+        to: None,
+        note: Some(format!("Transformed {old_type} into spec task")),
+    });
+
+    save_item(vault_path, &mut meta)?;
+    Ok(meta)
+}
+
 pub fn archive_item(
     vault_path: &Path,
     filename: &str,
@@ -1248,5 +1294,40 @@ mod tests {
         assert_eq!(unarchived.resolution, None);
         assert_eq!(unarchived.current_revision(), 3);
         assert_eq!(unarchived.activity.last().unwrap().action, "unarchived");
+    }
+
+    #[test]
+    fn test_transform_item_to_spec() {
+        let dir = tempdir().unwrap();
+        let filename = "idea123.md".to_string();
+        let item = IdeaMeta::new_work_item(
+            "idea123".to_string(),
+            "test".to_string(),
+            "Initial Idea".to_string(),
+            "Broad concept".to_string(),
+            Kind::Technical,
+            WorkType::Idea,
+            Status::Created,
+            None,
+            None,
+            Some("human:creator".to_string()),
+        );
+        fs::write(dir.path().join(&filename), render_full_document(&item)).unwrap();
+
+        let transformed = transform_item_to_spec(
+            dir.path(),
+            &filename,
+            Some("agent:omp"),
+            Some("Refined Spec Title"),
+            Some("## Problem & Context\nDetails\n\n## Acceptance Criteria\n- [ ] Done"),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(transformed.work_type(), WorkType::Task);
+        assert_eq!(transformed.title, "Refined Spec Title");
+        assert!(transformed.body.contains("## Problem & Context"));
+        assert_eq!(transformed.current_revision(), 2);
+        assert_eq!(transformed.activity.last().unwrap().action, "transform");
     }
 }

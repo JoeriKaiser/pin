@@ -89,6 +89,10 @@ struct ActionPayload {
     force: Option<bool>,
     #[serde(default)]
     expect_revision: Option<u64>,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    body: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -97,6 +101,10 @@ struct RunPayload {
     pub use_worktree: Option<bool>,
     #[serde(default)]
     pub mode: Option<String>,
+}
+#[derive(Deserialize)]
+struct MessagePayload {
+    message: String,
 }
 #[derive(Deserialize)]
 struct CreateItemPayload {
@@ -869,6 +877,14 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                             }
                         }
                     }
+                    "transform" | "to_spec" => workflow::transform_item_to_spec(
+                        &snapshot.vault_path,
+                        &filename,
+                        Some(actor_to_use),
+                        payload.title.as_deref(),
+                        payload.body.as_deref(),
+                        payload.expect_revision,
+                    ),
                     other => Err(workflow::WorkflowError::UnknownAction(other.to_string())),
                 };
 
@@ -986,12 +1002,35 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                     || payload.mode.as_deref() == Some("commit+pr")
                 {
                     snapshot.acp_manager.start_commit_pr_run(id)
-                } else {
+                } else if payload.mode.as_deref() == Some("idea") {
                     snapshot
                         .acp_manager
-                        .start_run(id, payload.use_worktree.unwrap_or(false))
-                };
+                        .start_idea_run(id, payload.use_worktree.unwrap_or(false))
+                } else {
+                    let is_idea = crate::vault::resolve_selector(&snapshot.vault_path, id)
+                        .ok()
+                        .and_then(|f| std::fs::read_to_string(snapshot.vault_path.join(f)).ok())
+                        .and_then(|content| {
+                            let mut issues = Vec::new();
+                            crate::frontmatter::parse_front_matter_detailed(
+                                id,
+                                &content,
+                                &mut issues,
+                            )
+                        })
+                        .map(|m| m.work_type() == WorkType::Idea)
+                        .unwrap_or(false);
 
+                    if is_idea {
+                        snapshot
+                            .acp_manager
+                            .start_idea_run(id, payload.use_worktree.unwrap_or(false))
+                    } else {
+                        snapshot
+                            .acp_manager
+                            .start_run(id, payload.use_worktree.unwrap_or(false))
+                    }
+                };
                 match run_result {
                     Ok(()) => {
                         send_response(
@@ -1051,6 +1090,171 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                             "application/json; charset=utf-8",
                             body.as_bytes(),
                             true,
+                            true,
+                            None,
+                        );
+                        return;
+                    }
+                }
+            }
+
+            if let Some(id_part) = stripped.strip_suffix("/idea") {
+                let id = id_part.trim();
+                let mut body_bytes = vec![0u8; content_length];
+                if content_length > 0 && reader.read_exact(&mut body_bytes).is_err() {
+                    send_response(
+                        &mut stream,
+                        400,
+                        "Bad Request",
+                        "application/json; charset=utf-8",
+                        b"{\"error\":\"Failed to read body\"}",
+                        false,
+                        true,
+                        None,
+                    );
+                    return;
+                }
+
+                let payload: RunPayload = if content_length > 0 {
+                    serde_json::from_slice(&body_bytes).unwrap_or(RunPayload {
+                        use_worktree: None,
+                        mode: Some("idea".to_string()),
+                    })
+                } else {
+                    RunPayload {
+                        use_worktree: None,
+                        mode: Some("idea".to_string()),
+                    }
+                };
+
+                match snapshot
+                    .acp_manager
+                    .start_idea_run(id, payload.use_worktree.unwrap_or(false))
+                {
+                    Ok(()) => {
+                        send_response(
+                            &mut stream,
+                            200,
+                            "OK",
+                            "application/json; charset=utf-8",
+                            b"{\"status\":\"started\",\"mode\":\"idea\"}",
+                            true,
+                            true,
+                            None,
+                        );
+                        return;
+                    }
+                    Err(err) => {
+                        let (status_code, reason, body) = start_failure_response(&err);
+                        send_response(
+                            &mut stream,
+                            status_code,
+                            reason,
+                            "application/json; charset=utf-8",
+                            body.as_bytes(),
+                            true,
+                            true,
+                            None,
+                        );
+                        return;
+                    }
+                }
+            }
+
+            if let Some(id_part) = stripped
+                .strip_suffix("/message")
+                .or_else(|| stripped.strip_suffix("/chat"))
+            {
+                let id = id_part.trim();
+                let mut body_bytes = vec![0u8; content_length];
+                if content_length > 0 && reader.read_exact(&mut body_bytes).is_err() {
+                    send_response(
+                        &mut stream,
+                        400,
+                        "Bad Request",
+                        "application/json; charset=utf-8",
+                        b"{\"error\":\"Failed to read body\"}",
+                        false,
+                        true,
+                        None,
+                    );
+                    return;
+                }
+
+                let payload: MessagePayload = match serde_json::from_slice(&body_bytes) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        let msg = format!("{{\"error\":\"Invalid JSON: {e}\"}}");
+                        send_response(
+                            &mut stream,
+                            400,
+                            "Bad Request",
+                            "application/json; charset=utf-8",
+                            msg.as_bytes(),
+                            false,
+                            true,
+                            None,
+                        );
+                        return;
+                    }
+                };
+
+                match snapshot.acp_manager.send_message(id, &payload.message) {
+                    Ok(()) => {
+                        send_response(
+                            &mut stream,
+                            200,
+                            "OK",
+                            "application/json; charset=utf-8",
+                            b"{\"status\":\"sent\"}",
+                            true,
+                            true,
+                            None,
+                        );
+                        return;
+                    }
+                    Err(err) => {
+                        let msg = format!("{{\"error\":\"{err}\"}}");
+                        send_response(
+                            &mut stream,
+                            400,
+                            "Bad Request",
+                            "application/json; charset=utf-8",
+                            msg.as_bytes(),
+                            false,
+                            true,
+                            None,
+                        );
+                        return;
+                    }
+                }
+            }
+
+            if let Some(id_part) = stripped.strip_suffix("/finish") {
+                let id = id_part.trim();
+                match snapshot.acp_manager.finish_run(id) {
+                    Ok(()) => {
+                        send_response(
+                            &mut stream,
+                            200,
+                            "OK",
+                            "application/json; charset=utf-8",
+                            b"{\"status\":\"finished\"}",
+                            true,
+                            true,
+                            None,
+                        );
+                        return;
+                    }
+                    Err(err) => {
+                        let msg = format!("{{\"error\":\"{err}\"}}");
+                        send_response(
+                            &mut stream,
+                            400,
+                            "Bad Request",
+                            "application/json; charset=utf-8",
+                            msg.as_bytes(),
+                            false,
                             true,
                             None,
                         );
@@ -1569,5 +1773,30 @@ mod tests {
         assert_eq!(read_back, fake_bytes);
 
         let _ = std::fs::remove_file(&file_path);
+    }
+
+    #[test]
+    fn test_action_payload_to_spec() {
+        let json =
+            r###"{"action":"to_spec","title":"New Spec Title","body":"## Problem\nDetails"}"###;
+        let payload: ActionPayload = serde_json::from_str(json).unwrap();
+        assert_eq!(payload.action, "to_spec");
+        assert_eq!(payload.title.as_deref(), Some("New Spec Title"));
+        assert_eq!(payload.body.as_deref(), Some("## Problem\nDetails"));
+    }
+
+    #[test]
+    fn test_message_payload() {
+        let json = r#"{"message":"Hello agent, let us discuss."}"#;
+        let payload: MessagePayload = serde_json::from_str(json).unwrap();
+        assert_eq!(payload.message, "Hello agent, let us discuss.");
+    }
+
+    #[test]
+    fn test_run_payload_idea_mode() {
+        let json = r#"{"mode":"idea","use_worktree":true}"#;
+        let payload: RunPayload = serde_json::from_str(json).unwrap();
+        assert_eq!(payload.mode.as_deref(), Some("idea"));
+        assert_eq!(payload.use_worktree, Some(true));
     }
 }

@@ -40,7 +40,10 @@
           <span class="board-col-count" id="count-created">0</span>
         </div>
         <div id="quick-add-container" class="quick-add-container">
-          <button id="quick-add-trigger" class="quick-add-trigger" type="button">+ Add task or spec ticket…</button>
+          <div class="quick-add-triggers">
+            <button id="quick-add-trigger" class="quick-add-trigger" type="button">+ Add task or spec ticket…</button>
+            <button id="quick-idea-trigger" class="quick-add-trigger quick-idea-btn" type="button" title="Create an idea ticket to explore with an agent">+ Idea…</button>
+          </div>
           <form id="quick-add-form" class="quick-add-form" hidden>
             <div class="quick-add-header">
               <input id="quick-add-input" class="quick-add-input" type="text" placeholder="Task or spec title…" autocomplete="off" required>
@@ -212,6 +215,15 @@
                 <button id="btn-copy-tool-output" class="control text-button" type="button">Copy</button>
               </div>
               <pre><code id="inspector-output" class="inspector-code"></code></pre>
+            </div>
+          </div>
+        </div>
+        <div id="agent-chat-container" class="agent-chat-container" hidden>
+          <div class="agent-chat-input-row">
+            <textarea id="agent-chat-input" class="agent-chat-input" rows="2" placeholder="Reply to agent or explore ideas… (Press Enter to send, Shift+Enter for newline)" aria-label="Message to agent"></textarea>
+            <div class="agent-chat-actions">
+              <button id="btn-agent-finish-idea" class="control text-button" type="button" title="Finish Idea discussion and record outcome">Finish Discussion</button>
+              <button id="btn-agent-chat-send" class="action-btn primary" type="button">Send</button>
             </div>
           </div>
         </div>

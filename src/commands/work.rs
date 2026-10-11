@@ -575,3 +575,48 @@ pub fn relate(args: &[String], command: &str, vault_path: &Path) -> CliResult<()
     }
     Ok(())
 }
+
+pub fn to_spec(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> {
+    let mut reader = ArgReader::new(args, command);
+    let selector = reader.parse_selector()?;
+    let mut actor = None;
+    let mut title = None;
+    let mut body = None;
+    let mut expect_revision = None;
+    let mut format = None;
+
+    while let Some(arg) = reader.peek()? {
+        match arg {
+            "--actor" => actor = Some(reader.next_val("--actor")?),
+            "--title" => title = Some(reader.next_val("--title")?),
+            "--body" => body = Some(reader.next_val("--body")?),
+            "--expect-revision" => {
+                let val = reader.next_val("--expect-revision")?;
+                expect_revision = Some(
+                    val.parse::<u64>()
+                        .map_err(|_| CliError::usage("--expect-revision requires an integer"))?,
+                );
+            }
+            "--format" => format = Some(reader.parse_format(false)?),
+            _ => return Err(CliError::usage(format!("Unknown flag '{arg}'"))),
+        }
+        reader.idx += 1;
+    }
+
+    let filename =
+        resolve_selector(vault_path, selector).map_err(|e| CliError::usage(e.to_string()))?;
+    let actor_str = resolve_actor(actor);
+    let updated = workflow::transform_item_to_spec(
+        vault_path,
+        &filename,
+        Some(&actor_str),
+        title,
+        body,
+        expect_revision,
+    )
+    .map_err(|e| CliError::usage(e.to_string()))?;
+
+    let fmt = format.unwrap_or_else(|| default_format(OutputFormat::Plain));
+    emit_single_idea(&updated, fmt);
+    Ok(())
+}

@@ -33,7 +33,7 @@
     countDoneReview: $('count-done_review'),
     countClosed: $('count-closed'),
     btnNewTicket: $('btn-new-ticket'),
-    quickAddContainer: $('quick-add-container'), quickAddTrigger: $('quick-add-trigger'),
+    quickAddContainer: $('quick-add-container'), quickAddTrigger: $('quick-add-trigger'), quickIdeaTrigger: $('quick-idea-trigger'),
     quickAddForm: $('quick-add-form'), quickAddInput: $('quick-add-input'),
     quickAddExpandBtn: $('quick-add-expand-btn'), quickAddCloseBtn: $('quick-add-close-btn'),
     quickAddBody: $('quick-add-body'), quickAddType: $('quick-add-type'), quickAddKind: $('quick-add-kind'),
@@ -77,6 +77,10 @@
     btnToggleTools: $('btn-toggle-tools'),
     agentLogInfo: $('agent-log-info'),
     trajectoryStream: $('agent-trajectory-stream'),
+    agentChatContainer: $('agent-chat-container'),
+    agentChatInput: $('agent-chat-input'),
+    btnAgentChatSend: $('btn-agent-chat-send'),
+    btnAgentFinishIdea: $('btn-agent-finish-idea'),
     metricDuration: $('agent-metric-duration'),
     metricTurns: $('agent-metric-turns'),
     metricCalls: $('agent-metric-calls'),
@@ -369,8 +373,10 @@
    }
 
   function sendRunItem(id, useWorktree, errorPrefix) {
-    showToast('Starting agent...', false);
+    var mode = (arguments[3] === 'idea' || (typeof errorPrefix === 'string' && errorPrefix.indexOf('Idea') !== -1)) ? 'idea' : undefined;
+    showToast(mode === 'idea' ? 'Starting Idea agent...' : 'Starting agent...', false);
     var payload = useWorktree ? { use_worktree: true } : {};
+    if (mode) payload.mode = mode;
     return fetch(BASE + 'items/' + encodeURIComponent(id) + '/run', {
       method: 'POST',
       headers: {
@@ -396,7 +402,7 @@
     })
     .then(function (data) {
       if (!data) return;
-      showToast('Agent started', false);
+      showToast(mode === 'idea' ? 'Idea agent started' : 'Agent started', false);
       updateActiveRuns();
       openAgentDrawer(id);
       setReaderTab('trajectory');
@@ -445,6 +451,106 @@
         showToast('Commit & PR failed: ' + err.message, true);
       }
     });
+  }
+
+  function convertIdeaToSpec(item) {
+    var rev = item.revision;
+    showToast('Converting to spec ticket...', false);
+    return sendAction(item.id, { action: 'to_spec', expect_revision: rev })
+      .then(function () {
+        showToast('Converted to spec ticket', false);
+      })
+      .catch(function (err) {
+        showToast('Conversion failed: ' + err.message, true);
+      });
+  }
+
+  function sendAgentChatMessage(itemId) {
+    if (!els.agentChatInput) return;
+    var message = els.agentChatInput.value.trim();
+    if (!message) return;
+
+    if (els.btnAgentChatSend) els.btnAgentChatSend.disabled = true;
+    if (els.agentChatInput) els.agentChatInput.disabled = true;
+
+    appendTrajectoryUserRow(message);
+
+    fetch(BASE + 'items/' + encodeURIComponent(itemId) + '/message', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Pin-Action': 'true'
+      },
+      body: JSON.stringify({ message: message })
+    })
+    .then(function (res) {
+      if (!res.ok) {
+        return res.json().then(function (err) {
+          throw new Error(err.error || 'Failed to send message');
+        });
+      }
+      return res.json();
+    })
+    .then(function () {
+      if (els.agentChatInput) {
+        els.agentChatInput.value = '';
+        els.agentChatInput.disabled = false;
+        els.agentChatInput.focus();
+      }
+      if (els.btnAgentChatSend) els.btnAgentChatSend.disabled = false;
+      if (els.agentStatusPill) {
+        text(els.agentStatusPill, 'Thinking…');
+        els.agentStatusPill.className = 'agent-status-pill status-running';
+      }
+    })
+    .catch(function (err) {
+      showToast(err.message, true);
+      if (els.agentChatInput) els.agentChatInput.disabled = false;
+      if (els.btnAgentChatSend) els.btnAgentChatSend.disabled = false;
+    });
+  }
+
+  function finishAgentDiscussion(itemId) {
+    if (!confirm('Finish the discussion and finalize the idea session?')) return;
+    showToast('Finalizing discussion…', false);
+    fetch(BASE + 'items/' + encodeURIComponent(itemId) + '/finish', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Pin-Action': 'true'
+      }
+    })
+    .then(function (res) {
+      if (!res.ok) {
+        return res.json().then(function (err) {
+          throw new Error(err.error || 'Failed to finish run');
+        });
+      }
+      return res.json();
+    })
+    .then(function () {
+      showToast('Idea discussion finalized', false);
+      if (els.agentChatContainer) els.agentChatContainer.hidden = true;
+      refreshData();
+    })
+    .catch(function (err) {
+      showToast(err.message, true);
+    });
+  }
+
+  function appendTrajectoryUserRow(content) {
+    if (!els.trajectoryStream) return;
+    var row = node('div', 'trajectory-row trajectory-row-user');
+    var gutter = node('div', 'trajectory-gutter', '●');
+    var badge = node('span', 'trajectory-badge badge-user', 'USER');
+    var body = node('div', 'trajectory-body');
+    var textEl = node('div', 'trajectory-user-text', content);
+    body.appendChild(textEl);
+    row.appendChild(gutter);
+    row.appendChild(badge);
+    row.appendChild(body);
+    els.trajectoryStream.appendChild(row);
+    scrollTrajectoryStreamToBottom();
   }
 
   var SPEC_SNIPPETS = {
@@ -575,9 +681,11 @@
     });
   }
 
-  function expandQuickAdd(focusTarget) {
+  function expandQuickAdd(focusTarget, defaultType) {
     if (els.quickAddTrigger) els.quickAddTrigger.hidden = true;
+    if (els.quickIdeaTrigger) els.quickIdeaTrigger.hidden = true;
     if (els.quickAddForm) els.quickAddForm.hidden = false;
+    if (defaultType && els.quickAddType) els.quickAddType.value = defaultType;
     if (focusTarget === 'body' && els.quickAddBody && els.quickAddBody.focus) {
       els.quickAddBody.focus();
     } else if (els.quickAddInput && els.quickAddInput.focus) {
@@ -588,6 +696,7 @@
   function collapseQuickAdd() {
     if (els.quickAddForm) els.quickAddForm.hidden = true;
     if (els.quickAddTrigger) els.quickAddTrigger.hidden = false;
+    if (els.quickIdeaTrigger) els.quickIdeaTrigger.hidden = false;
   }
 
   function resetQuickAdd() {
@@ -1359,7 +1468,19 @@
     }
 
     if (st === 'created') {
-      btn('Move to Planned', true, function () {
+      if (item.type === 'idea') {
+        btn('Start Idea Mode', true, function () {
+          sendRunItem(item.id, false, 'Failed to start Idea Mode: ', 'idea');
+        });
+        btn('Convert to Spec', false, function () {
+          convertIdeaToSpec(item);
+        });
+      } else {
+        btn('Discuss in Idea Mode', false, function () {
+          sendRunItem(item.id, false, 'Failed to start Idea Mode: ', 'idea');
+        });
+      }
+      btn('Move to Planned', item.type !== 'idea', function () {
         sendAction(item.id, { action: 'transition', to: 'planned', expect_revision: rev })
           .then(function () { showToast('Moved to Planned', false); })
           .catch(function (err) { showToast('Action failed: ' + err.message, true); });
@@ -1367,9 +1488,21 @@
     }
 
     if (st === 'planned') {
-      btn('Start Agent', true, function () {
-        openWorktreeModal(item, null);
-      });
+      if (item.type === 'idea') {
+        btn('Start Idea Mode', true, function () {
+          sendRunItem(item.id, false, 'Failed to start Idea Mode: ', 'idea');
+        });
+        btn('Convert to Spec', false, function () {
+          convertIdeaToSpec(item);
+        });
+      } else {
+        btn('Start Agent', true, function () {
+          openWorktreeModal(item, null);
+        });
+        btn('Discuss in Idea Mode', false, function () {
+          sendRunItem(item.id, false, 'Failed to start Idea Mode: ', 'idea');
+        });
+      }
       btn('Mark Blocked', false, function () {
         openBlockedModal(item);
       });
@@ -1381,9 +1514,18 @@
           openAgentDrawer(item.id);
         });
       } else {
-        btn('Resume Agent', true, function () {
-          openWorktreeModal(item, null);
-        });
+        if (item.type === 'idea') {
+          btn('Resume Idea Mode', true, function () {
+            sendRunItem(item.id, false, 'Failed to resume Idea Mode: ', 'idea');
+          });
+          btn('Convert to Spec', false, function () {
+            convertIdeaToSpec(item);
+          });
+        } else {
+          btn('Resume Agent', true, function () {
+            openWorktreeModal(item, null);
+          });
+        }
       }
       btn('Complete with Evidence', !state.activeRuns.has(item.id), function () {
         openCompleteModal(item);
@@ -2282,6 +2424,14 @@
       state.trajectory.timer = setInterval(function () {
         updateDurationDisplay();
       }, 1000);
+      if (els.agentChatContainer) {
+        els.agentChatContainer.hidden = false;
+        if (els.agentChatInput) els.agentChatInput.value = '';
+      }
+    } else {
+      if (els.agentChatContainer) {
+        els.agentChatContainer.hidden = true;
+      }
     }
 
     var receivedEvents = 0;
@@ -2371,6 +2521,34 @@
   function handleAgentStreamEvent(data) {
     if (!data) return;
 
+    if (data.type === 'waiting_for_user') {
+      if (els.agentChatContainer) {
+        els.agentChatContainer.hidden = false;
+        if (els.agentChatInput) {
+          els.agentChatInput.disabled = false;
+          els.agentChatInput.focus();
+        }
+        if (els.btnAgentChatSend) {
+          els.btnAgentChatSend.disabled = false;
+        }
+      }
+      if (els.agentStatusPill) {
+        text(els.agentStatusPill, 'Waiting for reply');
+        els.agentStatusPill.className = 'agent-status-pill status-running';
+      }
+      appendTrajectoryContextRow('Agent is waiting for your reply.');
+      scrollTrajectoryStreamToBottom();
+      return;
+    }
+
+    if (data.type === 'user_message') {
+      var content = data.text || (data.update && data.update.content) || '';
+      if (content) {
+        appendTrajectoryUserRow(content);
+      }
+      return;
+    }
+
     if (data.type === 'run_timing') {
       if (state.trajectory) {
         if (data.startedAt != null) {
@@ -2407,6 +2585,9 @@
         state.currentStream.close();
         state.currentStream = null;
       }
+      if (els.agentChatContainer) {
+        els.agentChatContainer.hidden = true;
+      }
       renderSwimlaneSvg();
       updateActiveRuns();
       refreshData();
@@ -2437,13 +2618,13 @@
         state.currentStream.close();
         state.currentStream = null;
       }
-      renderSwimlaneSvg();
-      updateActiveRuns();
+      if (els.agentChatContainer) {
+        els.agentChatContainer.hidden = true;
+      }
       refreshData();
       cacheTrajectory(state.currentStreamingId);
       return;
     }
-
     var update = (data.params && data.params.update) ? data.params.update : (data.update || data);
     var updateType = (update && typeof update === 'object' && (update.sessionUpdate || update.type)) || (data.params && (data.params.sessionUpdate || data.params.type)) || data.sessionUpdate || data.type;
 
@@ -3028,6 +3209,30 @@
         }
       });
     }
+    if (els.btnAgentChatSend) {
+      els.btnAgentChatSend.addEventListener('click', function () {
+        if (state.currentStreamingId) {
+          sendAgentChatMessage(state.currentStreamingId);
+        }
+      });
+    }
+    if (els.btnAgentFinishIdea) {
+      els.btnAgentFinishIdea.addEventListener('click', function () {
+        if (state.currentStreamingId) {
+          finishAgentDiscussion(state.currentStreamingId);
+        }
+      });
+    }
+    if (els.agentChatInput) {
+      els.agentChatInput.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          if (state.currentStreamingId) {
+            sendAgentChatMessage(state.currentStreamingId);
+          }
+        }
+      });
+    }
     if (els.trajectorySearch) {
       els.trajectorySearch.addEventListener('input', function () {
         if (!state.trajectory) return;
@@ -3108,6 +3313,11 @@
     if (els.quickAddTrigger) {
       els.quickAddTrigger.addEventListener('click', function () {
         expandQuickAdd('title');
+      });
+    }
+    if (els.quickIdeaTrigger) {
+      els.quickIdeaTrigger.addEventListener('click', function () {
+        expandQuickAdd('title', 'idea');
       });
     }
     if (els.quickAddCloseBtn) {
