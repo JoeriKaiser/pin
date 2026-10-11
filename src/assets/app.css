@@ -1092,16 +1092,9 @@ a:hover {
   align-items: center;
 }
 
-.quick-idea-btn {
-  width: auto;
-  flex-shrink: 0;
-  padding: 0 var(--space-2-5);
-  color: var(--accent);
-}
-
-
 .quick-add-trigger {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   border: 1px dashed var(--line-strong);
   border-radius: var(--radius-sm);
   background: var(--surface-raised);
@@ -1114,6 +1107,9 @@ a:hover {
   display: flex;
   align-items: center;
   gap: var(--space-1-5);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
 }
 
@@ -1121,6 +1117,20 @@ a:hover {
   background: var(--soft);
   border-color: var(--accent);
   color: var(--ink);
+}
+
+.quick-idea-btn {
+  flex: 0 0 auto;
+  width: auto;
+  padding: var(--space-2) var(--space-2-5);
+  color: var(--accent);
+  justify-content: center;
+}
+
+.quick-idea-btn:hover {
+  background: var(--soft);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .quick-add-form {
