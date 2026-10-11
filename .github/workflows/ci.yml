@@ -35,6 +35,8 @@ jobs:
       - name: Run CLI tests
         run: ./tests/cli.sh
 
+      - name: Run viewer trajectory tests
+        run: node tests/viewer_trajectory.js
   unit:
     name: Unit tests
     runs-on: ubuntu-latest

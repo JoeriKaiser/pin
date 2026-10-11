@@ -313,6 +313,88 @@ fn send_response(
     }
 }
 
+const ASSETS: &[(&str, &str, &str)] = &[
+    ("app.css", "text/css; charset=utf-8", APP_CSS),
+    ("app.js", "text/javascript; charset=utf-8", APP_JS),
+    ("marked.min.js", "text/javascript; charset=utf-8", MARKED_JS),
+    ("purify.min.js", "text/javascript; charset=utf-8", PURIFY_JS),
+    (
+        "modules/config.js",
+        "text/javascript; charset=utf-8",
+        MODULES_CONFIG_JS,
+    ),
+    (
+        "modules/state.js",
+        "text/javascript; charset=utf-8",
+        MODULES_STATE_JS,
+    ),
+    (
+        "modules/dom.js",
+        "text/javascript; charset=utf-8",
+        MODULES_DOM_JS,
+    ),
+    (
+        "modules/api.js",
+        "text/javascript; charset=utf-8",
+        MODULES_API_JS,
+    ),
+    (
+        "modules/formatters.js",
+        "text/javascript; charset=utf-8",
+        MODULES_FORMATTERS_JS,
+    ),
+    (
+        "modules/markdown.js",
+        "text/javascript; charset=utf-8",
+        MODULES_MARKDOWN_JS,
+    ),
+    (
+        "modules/router.js",
+        "text/javascript; charset=utf-8",
+        MODULES_ROUTER_JS,
+    ),
+    (
+        "modules/media.js",
+        "text/javascript; charset=utf-8",
+        MODULES_MEDIA_JS,
+    ),
+    (
+        "modules/board.js",
+        "text/javascript; charset=utf-8",
+        MODULES_BOARD_JS,
+    ),
+    (
+        "modules/detail.js",
+        "text/javascript; charset=utf-8",
+        MODULES_DETAIL_JS,
+    ),
+    (
+        "modules/forms.js",
+        "text/javascript; charset=utf-8",
+        MODULES_FORMS_JS,
+    ),
+    (
+        "modules/agent.js",
+        "text/javascript; charset=utf-8",
+        MODULES_AGENT_JS,
+    ),
+    (
+        "modules/bind.js",
+        "text/javascript; charset=utf-8",
+        MODULES_BIND_JS,
+    ),
+    (
+        "modules/boot.js",
+        "text/javascript; charset=utf-8",
+        MODULES_BOOT_JS,
+    ),
+    (
+        "modules/test-hooks.js",
+        "text/javascript; charset=utf-8",
+        MODULES_TEST_HOOKS_JS,
+    ),
+];
+
 fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16) {
     let _ = stream.set_read_timeout(Some(CLIENT_TIMEOUT));
     let _ = stream.set_write_timeout(Some(CLIENT_TIMEOUT));
@@ -1587,29 +1669,24 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
     }
 
     let modified_html;
-    let (content_type, body): (&str, &[u8]) = match subpath {
-        "" | "index.html" => {
-            let token_base = format!("data-base=\"/{}/\"", snapshot.token);
-            modified_html = INDEX_HTML.replace("data-base=\"\"", &token_base);
-            ("text/html; charset=utf-8", modified_html.as_bytes())
-        }
-        "app.css" => ("text/css; charset=utf-8", APP_CSS.as_bytes()),
-        "app.js" => ("text/javascript; charset=utf-8", APP_JS.as_bytes()),
-        "marked.min.js" => ("text/javascript; charset=utf-8", MARKED_JS.as_bytes()),
-        "purify.min.js" => ("text/javascript; charset=utf-8", PURIFY_JS.as_bytes()),
-        _ => {
-            send_response(
-                &mut stream,
-                404,
-                "Not Found",
-                "text/plain; charset=utf-8",
-                b"Not Found",
-                false,
-                true,
-                None,
-            );
-            return;
-        }
+    let (content_type, body): (&str, &[u8]) = if subpath.is_empty() || subpath == "index.html" {
+        let token_base = format!("data-base=\"/{}/\"", snapshot.token);
+        modified_html = INDEX_HTML.replace("data-base=\"\"", &token_base);
+        ("text/html; charset=utf-8", modified_html.as_bytes())
+    } else if let Some((_, ct, content)) = ASSETS.iter().find(|(path, _, _)| *path == subpath) {
+        (*ct, content.as_bytes())
+    } else {
+        send_response(
+            &mut stream,
+            404,
+            "Not Found",
+            "text/plain; charset=utf-8",
+            b"Not Found",
+            false,
+            true,
+            None,
+        );
+        return;
     };
 
     send_response(
