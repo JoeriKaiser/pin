@@ -102,3 +102,18 @@ export function uploadScreenshot(file) {
     body: file
   });
 }
+
+export function fetchUpdate(force) {
+  return fetch(BASE + 'update' + (force ? '?force=true' : ''));
+}
+
+export function sendUpdate(payload) {
+  return fetch(BASE + 'update', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Pin-Action': 'true'
+    },
+    body: JSON.stringify(payload || {})
+  });
+}

@@ -1,6 +1,6 @@
 import { state, find } from './state.js';
 import { els, $ } from './dom.js';
-import { sendCancel, sendRun, sendCommitPr, sendMessage, sendFinish } from './api.js';
+import { sendCancel, sendRun, sendCommitPr, sendMessage, sendFinish, sendUpdate } from './api.js';
 import { text, showToast } from './formatters.js';
 import { setRoute, applyRoute, setOnRouteChanged } from './router.js';
 import { insertSnippetIntoTextarea, handleScreenshotPaste } from './media.js';
@@ -128,11 +128,47 @@ export function finishIdeaDiscussion(itemId) {
     });
 }
 
+export function handleUpdateInstall() {
+  if (!els.btnUpdate) return;
+  els.btnUpdate.disabled = true;
+  els.btnUpdate.classList.add('updating');
+  text(els.btnUpdate, 'Updating…');
+  showToast('Downloading and installing pin update…', false);
+
+  return sendUpdate()
+    .then(function (res) {
+      return res.json().then(function (data) {
+        if (!res.ok) {
+          throw new Error(data && data.error ? data.error : 'Update failed');
+        }
+        return data;
+      });
+    })
+    .then(function (data) {
+      els.btnUpdate.classList.remove('updating');
+      els.btnUpdate.classList.add('updated');
+      text(els.btnUpdate, 'Updated to v' + (data.updated_version || 'latest'));
+      showToast('pin updated successfully! Restart viewer to apply.', false);
+      if (els.updateFooter) {
+        text(els.updateFooter, 'Updated to v' + (data.updated_version || 'latest') + '. Restart viewer.');
+      }
+      return data;
+    })
+    .catch(function (err) {
+      els.btnUpdate.disabled = false;
+      els.btnUpdate.classList.remove('updating');
+      text(els.btnUpdate, 'Retry Update');
+      showToast('Update failed: ' + (err.message || err), true);
+      throw err;
+    });
+}
+
 export function bindNavigation() {
   if (els.viewBoardBtn) els.viewBoardBtn.addEventListener('click', function () { setViewMode('board'); });
   if (els.viewDetailBtn) els.viewDetailBtn.addEventListener('click', function () { setViewMode('detail'); });
   if (els.back) els.back.addEventListener('click', function () { setRoute(null); });
   if (els.btnNewTicket) els.btnNewTicket.addEventListener('click', function () { openSpecModal(); });
+  if (els.btnUpdate) els.btnUpdate.addEventListener('click', handleUpdateInstall);
   window.addEventListener('hashchange', applyRoute);
 }
 

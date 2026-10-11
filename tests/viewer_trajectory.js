@@ -868,6 +868,82 @@ async function runHarness() {
   assert.strictEqual(plannedCard.querySelector('.btn-commit-pr'), null, 'Planned card lacks Commit + PR');
   console.log('PASS: Commit + PR quick action buttons verified');
 
+
+  console.log('\n--- 11. Testing Auto Update Check & Update Button ---');
+  const checkUpdate = testExports.checkUpdate;
+  const handleUpdateInstall = testExports.handleUpdateInstall;
+  assert.ok(typeof checkUpdate === 'function', 'checkUpdate is exported');
+  assert.ok(typeof handleUpdateInstall === 'function', 'handleUpdateInstall is exported');
+
+  const btnUpdateEl = documentMock.getElementById('btn-update');
+  const updateVersionEl = documentMock.getElementById('update-version');
+  const updateFooterEl = documentMock.getElementById('update-footer');
+  const updateToastEl = documentMock.getElementById('toast');
+
+  // Test 1: Update available
+  fetchStub = function (url) {
+    if (url.includes('update')) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({
+          current_version: '2.2.0',
+          latest_version: '2.3.0',
+          update_available: true
+        })
+      });
+    }
+    return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve([]) });
+  };
+
+  await checkUpdate();
+  assert.strictEqual(btnUpdateEl.hidden, false, 'Update button visible when update available');
+  assert.ok(updateVersionEl.textContent.includes('2.3.0'), 'Update version text contains 2.3.0');
+  assert.ok(updateFooterEl.textContent.includes('2.3.0'), 'Footer contains update version');
+
+  // Test 2: Update install success
+  fetchStub = function (url, opts) {
+    if (url.includes('update') && opts && opts.method === 'POST') {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({
+          success: true,
+          previous_version: '2.2.0',
+          updated_version: '2.3.0',
+          message: 'pin successfully updated to version 2.3.0'
+        })
+      });
+    }
+    return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve([]) });
+  };
+
+  await handleUpdateInstall();
+  assert.ok(btnUpdateEl.classList.contains('updated'), 'Button has updated class after install');
+  assert.ok(btnUpdateEl.textContent.includes('2.3.0'), 'Button text shows updated version');
+  assert.ok(updateToastEl.textContent.includes('pin updated successfully'), 'Toast confirms update success');
+
+  // Test 3: Up to date (no update available)
+  fetchStub = function (url) {
+    if (url.includes('update')) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({
+          current_version: '2.3.0',
+          latest_version: '2.3.0',
+          update_available: false
+        })
+      });
+    }
+    return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve([]) });
+  };
+
+  await checkUpdate();
+  assert.strictEqual(btnUpdateEl.hidden, true, 'Update button hidden when up to date');
+  assert.ok(updateFooterEl.textContent.includes('2.3.0'), 'Footer reflects current version');
+
+  console.log('PASS: Auto update check and update button verified');
   console.log('\n========================================');
   console.log('ALL VIEWER TRAJECTORY TESTS PASSED (0)');
   console.log('========================================');

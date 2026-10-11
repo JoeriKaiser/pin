@@ -8,6 +8,7 @@ mod model;
 mod output;
 mod search;
 mod stats;
+pub mod update;
 mod vault;
 mod viewer;
 mod workflow;
@@ -64,6 +65,7 @@ fn run() -> CliResult<()> {
         "import" | "export" => commands::vault::transfer(&args, cmd, &vault_path)?,
         "stats" => commands::vault::stats(&args, cmd, &vault_path)?,
         "view" | "view-project" => commands::view::view(&args, cmd, &vault_path)?,
+        "update" | "upgrade" => commands::update::update(&args, cmd, &vault_path)?,
         unknown => {
             return Err(CliError::UsageWithHelp(format!(
                 "Unknown command '{unknown}'"
@@ -71,6 +73,9 @@ fn run() -> CliResult<()> {
         }
     }
 
+    if cmd != "update" && cmd != "upgrade" {
+        update::check_and_notify_update_in_terminal();
+    }
     Ok(())
 }
 

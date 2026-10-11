@@ -1,6 +1,6 @@
 import { state, ORDER, unique, fillSelect, itemStatus, itemType, kind, priority } from './state.js';
 import { els } from './dom.js';
-import { fetchData } from './api.js';
+import { fetchData, fetchUpdate } from './api.js';
 import { text, clear, node, isNarrow } from './formatters.js';
 import { route, applyRoute } from './router.js';
 import { setViewMode } from './board.js';
@@ -84,11 +84,45 @@ export function refreshData() {
   return load(false);
 }
 
+export function checkUpdate(force) {
+  return fetchUpdate(force)
+    .then(function (res) {
+      if (!res.ok) return null;
+      return res.json();
+    })
+    .then(function (data) {
+      if (!data) return null;
+      if (data.update_available) {
+        if (els.btnUpdate) {
+          els.btnUpdate.hidden = false;
+          text(els.updateVersion, 'v' + data.latest_version);
+          els.btnUpdate.title = 'Update pin to v' + data.latest_version;
+        }
+        if (els.updateFooter) {
+          text(els.updateFooter, 'Update available: v' + data.latest_version);
+        }
+      } else {
+        if (els.btnUpdate) {
+          els.btnUpdate.hidden = true;
+        }
+        if (els.updateFooter && data.current_version) {
+          text(els.updateFooter, 'v' + data.current_version);
+        }
+      }
+      return data;
+    })
+    .catch(function () {
+      return null;
+    });
+}
+
 export function boot() {
   bind({
     refreshData: refreshData,
     ingest: ingest
   });
+
+  checkUpdate();
 
   load(true).then(function () {
     setInterval(function () {
@@ -96,5 +130,10 @@ export function boot() {
         refreshData();
       }
     }, 3000);
+    setInterval(function () {
+      if (typeof document !== 'undefined' && !document.hidden) {
+        checkUpdate();
+      }
+    }, 30 * 60 * 1000);
   });
 }

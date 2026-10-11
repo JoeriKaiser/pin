@@ -80,6 +80,7 @@ pub fn print_usage() {
          [--status <status>] [--archived|--all] [--port <n>] [--no-open] [--acp-command <cmd>] [--format json|plain]\n  \
          view-project [--tag <name>] [--kind <kind>] [--type <type>] [--status <status>]\n               \
          [--archived|--all] [--port <n>] [--no-open] [--acp-command <cmd>] [--format json|plain]\n  \
+         update [--check] [--force] [--format json|plain]\n  \
          --help\n  \
          --version\n"
     );
