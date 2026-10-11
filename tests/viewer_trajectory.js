@@ -546,13 +546,23 @@ async function runHarness() {
   assert.ok(SPEC_SNIPPETS && SPEC_SNIPPETS.ac, 'SPEC_SNIPPETS defined');
 
   const quickAddTrigger = documentMock.getElementById('quick-add-trigger');
+  const quickIdeaTrigger = documentMock.getElementById('quick-idea-trigger');
   const quickAddForm = documentMock.getElementById('quick-add-form');
+  const quickAddType = documentMock.getElementById('quick-add-type');
   expandQuickAdd();
   assert.strictEqual(quickAddTrigger.hidden, true, 'Trigger hidden when expanded');
+  assert.strictEqual(quickIdeaTrigger.hidden, true, 'Idea trigger hidden when expanded');
   assert.strictEqual(quickAddForm.hidden, false, 'Form visible when expanded');
   collapseQuickAdd();
   assert.strictEqual(quickAddTrigger.hidden, false, 'Trigger visible when collapsed');
+  assert.strictEqual(quickIdeaTrigger.hidden, false, 'Idea trigger visible when collapsed');
   assert.strictEqual(quickAddForm.hidden, true, 'Form hidden when collapsed');
+
+  expandQuickAdd('title', 'idea');
+  assert.strictEqual(quickAddTrigger.hidden, true, 'Trigger hidden when expanded for idea');
+  assert.strictEqual(quickIdeaTrigger.hidden, true, 'Idea trigger hidden when expanded for idea');
+  assert.strictEqual(quickAddType.value, 'idea', 'Default type set to idea');
+  collapseQuickAdd();
 
   const specModal = documentMock.getElementById('spec-modal');
   const specModalTitle = documentMock.getElementById('spec-modal-title');
