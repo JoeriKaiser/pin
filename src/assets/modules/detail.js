@@ -262,6 +262,15 @@ export function renderActions(item) {
       btn('View Agent Run', true, function () {
         callbacks.openAgentDrawer(item.id);
       });
+    } else if (item.git_status === 'pr_open' || (item.pr_url && item.pr_url.length > 0)) {
+      var prLabel = item.pr_number ? 'View PR #' + item.pr_number + ' ↗' : 'View PR ↗';
+      btn(prLabel, true, function () {
+        if (item.pr_url) window.open(item.pr_url, '_blank', 'noopener,noreferrer');
+      });
+    } else if (item.git_status === 'merged') {
+      var mergedInd = node('span', 'indicator-merged', 'Merged into main');
+      mergedInd.title = 'Merged into main branch';
+      els.actions.appendChild(mergedInd);
     } else {
       btn('Commit + PR', true, function () {
         callbacks.sendCommitPrItem(item.id);
@@ -282,6 +291,15 @@ export function renderActions(item) {
       btn('View Agent Run', true, function () {
         callbacks.openAgentDrawer(item.id);
       });
+    } else if (item.git_status === 'pr_open' || (item.pr_url && item.pr_url.length > 0)) {
+      var prLabel = item.pr_number ? 'View PR #' + item.pr_number + ' ↗' : 'View PR ↗';
+      btn(prLabel, true, function () {
+        if (item.pr_url) window.open(item.pr_url, '_blank', 'noopener,noreferrer');
+      });
+    } else if (item.git_status === 'merged') {
+      var mergedInd = node('span', 'indicator-merged', 'Merged into main');
+      mergedInd.title = 'Merged into main branch';
+      els.actions.appendChild(mergedInd);
     } else {
       btn('Commit + PR', true, function () {
         callbacks.sendCommitPrItem(item.id);

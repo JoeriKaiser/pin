@@ -13,6 +13,7 @@ export var els = {
   countBlocked: $('count-blocked'),
   countDoneReview: $('count-done_review'),
   countClosed: $('count-closed'),
+  btnSyncGit: $('btn-sync-git'),
   btnUpdate: $('btn-update'),
   updateVersion: $('update-version'),
   updateFooter: $('update-footer'),

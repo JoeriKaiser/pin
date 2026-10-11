@@ -2,19 +2,22 @@ use crate::acp::AcpManagerError;
 use crate::assets::*;
 use crate::model::{ArchiveFilter, IdeaMeta, Kind, OutputFormat, Priority, Status, WorkType};
 use crate::output::JsonIdeaOutput;
-use crate::vault::{collect_ideas_with_filter, generate_token, resolve_selector, FilterOptions};
+use crate::vault::{
+    collect_ideas, collect_ideas_with_filter, generate_token, resolve_selector, FilterOptions,
+};
 use crate::workflow;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::env;
 use std::io::{self, BufRead, BufReader, BufWriter, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 const VIEW_CSP: &str = "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; sandbox allow-scripts allow-same-origin allow-forms";
 
 /// Bodies are small JSON payloads. Anything larger is a mistake or a stuck
@@ -52,6 +55,7 @@ struct SnapshotFilters {
 pub struct ViewSnapshot {
     pub token: String,
     pub vault_path: PathBuf,
+    pub repo_path: PathBuf,
     pub scope_label: String,
     pub archive_filter: ArchiveFilter,
     pub filter_status: Option<Status>,
@@ -60,6 +64,7 @@ pub struct ViewSnapshot {
     pub filter_type: Option<WorkType>,
     pub acp_command: Option<String>,
     pub acp_manager: Arc<crate::acp::AcpManager>,
+    pub git_cache: Arc<Mutex<Option<(Instant, HashMap<String, crate::sync::GitItemInfo>)>>>,
 }
 
 #[derive(Deserialize)]
@@ -142,12 +147,13 @@ pub fn create_snapshot(
         .unwrap_or_else(|_| vault_path.parent().unwrap_or(&vault_path).to_path_buf());
     let acp_manager = Arc::new(crate::acp::AcpManager::new(
         vault_path.clone(),
-        repo_path,
+        repo_path.clone(),
         None,
     ));
     ViewSnapshot {
         token,
         vault_path,
+        repo_path,
         scope_label: scope_label.to_string(),
         archive_filter,
         filter_status,
@@ -156,6 +162,7 @@ pub fn create_snapshot(
         filter_type,
         acp_command: None,
         acp_manager,
+        git_cache: Arc::new(Mutex::new(None)),
     }
 }
 /// Reverts the status change that opened a run which then failed to start.
@@ -686,6 +693,81 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                         "Internal Server Error",
                         "application/json; charset=utf-8",
                         out_json.as_bytes(),
+                        false,
+                        true,
+                        None,
+                    );
+                }
+            }
+            return;
+        }
+
+        if subpath == "sync" || subpath == "sync-git" {
+            let valid_origin = origin_header.as_deref().is_some_and(|orig| {
+                orig == format!("http://127.0.0.1:{port}")
+                    || orig == format!("http://localhost:{port}")
+            });
+
+            if !valid_origin || !has_pin_action_header {
+                send_response(
+                    &mut stream,
+                    403,
+                    "Forbidden",
+                    "application/json; charset=utf-8",
+                    b"{\"error\":\"Forbidden request\"}",
+                    false,
+                    true,
+                    None,
+                );
+                return;
+            }
+
+            let viewer_actor =
+                env::var("PIN_VIEWER_ACTOR").unwrap_or_else(|_| "human:viewer".to_string());
+            let synced = crate::sync::reconcile_and_sync(
+                &snapshot.vault_path,
+                &snapshot.repo_path,
+                None,
+                None,
+                false,
+                Some(&viewer_actor),
+            );
+
+            if let Ok(mut cache_guard) = snapshot.git_cache.lock() {
+                *cache_guard = None;
+            }
+
+            match synced {
+                Ok(results) => {
+                    #[derive(Serialize)]
+                    struct SyncResponse {
+                        status: &'static str,
+                        synced: Vec<crate::sync::SyncResult>,
+                    }
+                    let resp = SyncResponse {
+                        status: "ok",
+                        synced: results,
+                    };
+                    let json = serde_json::to_string(&resp).unwrap_or_default();
+                    send_response(
+                        &mut stream,
+                        200,
+                        "OK",
+                        "application/json; charset=utf-8",
+                        json.as_bytes(),
+                        false,
+                        true,
+                        None,
+                    );
+                }
+                Err(e) => {
+                    let err_msg = format!("{{\"error\":\"Failed to sync: {e}\"}}");
+                    send_response(
+                        &mut stream,
+                        500,
+                        "Internal Server Error",
+                        "application/json; charset=utf-8",
+                        err_msg.as_bytes(),
                         false,
                         true,
                         None,
@@ -1709,6 +1791,35 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
     }
 
     if subpath == "data.json" {
+        let viewer_actor =
+            env::var("PIN_VIEWER_ACTOR").unwrap_or_else(|_| "human:viewer".to_string());
+        let git_statuses = if let Ok(mut cache_guard) = snapshot.git_cache.lock() {
+            let needs_refresh = match &*cache_guard {
+                Some((last_instant, _)) => last_instant.elapsed() > Duration::from_secs(10),
+                None => true,
+            };
+            if needs_refresh {
+                let _ = crate::sync::reconcile_and_sync(
+                    &snapshot.vault_path,
+                    &snapshot.repo_path,
+                    None,
+                    None,
+                    false,
+                    Some(&viewer_actor),
+                );
+                let resolver = crate::sync::GitStatusResolver::new(snapshot.repo_path.clone());
+                let all_items = collect_ideas(&snapshot.vault_path).unwrap_or_default();
+                let status_map = resolver.resolve_all(&all_items);
+                *cache_guard = Some((Instant::now(), status_map));
+            }
+            cache_guard
+                .as_ref()
+                .map(|(_, map)| map.clone())
+                .unwrap_or_default()
+        } else {
+            HashMap::new()
+        };
+
         let etag = compute_vault_etag(&snapshot.vault_path);
         if let Some(if_none) = &if_none_match {
             if etags_match(if_none, &etag) {
@@ -1739,6 +1850,11 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
             .map(|meta| {
                 let mut item = JsonIdeaOutput::from(meta);
                 item.content = Some(&meta.body);
+                if let Some(info) = git_statuses.get(&meta.id) {
+                    item.git_status = Some(info.status.as_str());
+                    item.pr_url = info.pr_url.clone();
+                    item.pr_number = info.pr_number;
+                }
                 item
             })
             .collect();
@@ -1851,12 +1967,22 @@ pub fn serve_view(
             .unwrap_or(&snapshot.vault_path)
             .to_path_buf()
     });
+    snapshot.repo_path = repo_path.clone();
     let acp_mgr = Arc::new(crate::acp::AcpManager::new(
         snapshot.vault_path.clone(),
         repo_path,
         acp_command,
     ));
     snapshot.acp_manager = acp_mgr;
+    let viewer_actor = env::var("PIN_VIEWER_ACTOR").unwrap_or_else(|_| "human:viewer".to_string());
+    let _ = crate::sync::reconcile_and_sync(
+        &snapshot.vault_path,
+        &snapshot.repo_path,
+        None,
+        None,
+        false,
+        Some(&viewer_actor),
+    );
     let listener = TcpListener::bind(format!("127.0.0.1:{port}"))?;
     let local_addr = listener.local_addr()?;
     let base_url = format!("http://127.0.0.1:{}/{}/", local_addr.port(), snapshot.token);

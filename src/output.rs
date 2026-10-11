@@ -49,6 +49,12 @@ pub struct JsonIdeaOutput<'a> {
     pub score: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git_status: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pr_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pr_number: Option<u64>,
 }
 
 impl<'a> From<&'a IdeaMeta> for JsonIdeaOutput<'a> {
@@ -89,6 +95,9 @@ impl<'a> From<&'a IdeaMeta> for JsonIdeaOutput<'a> {
             resolution_note: meta.resolution_note.as_deref(),
             score: meta.score,
             content: None,
+            git_status: None,
+            pr_url: None,
+            pr_number: None,
         }
     }
 }

@@ -8,6 +8,7 @@ mod model;
 mod output;
 mod search;
 mod stats;
+pub mod sync;
 pub mod update;
 mod vault;
 mod viewer;
@@ -66,6 +67,7 @@ fn run() -> CliResult<()> {
         "stats" => commands::vault::stats(&args, cmd, &vault_path)?,
         "view" | "view-project" => commands::view::view(&args, cmd, &vault_path)?,
         "update" | "upgrade" => commands::update::update(&args, cmd, &vault_path)?,
+        "sync" => commands::sync::sync(&args, cmd, &vault_path)?,
         unknown => {
             return Err(CliError::UsageWithHelp(format!(
                 "Unknown command '{unknown}'"

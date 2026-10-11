@@ -916,4 +916,89 @@ unset PIN_UPDATE_URL
 unset PIN_TARGET_EXE
 unset PIN_UPDATE_CACHE
 
+# ==============================================================================
+# Testing pin sync: regular merge, squash merge, worktree cleanup, dry-run, json
+# ==============================================================================
+sync_repo="$TMP/sync-repo"
+sync_vault="$TMP/sync-vault"
+mkdir -p "$sync_repo" "$sync_vault"
+
+git -C "$sync_repo" init -q -b main
+git -C "$sync_repo" config user.name "Tester"
+git -C "$sync_repo" config user.email "test@example.com"
+echo "initial" > "$sync_repo/README.md"
+git -C "$sync_repo" add README.md
+git -C "$sync_repo" commit -q -m "initial commit"
+
+# 1. Regular merge item
+reg_item=$(PIN_VAULT="$sync_vault" PIN_PROJECT=sync-repo "$PIN_BIN" add '# Regular merge item' --kind technical --type task --format json)
+reg_id=$(printf '%s' "$reg_item" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+PIN_VAULT="$sync_vault" "$PIN_BIN" transition "$reg_id" --to review >/dev/null
+(
+    cd "$sync_repo"
+    PIN_VAULT="$sync_vault" "$PIN_BIN" transition "$reg_id" --to review --worktree >/dev/null
+)
+[ -d "$sync_repo/.pin_worktrees/$reg_id" ] || fail "worktree .pin_worktrees/$reg_id not created"
+echo "feature code" > "$sync_repo/.pin_worktrees/$reg_id/feature.txt"
+git -C "$sync_repo/.pin_worktrees/$reg_id" add feature.txt
+git -C "$sync_repo/.pin_worktrees/$reg_id" commit -q -m "feat: regular feature commit"
+git -C "$sync_repo" merge --no-ff -q -m "Merge branch pin/$reg_id" "pin/$reg_id"
+
+# 2. Squash merge item
+sqsh_item=$(PIN_VAULT="$sync_vault" PIN_PROJECT=sync-repo "$PIN_BIN" add '# Squash merge item' --kind technical --type task --format json)
+sqsh_id=$(printf '%s' "$sqsh_item" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+PIN_VAULT="$sync_vault" "$PIN_BIN" transition "$sqsh_id" --to review >/dev/null
+(
+    cd "$sync_repo"
+    PIN_VAULT="$sync_vault" "$PIN_BIN" transition "$sqsh_id" --to review --worktree >/dev/null
+)
+[ -d "$sync_repo/.pin_worktrees/$sqsh_id" ] || fail "worktree .pin_worktrees/$sqsh_id not created"
+echo "squash code" > "$sync_repo/.pin_worktrees/$sqsh_id/squash.txt"
+git -C "$sync_repo/.pin_worktrees/$sqsh_id" add squash.txt
+git -C "$sync_repo/.pin_worktrees/$sqsh_id" commit -q -m "feat: squash work"
+echo "squash code" > "$sync_repo/squash.txt"
+git -C "$sync_repo" add squash.txt
+git -C "$sync_repo" commit -q -m "feat: squash merged feature ($sqsh_id)"
+
+# 3. Dry run
+dry_out=$(cd "$sync_repo" && PIN_VAULT="$sync_vault" "$PIN_BIN" sync --dry-run --format json)
+assert_contains "$dry_out" '"action":"dry_run"'
+assert_contains "$dry_out" "$reg_id"
+assert_contains "$dry_out" "$sqsh_id"
+[ -d "$sync_repo/.pin_worktrees/$reg_id" ] || fail "dry run removed regular worktree"
+[ -d "$sync_repo/.pin_worktrees/$sqsh_id" ] || fail "dry run removed squash worktree"
+assert_contains "$(PIN_VAULT="$sync_vault" "$PIN_BIN" read "$reg_id")" 'status: "review"'
+
+# 4. Real sync
+sync_out=$(cd "$sync_repo" && PIN_VAULT="$sync_vault" "$PIN_BIN" sync --format json)
+assert_contains "$sync_out" '"action":"archived"'
+assert_contains "$sync_out" '"resolution":"implemented"'
+assert_contains "$sync_out" '"worktree_removed":true'
+assert_contains "$sync_out" '"branch_deleted":true'
+
+[ ! -d "$sync_repo/.pin_worktrees/$reg_id" ] || fail "pin sync left regular worktree behind"
+[ ! -d "$sync_repo/.pin_worktrees/$sqsh_id" ] || fail "pin sync left squash worktree behind"
+
+git -C "$sync_repo" rev-parse --verify "pin/$reg_id" 2>/dev/null && fail "pin sync left branch pin/$reg_id behind" || true
+git -C "$sync_repo" rev-parse --verify "pin/$sqsh_id" 2>/dev/null && fail "pin sync left branch pin/$sqsh_id behind" || true
+
+reg_meta=$(PIN_VAULT="$sync_vault" "$PIN_BIN" read "$reg_id")
+assert_contains "$reg_meta" 'resolution: "implemented"'
+assert_contains "$reg_meta" 'archived_at:'
+
+sqsh_meta=$(PIN_VAULT="$sync_vault" "$PIN_BIN" read "$sqsh_id")
+assert_contains "$sqsh_meta" 'resolution: "implemented"'
+assert_contains "$sqsh_meta" 'archived_at:'
+
+# 5. Subsequent sync
+none_out=$(cd "$sync_repo" && PIN_VAULT="$sync_vault" "$PIN_BIN" sync --format plain)
+assert_contains "$none_out" "No merged tickets to sync."
+
+# 6. Viewer POST /sync endpoint
+start_view "$sync_vault" "$TMP/sync-view.log" "$TMP/mock-agent.sh"
+sync_origin=$(printf '%s' "$view_url" | cut -d/ -f1-3)
+view_sync_res=$(curl -s -S -X POST -H "Origin: $sync_origin" -H 'Content-Type: application/json' -H 'X-Pin-Action: true' "${view_url}sync")
+assert_contains "$view_sync_res" '"status":"ok"'
+assert_contains "$view_sync_res" '"synced":[]'
+stop_view
 echo "CLI tests passed"

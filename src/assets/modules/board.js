@@ -105,14 +105,34 @@ export function buildBoardCard(item) {
   } else {
     var cardStatus = itemStatus(item);
     if (cardStatus === 'review' || cardStatus === 'done') {
-      var commitPrBtn = node('button', 'btn-commit-pr', 'Commit + PR');
-      commitPrBtn.type = 'button';
-      commitPrBtn.title = 'Start agent to commit worktree and create PR';
-      commitPrBtn.addEventListener('click', function (e) {
-        e.stopPropagation();
-        callbacks.sendCommitPrItem(item.id);
-      });
-      meta.appendChild(commitPrBtn);
+      var isMerged = item.git_status === 'merged';
+      var isPrOpen = item.git_status === 'pr_open' || (item.pr_url && item.pr_url.length > 0);
+      if (isPrOpen) {
+        var prLabel = item.pr_number ? 'PR #' + item.pr_number + ' ↗' : 'PR ↗';
+        var prLink = node('a', 'btn-pr-link', prLabel);
+        prLink.href = item.pr_url || '#';
+        prLink.setAttribute('href', item.pr_url || '#');
+        prLink.target = '_blank';
+        prLink.rel = 'noopener noreferrer';
+        prLink.title = 'Open Pull Request: ' + (item.pr_url || '');
+        prLink.addEventListener('click', function (e) {
+          e.stopPropagation();
+        });
+        meta.appendChild(prLink);
+      } else if (isMerged) {
+        var mergedBadge = node('span', 'indicator-merged', 'Merged into main');
+        mergedBadge.title = 'Merged into main branch';
+        meta.appendChild(mergedBadge);
+      } else {
+        var commitPrBtn = node('button', 'btn-commit-pr', 'Commit + PR');
+        commitPrBtn.type = 'button';
+        commitPrBtn.title = 'Start agent to commit worktree and create PR';
+        commitPrBtn.addEventListener('click', function (e) {
+          e.stopPropagation();
+          callbacks.sendCommitPrItem(item.id);
+        });
+        meta.appendChild(commitPrBtn);
+      }
     }
   }
   if (hasUnresolvedPrereqs(item)) {
