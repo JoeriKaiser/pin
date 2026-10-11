@@ -22,7 +22,7 @@ import {
   buildBoardCard, handleCardDrop, setViewMode
 } from './board.js';
 import {
-  bind, sendRunItem, sendCommitPrItem, handleUpdateInstall
+  bind, sendRunItem, sendCommitPrItem, handleUpdateInstall, handleGitSync
 } from './bind.js';
 import { checkUpdate } from './boot.js';
 
@@ -66,5 +66,6 @@ if (typeof window !== 'undefined') {
     setViewMode: setViewMode,
     checkUpdate: checkUpdate,
     handleUpdateInstall: handleUpdateInstall,
+    handleGitSync: handleGitSync,
   };
 }

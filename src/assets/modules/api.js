@@ -117,3 +117,13 @@ export function sendUpdate(payload) {
     body: JSON.stringify(payload || {})
   });
 }
+
+export function sendSync() {
+  return fetch(BASE + 'sync', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Pin-Action': 'true'
+    }
+  });
+}

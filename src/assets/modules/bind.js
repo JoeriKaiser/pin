@@ -1,6 +1,6 @@
 import { state, find } from './state.js';
 import { els, $ } from './dom.js';
-import { sendCancel, sendRun, sendCommitPr, sendMessage, sendFinish, sendUpdate } from './api.js';
+import { sendCancel, sendRun, sendCommitPr, sendMessage, sendFinish, sendUpdate, sendSync } from './api.js';
 import { text, showToast } from './formatters.js';
 import { setRoute, applyRoute, setOnRouteChanged } from './router.js';
 import { insertSnippetIntoTextarea, handleScreenshotPaste } from './media.js';
@@ -163,12 +163,45 @@ export function handleUpdateInstall() {
     });
 }
 
+export function handleGitSync() {
+  if (!els.btnSyncGit) return;
+  els.btnSyncGit.disabled = true;
+  els.btnSyncGit.classList.add('syncing');
+  text(els.btnSyncGit, 'Syncing…');
+  showToast('Syncing Git merge status…', false);
+
+  return sendSync()
+    .then(function (res) {
+      if (!res.ok) throw new Error('Sync failed with status ' + res.status);
+      return res.json();
+    })
+    .then(function (data) {
+      els.btnSyncGit.disabled = false;
+      els.btnSyncGit.classList.remove('syncing');
+      text(els.btnSyncGit, 'Sync Git');
+      var count = data.synced ? data.synced.length : 0;
+      if (count > 0) {
+        showToast('Synced ' + count + ' merged item' + (count === 1 ? '' : 's'), false);
+      } else {
+        showToast('Git sync complete: no merged items', false);
+      }
+      bootCallbacks.refreshData();
+    })
+    .catch(function (err) {
+      els.btnSyncGit.disabled = false;
+      els.btnSyncGit.classList.remove('syncing');
+      text(els.btnSyncGit, 'Sync Git');
+      showToast('Sync failed: ' + (err.message || err), true);
+    });
+}
+
 export function bindNavigation() {
   if (els.viewBoardBtn) els.viewBoardBtn.addEventListener('click', function () { setViewMode('board'); });
   if (els.viewDetailBtn) els.viewDetailBtn.addEventListener('click', function () { setViewMode('detail'); });
   if (els.back) els.back.addEventListener('click', function () { setRoute(null); });
   if (els.btnNewTicket) els.btnNewTicket.addEventListener('click', function () { openSpecModal(); });
   if (els.btnUpdate) els.btnUpdate.addEventListener('click', handleUpdateInstall);
+  if (els.btnSyncGit) els.btnSyncGit.addEventListener('click', handleGitSync);
   window.addEventListener('hashchange', applyRoute);
 }
 

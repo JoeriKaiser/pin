@@ -876,7 +876,50 @@ async function runHarness() {
 
   const plannedCard = buildBoardCard({ id: 'p1', title: 'Planned', status: 'planned', type: 'task', timestamp: Date.now() });
   assert.strictEqual(plannedCard.querySelector('.btn-commit-pr'), null, 'Planned card lacks Commit + PR');
-  console.log('PASS: Commit + PR quick action buttons verified');
+
+  // Merged review card suppresses Commit + PR and shows indicator
+  const reviewMerged = buildBoardCard({ id: 'rm1', title: 'Merged', status: 'review', type: 'task', git_status: 'merged', timestamp: Date.now() });
+  assert.strictEqual(reviewMerged.querySelector('.btn-commit-pr'), null, 'Merged review card suppresses Commit + PR');
+  assert.ok(reviewMerged.querySelector('.indicator-merged'), 'Merged review card has indicator');
+  assert.strictEqual(reviewMerged.querySelector('.indicator-merged').textContent, 'Merged into main');
+
+  // Open PR review card suppresses Commit + PR and shows PR link
+  const reviewPr = buildBoardCard({ id: 'rp1', title: 'Open PR', status: 'review', type: 'task', git_status: 'pr_open', pr_url: 'https://github.com/JoeriKaiser/pin/pull/42', pr_number: 42, timestamp: Date.now() });
+  assert.strictEqual(reviewPr.querySelector('.btn-commit-pr'), null, 'Open PR card suppresses Commit + PR');
+  const prLink = reviewPr.querySelector('.btn-pr-link');
+  assert.ok(prLink, 'Open PR card has PR link button');
+  assert.strictEqual(prLink.getAttribute('href'), 'https://github.com/JoeriKaiser/pin/pull/42');
+  assert.ok(prLink.textContent.includes('PR #42'), 'PR link button displays PR number');
+
+  // Merged done card suppresses Commit + PR
+  const doneMerged = buildBoardCard({ id: 'dm1', title: 'Done Merged', status: 'done', type: 'task', git_status: 'merged', timestamp: Date.now() });
+  assert.strictEqual(doneMerged.querySelector('.btn-commit-pr'), null, 'Merged done card suppresses Commit + PR');
+  assert.ok(doneMerged.querySelector('.indicator-merged'), 'Merged done card has indicator');
+
+  // Open PR done card suppresses Commit + PR and shows PR link
+  const donePr = buildBoardCard({ id: 'dp1', title: 'Done PR', status: 'done', type: 'task', git_status: 'pr_open', pr_url: 'https://github.com/JoeriKaiser/pin/pull/99', pr_number: 99, timestamp: Date.now() });
+  assert.strictEqual(donePr.querySelector('.btn-commit-pr'), null, 'Open PR done card suppresses Commit + PR');
+  assert.ok(donePr.querySelector('.btn-pr-link'), 'Open PR done card has PR link');
+
+  // Git Sync button handling
+  const handleGitSync = testExports.handleGitSync;
+  assert.ok(typeof handleGitSync === 'function', 'handleGitSync is exported');
+  let syncCalled = false;
+  fetchStub = function (url) {
+    if (url.includes('sync')) {
+      syncCalled = true;
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ status: 'ok', synced: [{ id: 's1' }] })
+      });
+    }
+    return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) });
+  };
+  await handleGitSync();
+  assert.ok(syncCalled, 'handleGitSync called /sync endpoint');
+
+  console.log('PASS: Commit + PR quick action buttons and Git sync verified');
 
 
   console.log('\n--- 11. Testing Auto Update Check & Update Button ---');

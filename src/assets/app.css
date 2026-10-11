@@ -1058,7 +1058,8 @@ a:hover {
 }
 
 .btn-view-run,
-.btn-commit-pr {
+.btn-commit-pr,
+.btn-pr-link {
   margin-left: auto;
   padding: 0 var(--space-2);
   height: var(--badge-height);
@@ -1071,13 +1072,29 @@ a:hover {
   cursor: pointer;
   display: inline-flex;
   align-items: center;
+  text-decoration: none;
   transition: background var(--transition-fast), color var(--transition-fast);
 }
 
 .btn-view-run:hover,
-.btn-commit-pr:hover {
+.btn-commit-pr:hover,
+.btn-pr-link:hover {
   background: var(--accent);
   color: var(--accent-ink);
+}
+
+.indicator-merged {
+  margin-left: auto;
+  padding: 0 var(--space-2);
+  height: var(--badge-height);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--success-border);
+  background: var(--success);
+  color: var(--success-ink);
+  display: inline-flex;
+  align-items: center;
 }
 
 /* --------------------------------------------------------------------------
