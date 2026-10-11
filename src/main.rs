@@ -57,6 +57,7 @@ fn run() -> CliResult<()> {
         "depend" => commands::work::depend(&args, cmd, &vault_path)?,
         "parent" => commands::work::parent(&args, cmd, &vault_path)?,
         "relate" => commands::work::relate(&args, cmd, &vault_path)?,
+        "to-spec" | "transform" => commands::work::to_spec(&args, cmd, &vault_path)?,
         "doctor" => commands::vault::doctor(&args, cmd, &vault_path)?,
         "archive" => commands::vault::archive(&args, cmd, &vault_path)?,
         "unarchive" => commands::vault::unarchive(&args, cmd, &vault_path)?,

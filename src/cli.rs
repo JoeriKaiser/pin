@@ -64,6 +64,7 @@ pub fn print_usage() {
          [--expect-revision <n>] [--format json|plain]\n  \
          relate <id|prefix|filename> <related-id> [--actor <name>]\n         \
          [--expect-revision <n>] [--format json|plain]\n  \
+         to-spec <id|prefix|filename> [--title <text>] [--actor <name>] [--expect-revision <n>] [--format json|plain]\n  \
          doctor [--repair] [--upgrade] [--strict] [--format json|plain]\n  \
          archive <id|prefix|filename>\n          \
          [--resolution implemented|rejected|superseded|stale]\n          \

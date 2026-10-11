@@ -1061,6 +1061,19 @@ a:hover {
 .quick-add-container {
   margin: 0 0 var(--space-2) 0;
 }
+.quick-add-triggers {
+  display: flex;
+  gap: var(--space-1-5);
+  align-items: center;
+}
+
+.quick-idea-btn {
+  width: auto;
+  flex-shrink: 0;
+  padding: 0 var(--space-2-5);
+  color: var(--accent);
+}
+
 
 .quick-add-trigger {
   width: 100%;
@@ -2341,6 +2354,66 @@ a:hover {
   border: none;
   background: transparent;
 }
+.badge-user {
+  color: var(--accent);
+  border: none;
+  background: transparent;
+}
+
+.trajectory-row-user {
+  border-left: 2px solid var(--accent);
+}
+
+.trajectory-user-text {
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  color: var(--ink);
+  white-space: pre-wrap;
+}
+
+.agent-chat-container {
+  border-top: 1px solid var(--line);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+
+.agent-chat-input-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.agent-chat-input {
+  width: 100%;
+  min-height: 2.75rem;
+  max-height: 8rem;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  resize: vertical;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.agent-chat-input:focus {
+  border-color: var(--focus);
+  outline: 2px solid var(--focus-ring);
+}
+
+.agent-chat-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
 
 .trajectory-body {
   min-width: 0;

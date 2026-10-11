@@ -44,6 +44,7 @@ impl std::error::Error for AcpManagerError {}
 pub enum RunMode {
     Implement { use_worktree: bool },
     CommitPr,
+    Idea { use_worktree: bool },
 }
 
 impl From<std::io::Error> for AcpManagerError {
@@ -80,6 +81,8 @@ pub struct ActiveRun {
     pub subscribers: Arc<Mutex<Vec<Sender<serde_json::Value>>>>,
     pub started_at: i64,
     pub cancel_requested: Arc<AtomicBool>,
+    pub prompt_sender: Option<Sender<String>>,
+    pub mode: RunMode,
 }
 #[derive(Clone)]
 pub struct CompletedRun {
@@ -289,6 +292,38 @@ impl AcpManager {
         self.start_run_mode(item_id, RunMode::CommitPr)
     }
 
+    pub fn start_idea_run(&self, item_id: &str, use_worktree: bool) -> Result<(), AcpManagerError> {
+        self.start_run_mode(item_id, RunMode::Idea { use_worktree })
+    }
+
+    pub fn send_message(&self, item_id: &str, message: &str) -> Result<(), AcpManagerError> {
+        let runs = self
+            .active_runs
+            .lock()
+            .map_err(|_| AcpManagerError::Io("Lock poisoned on active_runs".to_string()))?;
+        if let Some(key) = resolve_run_key(&runs, item_id) {
+            if let Some(run) = runs.get(&key) {
+                if let Some(sender) = &run.prompt_sender {
+                    sender.send(message.to_string()).map_err(|_| {
+                        AcpManagerError::Client("Run prompt receiver closed".to_string())
+                    })?;
+                    return Ok(());
+                } else {
+                    return Err(AcpManagerError::Workflow(
+                        "Run does not accept interactive messages".to_string(),
+                    ));
+                }
+            }
+        }
+        Err(AcpManagerError::ItemNotFound(format!(
+            "Item '{item_id}' is not currently running"
+        )))
+    }
+
+    pub fn finish_run(&self, item_id: &str) -> Result<(), AcpManagerError> {
+        self.send_message(item_id, "__FINISH__")
+    }
+
     pub fn start_run_mode(&self, item_id: &str, mode: RunMode) -> Result<(), AcpManagerError> {
         // Resolve filename and canonical ID first
         let filename = crate::vault::resolve_selector(&self.vault_path, item_id)
@@ -300,7 +335,7 @@ impl AcpManager {
 
         // Determine working directory
         let (work_dir, worktree_path, is_primary) = match mode {
-            RunMode::Implement { use_worktree } => {
+            RunMode::Implement { use_worktree } | RunMode::Idea { use_worktree } => {
                 if use_worktree {
                     let wt = WorktreeManager::provision_worktree(&self.repo_path, item_id)
                         .map_err(|e| AcpManagerError::Worktree(e.to_string()))?;
@@ -323,7 +358,10 @@ impl AcpManager {
                 }
             }
         };
-        let is_new_worktree = matches!(mode, RunMode::Implement { use_worktree: true });
+        let is_new_worktree = matches!(
+            mode,
+            RunMode::Implement { use_worktree: true } | RunMode::Idea { use_worktree: true }
+        );
 
         // 1. Reject if canonical_id or item_id is already running
         {
@@ -345,7 +383,7 @@ impl AcpManager {
 
         // Attribute the item in the vault to this run
         match mode {
-            RunMode::Implement { .. } => {
+            RunMode::Implement { .. } | RunMode::Idea { .. } => {
                 if let Err(e) =
                     crate::workflow::begin_agent_run(&self.vault_path, &filename, "agent:omp")
                 {
@@ -437,6 +475,14 @@ impl AcpManager {
                 acceptance_criteria.as_deref(),
                 body,
             ),
+            RunMode::Idea { .. } => build_idea_prompt(
+                title,
+                item_id,
+                kind,
+                priority,
+                acceptance_criteria.as_deref(),
+                body,
+            ),
         };
 
         // 7. Prepare log path: self.vault_path.join("runs").join(format!("{item_id}.log"))
@@ -480,6 +526,12 @@ impl AcpManager {
         let started_at = chrono::Utc::now().timestamp();
 
         // 8. Insert ActiveRun into active_runs
+        let (prompt_tx, prompt_rx) = mpsc::channel::<String>();
+        let prompt_sender = match mode {
+            RunMode::Idea { .. } => Some(prompt_tx),
+            _ => None,
+        };
+
         let active_run = ActiveRun {
             item_id: canonical_id.clone(),
             client: Arc::clone(&client),
@@ -489,6 +541,8 @@ impl AcpManager {
             subscribers: Arc::clone(&subscribers),
             started_at,
             cancel_requested: Arc::clone(&cancel_requested),
+            prompt_sender,
+            mode,
         };
 
         {
@@ -511,6 +565,7 @@ impl AcpManager {
         let worker_work_dir = work_dir;
         let worker_is_new_worktree = is_new_worktree;
 
+        let worker_prompt_rx = prompt_rx;
         thread::spawn(move || {
             // Forward client update events (client.subscribe()) to event_buffer and subscribers
             let client_event_rx = worker_client.subscribe();
@@ -553,16 +608,84 @@ impl AcpManager {
                 let prompt_res = worker_client
                     .prompt(&session_id, &prompt_text)
                     .map_err(|e| format!("Prompt failed: {e}"))?;
-
                 if worker_cancel.load(Ordering::SeqCst) {
                     return Err("Run cancelled during prompt".to_string());
+                }
+
+                if matches!(mode, RunMode::Idea { .. }) {
+                    let mut last_stop_reason = prompt_res
+                        .stop_reason
+                        .unwrap_or_else(|| "end_turn".to_string());
+
+                    let waiting_event = serde_json::json!({
+                        "type": "waiting_for_user",
+                        "stopReason": last_stop_reason,
+                    });
+                    push_event(
+                        &worker_event_buffer,
+                        &worker_subscribers,
+                        Some(&disk_events_path),
+                        waiting_event,
+                    );
+
+                    while let Ok(user_msg) = worker_prompt_rx.recv() {
+                        if worker_cancel.load(Ordering::SeqCst) {
+                            return Err("Run cancelled by user".to_string());
+                        }
+                        let trimmed = user_msg.trim();
+                        if trimmed == "__FINISH__" {
+                            break;
+                        }
+                        if trimmed.is_empty() {
+                            continue;
+                        }
+
+                        let user_event = serde_json::json!({
+                            "type": "user_message",
+                            "update": {
+                                "type": "user_message",
+                                "content": trimmed,
+                                "timestamp": chrono::Utc::now().timestamp(),
+                            }
+                        });
+                        push_event(
+                            &worker_event_buffer,
+                            &worker_subscribers,
+                            Some(&disk_events_path),
+                            user_event,
+                        );
+
+                        let next_res = worker_client
+                            .prompt(&session_id, trimmed)
+                            .map_err(|e| format!("Prompt failed: {e}"))?;
+
+                        if worker_cancel.load(Ordering::SeqCst) {
+                            return Err("Run cancelled during prompt".to_string());
+                        }
+
+                        last_stop_reason = next_res
+                            .stop_reason
+                            .unwrap_or_else(|| "end_turn".to_string());
+
+                        let waiting_event = serde_json::json!({
+                            "type": "waiting_for_user",
+                            "stopReason": last_stop_reason,
+                        });
+                        push_event(
+                            &worker_event_buffer,
+                            &worker_subscribers,
+                            Some(&disk_events_path),
+                            waiting_event,
+                        );
+                    }
+
+                    return Ok(last_stop_reason);
                 }
 
                 Ok(prompt_res
                     .stop_reason
                     .unwrap_or_else(|| "end_turn".to_string()))
             })();
-
             match run_result {
                 Ok(stop_reason) => {
                     // Give the event forwarding thread a moment to flush queued events
@@ -837,6 +960,32 @@ pub fn build_commit_pr_prompt(
         prompt_parts.push(format!("\n## Description\n{}", body.trim()));
     }
     prompt_parts.push("\n## Instructions\n1. Inspect git status and changed files in this worktree/repository.\n2. Stage and commit all relevant changes with a clear, conventional commit message referencing the task title and ID.\n3. If a git remote is configured, push the branch to origin.\n4. Create a pull request targeting the main branch (e.g. via `gh pr create` or git) with a concise title and summary of changes.\n5. If `gh` is unavailable or no remote is configured, report the commit details and status.\nSummarize what was committed and the pull request status.".to_string());
+
+    prompt_parts.join("\n")
+}
+
+pub fn build_idea_prompt(
+    title: &str,
+    item_id: &str,
+    kind: &str,
+    priority: Option<&str>,
+    acceptance_criteria: Option<&str>,
+    body: &str,
+) -> String {
+    let mut prompt_parts = Vec::new();
+    prompt_parts.push(format!("# Idea Mode: {title}"));
+    prompt_parts.push(format!("- Item ID: {item_id}"));
+    prompt_parts.push(format!("- Kind: {kind}"));
+    if let Some(p) = priority {
+        prompt_parts.push(format!("- Priority: {p}"));
+    }
+    if let Some(ac) = acceptance_criteria {
+        prompt_parts.push(format!("\n## Initial Acceptance Criteria\n{ac}"));
+    }
+    if !body.trim().is_empty() {
+        prompt_parts.push(format!("\n## Description / Idea\n{}", body.trim()));
+    }
+    prompt_parts.push("\n## Instructions\nYou are in IDEA mode. Your objective is to explore the codebase and collaborate with the user to turn this idea into a clean, comprehensive specification ticket.\n\n1. Explore the codebase:\n   - Use tools (read files, search/grep, inspect directory structure) to understand existing patterns, architecture, dependencies, and relevant files.\n   - Ground your advice in real code evidence.\n\n2. Ask questions & clarify:\n   - Ask the user focused questions about requirements, tradeoffs, edge cases, scope, and interfaces.\n   - Work through ambiguity together until an implementation plan covering all bases from A to Z is established.\n\n3. Create the ticket in the backlog:\n   - When you and the user agree on the plan, use a tool call (such as `pin add` via bash tool) to create the ticket in the backlog (`--type task`, `--kind <kind>`, `--status created`).\n   - Ensure the ticket details contain:\n     * Title\n     * Problem & Context\n     * Implementation Proposal (covering all bases from A to Z)\n     * Acceptance Criteria checklist (`- [ ] ...`)\n   - Announce the created ticket ID and details to the user.".to_string());
 
     prompt_parts.join("\n")
 }
@@ -1242,5 +1391,52 @@ mod tests {
         let (summary, evidence) = extract_summary_and_evidence(&events);
         assert_eq!(summary, DEFAULT_SUMMARY);
         assert_eq!(evidence, DEFAULT_EVIDENCE);
+    }
+
+    #[test]
+    fn test_build_idea_prompt() {
+        let prompt = build_idea_prompt(
+            "Explore new auth system",
+            "auth123",
+            "technical",
+            Some("high"),
+            Some("- should be secure"),
+            "We need auth but not sure between JWT or session cookies.",
+        );
+        assert!(prompt.contains("# Idea Mode: Explore new auth system"));
+        assert!(prompt.contains("- Item ID: auth123"));
+        assert!(prompt.contains("- Priority: high"));
+        assert!(prompt.contains("## Initial Acceptance Criteria\n- should be secure"));
+        assert!(prompt.contains("We need auth but not sure between JWT or session cookies."));
+        assert!(prompt.contains("Explore the codebase"));
+        assert!(prompt.contains("Ask questions & clarify"));
+        assert!(prompt.contains("Create the ticket in the backlog"));
+        assert!(prompt.contains("pin add"));
+    }
+
+    #[test]
+    fn test_send_message_rejects_non_running_item() {
+        let vault_dir = tempfile::tempdir().unwrap();
+        let repo_dir = tempfile::tempdir().unwrap();
+        let mgr = AcpManager::new(
+            vault_dir.path().to_path_buf(),
+            repo_dir.path().to_path_buf(),
+            None,
+        );
+        let res = mgr.send_message("nonexistent", "hello");
+        assert!(matches!(res, Err(AcpManagerError::ItemNotFound(_))));
+    }
+
+    #[test]
+    fn test_start_idea_run_rejects_nonexistent_item() {
+        let vault_dir = tempfile::tempdir().unwrap();
+        let repo_dir = tempfile::tempdir().unwrap();
+        let mgr = AcpManager::new(
+            vault_dir.path().to_path_buf(),
+            repo_dir.path().to_path_buf(),
+            None,
+        );
+        let res = mgr.start_idea_run("nonexistent", false);
+        assert!(matches!(res, Err(AcpManagerError::ItemNotFound(_))));
     }
 }
