@@ -205,7 +205,7 @@ pub fn transition_item(
     let actor_str = actor.unwrap_or("agent:default").to_string();
     let now = chrono::Utc::now().timestamp();
 
-    if target_status == Status::Done || target_status.is_terminal() {
+    if target_status.is_finished() {
         // Release any active claim upon completion or closure
         meta.claimed_by = None;
         meta.claim_expires_at = None;
@@ -316,8 +316,14 @@ pub fn begin_agent_run(
     Ok(meta)
 }
 
-/// Attributes an item in `review` or `done` status to the agent that is about
-/// to commit the worktree and create a PR. Moves `done` items to `review`.
+/// Attributes an item that has already been completed to the agent that is
+/// about to commit the worktree and create a PR.
+///
+/// The item returns to `in_progress` for the duration of the run so the board
+/// shows it as genuinely active, then the runner completes it back to `done`
+/// with the PR reference as evidence. Only work that has reached `done` can be
+/// committed; `closed` and `cancelled` items are withdrawn and never committed,
+/// and unfinished work is rejected.
 pub fn begin_commit_pr_run(
     vault_path: &Path,
     filename: &str,
@@ -327,25 +333,24 @@ pub fn begin_commit_pr_run(
     let now = chrono::Utc::now().timestamp();
     let from_status = meta.current_status();
 
-    if from_status != Status::Review && from_status != Status::Done {
+    if from_status != Status::Done {
         return Err(WorkflowError::InvalidTransition {
             from: from_status,
-            to: Status::Review,
-            reason: "commit+pr requires the task to be in review or done status".to_string(),
+            to: Status::InProgress,
+            reason: "commit+pr requires the task to be completed (done) first".to_string(),
         });
     }
 
     meta.claimed_by = Some(actor.to_string());
     meta.claim_expires_at = None;
-    let target_status = Status::Review;
-    meta.status = Some(target_status);
+    meta.status = Some(Status::InProgress);
 
     meta.activity.push(ActivityEvent {
         at: now,
         actor: actor.to_string(),
         action: "commit_pr_started".to_string(),
         from: Some(from_status),
-        to: Some(target_status),
+        to: Some(Status::InProgress),
         note: Some("Started agent for commit and PR".to_string()),
     });
 
@@ -382,8 +387,8 @@ pub fn release_item(
     meta.claim_expires_at = None;
 
     // Only an item that is still running goes back to Planned. A user may have
-    // moved it to Blocked, Review, or Done while the run was active, and that
-    // decision outranks the end of the run.
+    // moved it to Blocked or Done while the run was active, and that decision
+    // outranks the end of the run.
     if from_status == Status::InProgress {
         meta.status = Some(Status::Planned);
     }
@@ -460,7 +465,7 @@ pub fn complete_item(
     let now = chrono::Utc::now().timestamp();
     let actor_str = actor.unwrap_or("agent:default").to_string();
 
-    if from_status.is_terminal() {
+    if from_status == Status::Closed || from_status == Status::Cancelled {
         return Err(WorkflowError::InvalidTransition {
             from: from_status,
             to: Status::Done,
@@ -468,6 +473,8 @@ pub fn complete_item(
         });
     }
 
+    // Completing already-done work is allowed: it refreshes the evidence without
+    // a reopen, which is how a commit+pr follow-up attaches its PR reference.
     // Release claim upon completion
     meta.claimed_by = None;
     meta.claim_expires_at = None;
@@ -934,18 +941,16 @@ mod tests {
     #[test]
     fn test_begin_commit_pr_run_success() {
         let dir = tempdir().unwrap();
-        let fn_review = setup_test_item(dir.path(), "0123456789aa", Status::Review, None);
-        let fn_done = setup_test_item(dir.path(), "0123456789ab", Status::Done, None);
+        let filename = setup_test_item(dir.path(), "0123456789ab", Status::Done, None);
 
-        // Review item transitions smoothly
-        let r1 = begin_commit_pr_run(dir.path(), &fn_review, "agent:omp").unwrap();
-        assert_eq!(r1.current_status(), Status::Review);
-        assert_eq!(r1.claimed_by.as_deref(), Some("agent:omp"));
-
-        // Done item transitions to Review
-        let r2 = begin_commit_pr_run(dir.path(), &fn_done, "agent:omp").unwrap();
-        assert_eq!(r2.current_status(), Status::Review);
-        assert_eq!(r2.claimed_by.as_deref(), Some("agent:omp"));
+        // Completed work reopens to in_progress for the duration of the run.
+        let r = begin_commit_pr_run(dir.path(), &filename, "agent:omp").unwrap();
+        assert_eq!(r.current_status(), Status::InProgress);
+        assert_eq!(r.claimed_by.as_deref(), Some("agent:omp"));
+        assert_eq!(
+            r.activity.last().map(|a| a.action.as_str()),
+            Some("commit_pr_started")
+        );
     }
 
     #[test]
@@ -955,11 +960,13 @@ mod tests {
         let fn_prog = setup_test_item(dir.path(), "0123456789ad", Status::InProgress, None);
         let fn_blocked = setup_test_item(dir.path(), "0123456789ae", Status::Blocked, None);
         let fn_closed = setup_test_item(dir.path(), "0123456789af", Status::Closed, None);
+        let fn_cancelled = setup_test_item(dir.path(), "0123456789b0", Status::Cancelled, None);
 
         assert!(begin_commit_pr_run(dir.path(), &fn_planned, "agent:omp").is_err());
         assert!(begin_commit_pr_run(dir.path(), &fn_prog, "agent:omp").is_err());
         assert!(begin_commit_pr_run(dir.path(), &fn_blocked, "agent:omp").is_err());
         assert!(begin_commit_pr_run(dir.path(), &fn_closed, "agent:omp").is_err());
+        assert!(begin_commit_pr_run(dir.path(), &fn_cancelled, "agent:omp").is_err());
     }
 
     #[test]
@@ -1037,7 +1044,8 @@ mod tests {
             Err(WorkflowError::InvalidTransition { .. })
         ));
 
-        // `done` is not terminal, so re-verifying finished work stays allowed.
+        // Re-completing finished work stays allowed: it refreshes the evidence
+        // without a reopen, which is how a commit+pr follow-up records its PR.
         let done = setup_test_item(dir.path(), "0123456789d2", Status::Done, None);
         let reverified = complete_item(
             dir.path(),

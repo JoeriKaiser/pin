@@ -11,7 +11,7 @@ export var els = {
   countPlanned: $('count-planned'),
   countInProgress: $('count-in_progress'),
   countBlocked: $('count-blocked'),
-  countDoneReview: $('count-done_review'),
+  countDone: $('count-done'),
   countClosed: $('count-closed'),
   btnSyncGit: $('btn-sync-git'),
   btnUpdate: $('btn-update'),

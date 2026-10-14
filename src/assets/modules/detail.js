@@ -264,48 +264,6 @@ export function renderActions(item) {
     });
   }
 
-  if (st === 'review') {
-    if (state.activeRuns.has(item.id)) {
-      btn('View Agent Run', true, function () {
-        callbacks.openAgentDrawer(item.id);
-      });
-    } else if (item.git_status === 'pr_open' || (item.pr_url && item.pr_url.length > 0)) {
-      var prLabel = item.pr_number ? 'View PR #' + item.pr_number + ' ↗' : 'View PR ↗';
-      btn(prLabel, true, function () {
-        if (item.pr_url) window.open(item.pr_url, '_blank', 'noopener,noreferrer');
-      });
-    } else if (item.git_status === 'merged') {
-      var mergedInd = node('span', 'indicator-merged', 'Merged into main');
-      mergedInd.title = 'Merged into main branch';
-      els.actions.appendChild(mergedInd);
-    } else {
-      btn('Commit + PR', true, function () {
-        callbacks.sendCommitPrItem(item.id);
-      });
-    }
-    btn('Close Item', false, function () {
-      callbacks.openCloseModal(item);
-    });
-    if (!item.archived_at) {
-      btn('Archive Item', false, function () {
-        sendAction(item.id, { action: 'archive', expect_revision: rev })
-          .then(function () {
-            showToast('Archived ' + (item.title || item.id), false);
-            callbacks.refreshData();
-          })
-          .catch(function (err) { showToast('Action failed: ' + err.message, true); });
-      });
-    }
-    btn('Reopen to Planned', false, function () {
-      sendAction(item.id, { action: 'transition', to: 'planned', expect_revision: rev })
-        .then(function () {
-          showToast('Reopened to Planned', false);
-          callbacks.refreshData();
-        })
-        .catch(function (err) { showToast('Action failed: ' + err.message, true); });
-    });
-  }
-
   if (st === 'done') {
     if (state.activeRuns.has(item.id)) {
       btn('View Agent Run', true, function () {
@@ -348,7 +306,7 @@ export function renderActions(item) {
     });
   }
 
-  if (st !== 'closed' && st !== 'cancelled' && st !== 'done' && st !== 'review') {
+  if (st !== 'closed' && st !== 'cancelled' && st !== 'done') {
     btn('Close Item', false, function () {
       callbacks.openCloseModal(item);
     });

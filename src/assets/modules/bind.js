@@ -84,7 +84,8 @@ export function sendCommitPrItem(id) {
       showToast('Commit & PR agent started', false);
       var itm = find(id);
       if (itm) {
-        itm.status = 'review';
+        // Commit + PR re-opens the completed item to in_progress for the run.
+        itm.status = 'in_progress';
         renderBoard();
         renderList();
         renderDetail();

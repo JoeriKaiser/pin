@@ -554,7 +554,7 @@ fi
 # Verify JavaScript frontend behavior, trajectory events, and run dispatching
 node "$ROOT/tests/viewer_trajectory.js"
 
-# Test ACP agent execution and automatic handoff/review transition
+# Test ACP agent execution and automatic completion to the single end status
 # A human claim must not block the run: agents own execution
 PIN_VAULT="$TMP/view-vault" "$PIN_BIN" claim "$view_id" --actor human:audit --lease 3600 --format json | grep -q '"status":"in_progress"'
 run_res=$(curl -s -S -X POST -H "Origin: $origin" -H 'Content-Type: application/json' -H 'X-Pin-Action: true' "${url}items/${view_id}/run")
@@ -564,11 +564,11 @@ read_item=""
 for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
     sleep 0.1
     read_item=$(PIN_VAULT="$TMP/view-vault" "$PIN_BIN" read "$view_id" 2>/dev/null || true)
-    if printf '%s' "$read_item" | grep -q 'status: "review"'; then
+    if printf '%s' "$read_item" | grep -q 'status: "done"'; then
         break
     fi
 done
-assert_contains "$read_item" 'status: "review"'
+assert_contains "$read_item" 'status: "done"'
 assert_contains "$read_item" 'progress: "Mock agent finished"'
 assert_contains "$read_item" 'verification: "Mock tests passed"'
 [ -f "$TMP/view-vault/runs/${view_id}.log" ] || fail "run log file was not created"
@@ -581,7 +581,7 @@ fi
 bad_commit_pr_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "Origin: $origin" -H 'Content-Type: application/json' -H 'X-Pin-Action: true' "${url}items/${ss_ticket_id}/commit-pr")
 [ "$bad_commit_pr_code" = "400" ] || fail "expected 400 when calling commit-pr on created item, got $bad_commit_pr_code"
 
-# Test commit-pr endpoint on review item starts successfully
+# Test commit-pr endpoint on a completed item starts successfully
 commit_pr_res=$(curl -s -S -X POST -H "Origin: $origin" -H 'Content-Type: application/json' -H 'X-Pin-Action: true' "${url}items/${view_id}/commit-pr")
 assert_contains "$commit_pr_res" '"status":"started"'
 assert_contains "$commit_pr_res" '"mode":"commit_pr"'
@@ -590,11 +590,11 @@ assert_contains "$commit_pr_res" '"mode":"commit_pr"'
 for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
     sleep 0.1
     read_item=$(PIN_VAULT="$TMP/view-vault" "$PIN_BIN" read "$view_id" 2>/dev/null || true)
-    if printf '%s' "$read_item" | grep -q 'status: "review"' && ! printf '%s' "$read_item" | grep -q 'claimed_by:'; then
+    if printf '%s' "$read_item" | grep -q 'status: "done"' && ! printf '%s' "$read_item" | grep -q 'claimed_by:'; then
         break
     fi
 done
-assert_contains "$read_item" 'status: "review"'
+assert_contains "$read_item" 'status: "done"'
 if printf '%s' "$read_item" | grep -q 'claimed_by:'; then
     fail "commit-pr finished run kept its claim attribution"
 fi
@@ -934,10 +934,11 @@ git -C "$sync_repo" commit -q -m "initial commit"
 # 1. Regular merge item
 reg_item=$(PIN_VAULT="$sync_vault" PIN_PROJECT=sync-repo "$PIN_BIN" add '# Regular merge item' --kind technical --type task --format json)
 reg_id=$(printf '%s' "$reg_item" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
-PIN_VAULT="$sync_vault" "$PIN_BIN" transition "$reg_id" --to review >/dev/null
+PIN_VAULT="$sync_vault" "$PIN_BIN" handoff "$reg_id" --verification 'Feature branch verified' >/dev/null
+PIN_VAULT="$sync_vault" "$PIN_BIN" transition "$reg_id" --to done >/dev/null
 (
     cd "$sync_repo"
-    PIN_VAULT="$sync_vault" "$PIN_BIN" transition "$reg_id" --to review --worktree >/dev/null
+    PIN_VAULT="$sync_vault" "$PIN_BIN" transition "$reg_id" --to done --worktree >/dev/null
 )
 [ -d "$sync_repo/.pin_worktrees/$reg_id" ] || fail "worktree .pin_worktrees/$reg_id not created"
 echo "feature code" > "$sync_repo/.pin_worktrees/$reg_id/feature.txt"
@@ -948,10 +949,11 @@ git -C "$sync_repo" merge --no-ff -q -m "Merge branch pin/$reg_id" "pin/$reg_id"
 # 2. Squash merge item
 sqsh_item=$(PIN_VAULT="$sync_vault" PIN_PROJECT=sync-repo "$PIN_BIN" add '# Squash merge item' --kind technical --type task --format json)
 sqsh_id=$(printf '%s' "$sqsh_item" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
-PIN_VAULT="$sync_vault" "$PIN_BIN" transition "$sqsh_id" --to review >/dev/null
+PIN_VAULT="$sync_vault" "$PIN_BIN" handoff "$sqsh_id" --verification 'Squash branch verified' >/dev/null
+PIN_VAULT="$sync_vault" "$PIN_BIN" transition "$sqsh_id" --to done >/dev/null
 (
     cd "$sync_repo"
-    PIN_VAULT="$sync_vault" "$PIN_BIN" transition "$sqsh_id" --to review --worktree >/dev/null
+    PIN_VAULT="$sync_vault" "$PIN_BIN" transition "$sqsh_id" --to done --worktree >/dev/null
 )
 [ -d "$sync_repo/.pin_worktrees/$sqsh_id" ] || fail "worktree .pin_worktrees/$sqsh_id not created"
 echo "squash code" > "$sync_repo/.pin_worktrees/$sqsh_id/squash.txt"
@@ -968,7 +970,7 @@ assert_contains "$dry_out" "$reg_id"
 assert_contains "$dry_out" "$sqsh_id"
 [ -d "$sync_repo/.pin_worktrees/$reg_id" ] || fail "dry run removed regular worktree"
 [ -d "$sync_repo/.pin_worktrees/$sqsh_id" ] || fail "dry run removed squash worktree"
-assert_contains "$(PIN_VAULT="$sync_vault" "$PIN_BIN" read "$reg_id")" 'status: "review"'
+assert_contains "$(PIN_VAULT="$sync_vault" "$PIN_BIN" read "$reg_id")" 'status: "done"'
 
 # 4. Real sync
 sync_out=$(cd "$sync_repo" && PIN_VAULT="$sync_vault" "$PIN_BIN" sync --format json)

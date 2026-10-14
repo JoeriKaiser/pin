@@ -148,10 +148,11 @@ Records move through explicit lifecycle states:
 - `planned` — triaged, prioritized, unblocked, ready for agent execution.
 - `in_progress` — actively claimed by an agent or human with a valid lease.
 - `blocked` — work halted; requires blocker resolution or dependency completion.
-- `review` — implementation finished; awaiting human or reviewer-agent verification.
-- `done` — verified completed with concrete evidence.
+- `done` — the single end status: completed with concrete evidence, set by `pin complete --evidence`.
 - `closed` — accepted outcome; terminal state.
 - `cancelled` — abandoned or rejected; terminal state.
+
+`review` was retired as an end status. Records written before the change still carry `status: "review"` and are read as `done`.
 
 ### Dependency gating
 

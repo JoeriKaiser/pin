@@ -78,7 +78,7 @@ pub fn calculate_stats(vault_path: &Path, project: Option<&str>) -> VaultStats {
             Status::Blocked => stats.blocked += 1,
             Status::Done => stats.done += 1,
             Status::Closed => stats.closed += 1,
-            Status::Review | Status::Cancelled => {}
+            Status::Cancelled => {}
         }
     }
 
