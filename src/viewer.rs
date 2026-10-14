@@ -2019,6 +2019,7 @@ pub fn serve_view(
             println!("{base_url}");
         }
     }
+    let _ = std::io::Write::flush(&mut std::io::stdout());
 
     if !no_open {
         open_browser(&base_url);
