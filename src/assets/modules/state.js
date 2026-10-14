@@ -60,8 +60,12 @@ export function tags(item) {
 }
 
 export function find(id) {
+  if (!id) return null;
   for (var i = 0; i < state.items.length; i++) {
     if (state.items[i].id === id) return state.items[i];
+  }
+  for (var j = 0; j < state.items.length; j++) {
+    if (state.items[j].id && state.items[j].id.indexOf(id) === 0) return state.items[j];
   }
   return null;
 }

@@ -241,7 +241,19 @@ export function renderBoard() {
     var existing = existingCards.get(item.id);
 
     if (existing) {
-      if (existing.dataset.renderKey !== renderKey) {
+      var currentParent = existing.parentElement || existing.parentNode;
+      if (currentParent !== targetCol) {
+        if (currentParent && typeof currentParent.removeChild === 'function') {
+          currentParent.removeChild(existing);
+        }
+        var movedCard = existing;
+        if (existing.dataset.renderKey !== renderKey) {
+          movedCard = buildBoardCard(item);
+          movedCard.dataset.renderKey = renderKey;
+        }
+        targetCol.appendChild(movedCard);
+        existingCards.set(item.id, movedCard);
+      } else if (existing.dataset.renderKey !== renderKey) {
         var updated = buildBoardCard(item);
         updated.dataset.renderKey = renderKey;
         if (typeof existing.replaceWith === 'function') {
@@ -256,8 +268,6 @@ export function renderBoard() {
           targetCol.appendChild(updated);
         }
         existingCards.set(item.id, updated);
-      } else if ((existing.parentElement || existing.parentNode) !== targetCol) {
-        targetCol.appendChild(existing);
       }
     } else {
       var card = buildBoardCard(item);

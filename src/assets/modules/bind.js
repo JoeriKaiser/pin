@@ -51,12 +51,19 @@ export function sendRunItem(id, useWorktree, errorPrefix, optMode) {
     .then(function (data) {
       if (!data) return;
       showToast(mode === 'idea' ? 'Idea agent started' : 'Agent started', false);
+      var itm = find(id);
+      if (itm) {
+        itm.status = 'in_progress';
+        renderBoard();
+        renderList();
+        renderDetail();
+      }
+      bootCallbacks.refreshData(true);
       updateActiveRuns();
       if (state.viewMode === 'detail') {
         openAgentDrawer(id);
         setReaderTab('trajectory');
       }
-      bootCallbacks.refreshData();
     })
     .catch(function (err) {
       if (err) showToast(errorPrefix ? errorPrefix + (err.message || 'Failed to start agent') : (err.message || 'Failed to start agent'), true);
@@ -75,6 +82,14 @@ export function sendCommitPrItem(id) {
     .then(function (data) {
       if (!data) return;
       showToast('Commit & PR agent started', false);
+      var itm = find(id);
+      if (itm) {
+        itm.status = 'review';
+        renderBoard();
+        renderList();
+        renderDetail();
+      }
+      bootCallbacks.refreshData(true);
       updateActiveRuns();
       openAgentDrawer(id);
       setReaderTab('trajectory');
