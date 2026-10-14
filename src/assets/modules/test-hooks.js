@@ -2,7 +2,7 @@ import { els } from './dom.js';
 import { state, updateShown } from './state.js';
 import { stripAnsi, cleanThoughtText, escapeHtml } from './formatters.js';
 import {
-  setReaderTab, renderActions, renderHandoff
+  setReaderTab, renderActions, renderHandoff, renderList
 } from './detail.js';
 import {
   openSpecModal, closeSpecModal, setSpecModalTab, SPEC_SNIPPETS,
@@ -62,6 +62,7 @@ if (typeof window !== 'undefined') {
     sendRunItem: sendRunItem,
     buildBoardCard: buildBoardCard,
     renderActions: renderActions,
+    renderList: renderList,
     renderHandoff: renderHandoff,
     handleCardDrop: handleCardDrop,
     setViewMode: setViewMode,

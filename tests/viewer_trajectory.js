@@ -853,6 +853,57 @@ async function runHarness() {
   assert.strictEqual(testExports.state.viewMode, 'board', 'sendRunItem in board view keeps viewMode as board');
   console.log('PASS: sendRunItem in board view preserves board view');
 
+  // Test Case 8.5: moving a ticket from backlog to in progress updates visual status on board and calls refreshData
+  let refreshDataCount = 0;
+  testExports.bind({
+    refreshData: function () {
+      refreshDataCount++;
+      return Promise.resolve();
+    }
+  });
+
+  testExports.state.items = [
+    { id: 'backlog-item-1', title: 'Backlog Item', status: 'created', type: 'task', revision: 1 }
+  ];
+  testExports.setViewMode('board');
+  if (testExports.renderList) testExports.renderList();
+  else {
+    testExports.state.shown = testExports.state.items.slice();
+    testExports.renderBoard();
+  }
+  const createdColBefore = documentMock.querySelector('.board-col-cards[data-drop-status="created"]');
+  const inProgressColBefore = documentMock.querySelector('.board-col-cards[data-drop-status="in_progress"]');
+  assert.ok(createdColBefore.querySelector('.board-card[data-id="backlog-item-1"]'), 'Backlog item initially in created column');
+  assert.strictEqual(inProgressColBefore.querySelector('.board-card[data-id="backlog-item-1"]'), null, 'Backlog item not in in_progress column');
+
+  fetchStub = function (url) {
+    if (url.includes('runs')) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        headers: { get: () => null },
+        json: () => Promise.resolve({ running: ['backlog-item-1'], timings: {} })
+      });
+    }
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      json: () => Promise.resolve({ status: 'started' })
+    });
+  };
+
+  await sendRunItem('backlog-item-1', false);
+  const backlogItemAfter = testExports.state.items.find(i => i.id === 'backlog-item-1');
+  assert.strictEqual(backlogItemAfter.status, 'in_progress', 'Ticket status updated to in_progress');
+  assert.ok(refreshDataCount > 0, 'refreshData was triggered after starting item');
+
+  const createdColAfter = documentMock.querySelector('.board-col-cards[data-drop-status="created"]');
+  const inProgressColAfter = documentMock.querySelector('.board-col-cards[data-drop-status="in_progress"]');
+  assert.strictEqual(createdColAfter.querySelector('.board-card[data-id="backlog-item-1"]'), null, 'Ticket no longer in created/backlog column');
+  assert.ok(inProgressColAfter.querySelector('.board-card[data-id="backlog-item-1"]'), 'Ticket visually moved to in_progress column');
+  console.log('PASS: moving ticket from backlog to in_progress updates board visually without refresh');
+
   console.log('\n--- 9. Testing Handoff Card Layout and Priority ---');
   const renderHandoff = testExports.renderHandoff || win.renderHandoff;
   assert.ok(typeof renderHandoff === 'function', 'renderHandoff is exported');
