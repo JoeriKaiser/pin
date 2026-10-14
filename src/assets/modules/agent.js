@@ -133,8 +133,8 @@ export function openAgentDrawer(itemId) {
   if (els.agentLogInfo) text(els.agentLogInfo, 'Logs: .pin_vault/runs/' + itemId + '.log');
   var isRunning = state.activeRuns && state.activeRuns.has(itemId);
   var itemSt = itm ? itemStatus(itm) : '';
-  var pillCls = isRunning ? '' : (itemSt === 'in_progress' ? 'status-interrupted' : ((itemSt === 'done' || itemSt === 'review' || itemSt === 'closed') ? 'status-completed' : ''));
-  var pillText = isRunning ? 'Running' : (itemSt === 'in_progress' ? 'Interrupted' : ((itemSt === 'done' || itemSt === 'review' || itemSt === 'closed') ? 'Completed' : 'Idle'));
+  var pillCls = isRunning ? '' : (itemSt === 'in_progress' ? 'status-interrupted' : ((itemSt === 'done' || itemSt === 'closed') ? 'status-completed' : ''));
+  var pillText = isRunning ? 'Running' : (itemSt === 'in_progress' ? 'Interrupted' : ((itemSt === 'done' || itemSt === 'closed') ? 'Completed' : 'Idle'));
   setStatusPill(pillText, pillCls);
   if (els.btnCancelAgent) els.btnCancelAgent.disabled = !isRunning;
 

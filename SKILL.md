@@ -26,7 +26,9 @@ Claim an item before changing the repository. Set `PIN_ACTOR` or pass `--actor` 
 pin claim <id> --actor agent:name
 ```
 
-Record progress with `handoff`. Use `transition --to blocked` with a reason when work cannot continue. Finish with `complete --evidence` after verification. Use `close` when a human or later agent accepts the result. Claims have a one-hour lease by default and can be renewed with `claim`.
+Record progress with `handoff`. Use `transition --to blocked` with a reason when work cannot continue. Finish with `complete --evidence`: **`done` is the single end status**, and completing sets it explicitly. Do not leave finished work in `in_progress`, and do not invent another end state. `close` is separate — use it only when a human or a later agent accepts the result, which moves the item to `closed`. Claims have a one-hour lease by default and can be renewed with `claim`.
+
+Merging a pull request does not change status; the item is already `done`. `pin sync` reconciles merge state onto it.
 
 The browser viewer can update records through the same workflow, but the CLI and Markdown files remain the agent interface and source of truth.
 

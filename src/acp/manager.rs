@@ -698,8 +698,10 @@ impl AcpManager {
                         .unwrap_or_default();
                     let (summary, evidence) = extract_summary_and_evidence(&events);
 
-                    // Record the handoff, then move the item to review. A user
-                    // who moved the item elsewhere while the run was active
+                    // Record the handoff, then complete the item. `done` is the
+                    // single end status: the agent verified its own work, so the
+                    // run finishes by completing with the extracted evidence. A
+                    // user who moved the item elsewhere while the run was active
                     // keeps that status.
                     let handoff_meta = crate::workflow::handoff_item(
                         &worker_vault_path,
@@ -718,24 +720,17 @@ impl AcpManager {
                         .map(|meta| meta.current_status() == crate::model::Status::InProgress)
                         .unwrap_or(true);
                     if still_running {
-                        let _ = crate::workflow::transition_item(
+                        let _ = crate::workflow::complete_item(
                             &worker_vault_path,
                             &worker_filename,
-                            crate::model::Status::Review,
                             Some("agent:omp"),
-                            Some("Completed by agent"),
+                            &evidence,
                             None,
                         );
                     }
 
-                    // End the run attribution without touching the status.
-                    let _ = crate::workflow::release_item(
-                        &worker_vault_path,
-                        &worker_filename,
-                        Some("agent:omp"),
-                        true,
-                        None,
-                    );
+                    // Completion already released the claim; nothing else to
+                    // attribute here.
 
                     // Sends {"type": "finished", "stopReason": stop_reason} to subscribers
                     let finished_at = chrono::Utc::now().timestamp();

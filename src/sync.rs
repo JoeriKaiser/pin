@@ -486,7 +486,8 @@ pub fn reconcile_and_sync(
             if let Some(target) = target_id {
                 meta.id == target || meta.id.starts_with(target)
             } else {
-                meta.current_status() == Status::Review || meta.current_status() == Status::Done
+                // Only completed work can have a merged PR to reconcile.
+                meta.current_status() == Status::Done
             }
         })
         .collect();
@@ -820,7 +821,7 @@ mod tests {
 
         let item_id = "synctest1234";
 
-        // Create an item in review in vault
+        // Create a completed item in the vault
         let item = IdeaMeta::new_work_item(
             item_id.to_string(),
             "pin".to_string(),
@@ -828,7 +829,7 @@ mod tests {
             "Body".to_string(),
             crate::model::Kind::Technical,
             crate::model::WorkType::Task,
-            Status::Review,
+            Status::Done,
             None,
             None,
             Some("agent:test".to_string()),

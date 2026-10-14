@@ -1,5 +1,5 @@
 export var ORDER = {
-  status: ['created', 'planned', 'in_progress', 'blocked', 'review', 'done', 'closed', 'cancelled'],
+  status: ['created', 'planned', 'in_progress', 'blocked', 'done', 'closed', 'cancelled'],
   type: ['task', 'bug', 'idea', 'decision'],
   kind: ['technical', 'product', 'business', 'project', 'unspecified'],
   priority: ['high', 'medium', 'low', 'unset']

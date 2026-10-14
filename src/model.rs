@@ -155,7 +155,10 @@ pub enum Status {
     Planned,
     InProgress,
     Blocked,
-    Review,
+    /// Verified completion: the single end status an agent reaches via
+    /// `pin complete`. Records written before `review` was retired still carry
+    /// `status: "review"`; the alias below reads them as `done`.
+    #[serde(alias = "review")]
     Done,
     Closed,
     Cancelled,
@@ -174,20 +177,15 @@ impl Status {
             Status::Planned => "planned",
             Status::InProgress => "in_progress",
             Status::Blocked => "blocked",
-            Status::Review => "review",
             Status::Done => "done",
             Status::Closed => "closed",
             Status::Cancelled => "cancelled",
         }
     }
 
-    pub fn is_terminal(&self) -> bool {
-        matches!(self, Status::Closed | Status::Cancelled)
-    }
-
-    /// True once the work is over: verified (`done`) or withdrawn (`closed`,
-    /// `cancelled`). Distinct from `is_terminal`, which excludes `done` so that
-    /// an accepted outcome can still be re-verified.
+    /// True once the work is over: completed (`done`) or withdrawn (`closed`,
+    /// `cancelled`). Finished work cannot be claimed or started again; reopening
+    /// is an explicit transition back to `planned`.
     pub fn is_finished(&self) -> bool {
         matches!(self, Status::Done | Status::Closed | Status::Cancelled)
     }
@@ -201,12 +199,14 @@ impl FromStr for Status {
             "planned" => Ok(Status::Planned),
             "in_progress" | "in-progress" => Ok(Status::InProgress),
             "blocked" => Ok(Status::Blocked),
-            "review" => Ok(Status::Review),
+            // `review` was retired as an end status; older records and scripts
+            // that still name it resolve to `done`.
+            "review" => Ok(Status::Done),
             "done" => Ok(Status::Done),
             "closed" => Ok(Status::Closed),
             "cancelled" | "canceled" => Ok(Status::Cancelled),
             _ => Err(format!(
-                "Invalid status: {s} (expected created, planned, in_progress, blocked, review, done, closed, cancelled)"
+                "Invalid status: {s} (expected created, planned, in_progress, blocked, done, closed, cancelled)"
             )),
         }
     }
@@ -516,5 +516,42 @@ impl IdeaMeta {
             score: None,
             raw_frontmatter_map: serde_yaml::Mapping::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_retired_review_status_reads_as_done() {
+        // Records written before `review` was retired still say status: "review".
+        let parsed: Status = serde_yaml::from_str("\"review\"").unwrap();
+        assert_eq!(parsed, Status::Done);
+
+        // The retired name also resolves on the CLI surface.
+        assert_eq!("review".parse::<Status>().unwrap(), Status::Done);
+        assert_eq!("done".parse::<Status>().unwrap(), Status::Done);
+    }
+
+    #[test]
+    fn test_status_round_trip_uses_done() {
+        let rendered = serde_yaml::to_string(&Status::Done).unwrap();
+        assert_eq!(rendered.trim(), "done");
+        assert_eq!(Status::Done.as_str(), "done");
+    }
+
+    #[test]
+    fn test_done_is_finished() {
+        assert!(Status::Done.is_finished());
+        assert!(Status::Closed.is_finished());
+        assert!(Status::Cancelled.is_finished());
+        assert!(!Status::InProgress.is_finished());
+        assert!(!Status::Planned.is_finished());
+    }
+
+    #[test]
+    fn test_unknown_status_still_rejected() {
+        assert!("bogus".parse::<Status>().is_err());
     }
 }

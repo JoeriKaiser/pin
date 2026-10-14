@@ -914,19 +914,19 @@ async function runHarness() {
   assert.ok(typeof renderHandoff === 'function', 'renderHandoff is exported');
   const handoffCardEl = documentMock.getElementById('handoff-card');
 
-  const reviewItem = {
+  const completedItem = {
     id: 'rev-item-1',
-    status: 'review',
+    status: 'done',
     handoff: {
       progress: '1. Added feature XYZ\n2. Refactored module',
       verification: 'Cargo test passed 51/51 unit tests'
     }
   };
-  renderHandoff(reviewItem);
+  renderHandoff(completedItem);
   assert.strictEqual(handoffCardEl.hidden, false);
   const fields = handoffCardEl.children.filter(c => c.classList && c.classList.contains('handoff-field'));
   assert.strictEqual(fields.length, 2);
-  assert.ok(fields[0].classList.contains('handoff-field-verification'), 'First block is verification for review item');
+  assert.ok(fields[0].classList.contains('handoff-field-verification'), 'First block is verification for completed item');
   assert.ok(fields[1].classList.contains('handoff-field-progress'), 'Second block is progress');
   assert.ok(fields[0].children.some(c => c.classList && c.classList.contains('handoff-text')), 'Verification renders as rich handoff-text');
   assert.ok(fields[1].children.some(c => c.classList && c.classList.contains('handoff-text')), 'Progress renders as rich handoff-text');
@@ -952,25 +952,22 @@ async function runHarness() {
   const buildBoardCard = testExports.buildBoardCard || win.buildBoardCard;
   assert.ok(typeof buildBoardCard === 'function', 'buildBoardCard is exported');
 
-  const reviewCard = buildBoardCard({ id: 'r1', title: 'Review', status: 'review', type: 'task', timestamp: Date.now() });
-  assert.ok(reviewCard.querySelector('.btn-commit-pr'), 'Review card has Commit + PR');
-
   const doneCard = buildBoardCard({ id: 'd1', title: 'Done', status: 'done', type: 'task', timestamp: Date.now() });
   assert.ok(doneCard.querySelector('.btn-commit-pr'), 'Done card has Commit + PR');
 
   const plannedCard = buildBoardCard({ id: 'p1', title: 'Planned', status: 'planned', type: 'task', timestamp: Date.now() });
   assert.strictEqual(plannedCard.querySelector('.btn-commit-pr'), null, 'Planned card lacks Commit + PR');
 
-  // Merged review card suppresses Commit + PR and shows indicator
-  const reviewMerged = buildBoardCard({ id: 'rm1', title: 'Merged', status: 'review', type: 'task', git_status: 'merged', timestamp: Date.now() });
-  assert.strictEqual(reviewMerged.querySelector('.btn-commit-pr'), null, 'Merged review card suppresses Commit + PR');
-  assert.ok(reviewMerged.querySelector('.indicator-merged'), 'Merged review card has indicator');
-  assert.strictEqual(reviewMerged.querySelector('.indicator-merged').textContent, 'Merged into main');
+  // Merged card suppresses Commit + PR and shows indicator
+  const mergedCard = buildBoardCard({ id: 'rm1', title: 'Merged', status: 'done', type: 'task', git_status: 'merged', timestamp: Date.now() });
+  assert.strictEqual(mergedCard.querySelector('.btn-commit-pr'), null, 'Merged card suppresses Commit + PR');
+  assert.ok(mergedCard.querySelector('.indicator-merged'), 'Merged card has indicator');
+  assert.strictEqual(mergedCard.querySelector('.indicator-merged').textContent, 'Merged into main');
 
-  // Open PR review card suppresses Commit + PR and shows PR link
-  const reviewPr = buildBoardCard({ id: 'rp1', title: 'Open PR', status: 'review', type: 'task', git_status: 'pr_open', pr_url: 'https://github.com/JoeriKaiser/pin/pull/42', pr_number: 42, timestamp: Date.now() });
-  assert.strictEqual(reviewPr.querySelector('.btn-commit-pr'), null, 'Open PR card suppresses Commit + PR');
-  const prLink = reviewPr.querySelector('.btn-pr-link');
+  // Open PR card suppresses Commit + PR and shows PR link
+  const prCard = buildBoardCard({ id: 'rp1', title: 'Open PR', status: 'done', type: 'task', git_status: 'pr_open', pr_url: 'https://github.com/JoeriKaiser/pin/pull/42', pr_number: 42, timestamp: Date.now() });
+  assert.strictEqual(prCard.querySelector('.btn-commit-pr'), null, 'Open PR card suppresses Commit + PR');
+  const prLink = prCard.querySelector('.btn-pr-link');
   assert.ok(prLink, 'Open PR card has PR link button');
   assert.strictEqual(prLink.getAttribute('href'), 'https://github.com/JoeriKaiser/pin/pull/42');
   assert.ok(prLink.textContent.includes('PR #42'), 'PR link button displays PR number');
@@ -1013,12 +1010,11 @@ async function runHarness() {
   const boardCardTitle = doneColCards.querySelector('.board-card-title');
   assert.ok(boardCardTitle.textContent.includes('Updated Title in Board'), 'setViewMode(board) immediately re-renders board cards');
 
-  // Quick archive button on Done / Review cards
-  assert.ok(reviewCard.querySelector('.btn-archive'), 'Review card has quick archive button');
+  // Quick archive button on Done cards
   assert.ok(doneCard.querySelector('.btn-archive'), 'Done card has quick archive button');
   assert.strictEqual(plannedCard.querySelector('.btn-archive'), null, 'Planned card lacks archive button');
-  assert.ok(reviewMerged.querySelector('.btn-archive'), 'Merged review card has quick archive button');
-  assert.ok(reviewPr.querySelector('.btn-archive'), 'Open PR review card has quick archive button');
+  assert.ok(mergedCard.querySelector('.btn-archive'), 'Merged done card has quick archive button');
+  assert.ok(prCard.querySelector('.btn-archive'), 'Open PR done card has quick archive button');
   assert.ok(doneMerged.querySelector('.btn-archive'), 'Merged done card has quick archive button');
   assert.ok(donePr.querySelector('.btn-archive'), 'Open PR done card has quick archive button');
   assert.strictEqual(doneRunningCard.querySelector('.btn-archive'), null, 'Running done card suppresses quick archive button');

@@ -123,7 +123,7 @@ export function buildBoardCard(item) {
     meta.appendChild(viewRunBtn);
   } else {
     var cardStatus = itemStatus(item);
-    if ((cardStatus === 'review' || cardStatus === 'done') && !item.archived_at) {
+    if (cardStatus === 'done' && !item.archived_at) {
       var isMerged = item.git_status === 'merged';
       var isPrOpen = item.git_status === 'pr_open' || (item.pr_url && item.pr_url.length > 0);
       if (isPrOpen) {
@@ -220,7 +220,7 @@ export function renderBoard() {
     planned: document.querySelector('.board-col-cards[data-drop-status="planned"]'),
     in_progress: document.querySelector('.board-col-cards[data-drop-status="in_progress"]'),
     blocked: document.querySelector('.board-col-cards[data-drop-status="blocked"]'),
-    done_review: document.querySelector('.board-col-cards[data-drop-status="done"]'),
+    done: document.querySelector('.board-col-cards[data-drop-status="done"]'),
     closed: document.querySelector('.board-drawer-content')
   };
 
@@ -240,7 +240,7 @@ export function renderBoard() {
   });
 
   var shownIds = new Set();
-  var counts = { created: 0, planned: 0, in_progress: 0, blocked: 0, done_review: 0, closed: 0 };
+  var counts = { created: 0, planned: 0, in_progress: 0, blocked: 0, done: 0, closed: 0 };
 
   (state.shown || []).forEach(function (item) {
     shownIds.add(item.id);
@@ -250,7 +250,7 @@ export function renderBoard() {
     else if (st === 'planned') { targetCol = cols.planned; counts.planned++; }
     else if (st === 'in_progress') { targetCol = cols.in_progress; counts.in_progress++; }
     else if (st === 'blocked') { targetCol = cols.blocked; counts.blocked++; }
-    else if (st === 'review' || st === 'done') { targetCol = cols.done_review; counts.done_review++; }
+    else if (st === 'done') { targetCol = cols.done; counts.done++; }
     else if (st === 'closed' || st === 'cancelled') { targetCol = cols.closed; counts.closed++; }
 
     if (!targetCol) return;
@@ -309,6 +309,6 @@ export function renderBoard() {
   text(els.countPlanned, counts.planned);
   text(els.countInProgress, counts.in_progress);
   text(els.countBlocked, counts.blocked);
-  text(els.countDoneReview, counts.done_review);
+  text(els.countDone, counts.done);
   text(els.countClosed, counts.closed);
 }

@@ -134,11 +134,6 @@
   --status-blocked-border: oklch(0.85 0.07 25);
   --status-blocked-accent: oklch(0.55 0.16 25);
 
-  --status-review-bg: oklch(0.95 0.04 290);
-  --status-review-ink: oklch(0.42 0.14 290);
-  --status-review-border: oklch(0.86 0.07 290);
-  --status-review-accent: oklch(0.55 0.16 290);
-
   --status-done-bg: oklch(0.95 0.04 165);
   --status-done-ink: oklch(0.38 0.12 165);
   --status-done-border: oklch(0.85 0.06 165);
@@ -224,11 +219,6 @@
     --status-blocked-ink: oklch(0.82 0.12 25);
     --status-blocked-border: oklch(0.36 0.08 25);
     --status-blocked-accent: oklch(0.65 0.16 25);
-
-    --status-review-bg: oklch(0.23 0.05 290);
-    --status-review-ink: oklch(0.82 0.12 290);
-    --status-review-border: oklch(0.35 0.07 290);
-    --status-review-accent: oklch(0.65 0.14 290);
 
     --status-done-bg: oklch(0.22 0.05 165);
     --status-done-ink: oklch(0.82 0.11 165);
@@ -919,10 +909,6 @@ a:hover {
   border-left-color: var(--status-blocked-accent) !important;
 }
 
-.status-border-review {
-  border-left-color: var(--status-review-accent) !important;
-}
-
 .status-border-done {
   border-left-color: var(--status-done-accent) !important;
 }
@@ -982,12 +968,6 @@ a:hover {
   background: var(--status-blocked-bg);
   color: var(--status-blocked-ink);
   border-color: var(--status-blocked-border);
-}
-
-.status-review {
-  background: var(--status-review-bg);
-  color: var(--status-review-ink);
-  border-color: var(--status-review-border);
 }
 
 .status-done {
