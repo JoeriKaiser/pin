@@ -107,7 +107,7 @@ jobs:
           try {
               $process = Start-Process -FilePath $pin -ArgumentList "view", "--no-open", "--format", "json" -RedirectStandardOutput $stdout_file -RedirectStandardError $stderr_file -PassThru
               $url = $null
-              for ($i = 0; $i -lt 30; $i++) {
+              for ($i = 0; $i -lt 150; $i++) {
                   Start-Sleep -Milliseconds 200
                   if (Test-Path $stdout_file) {
                       $content = Get-Content $stdout_file -Raw
@@ -119,6 +119,7 @@ jobs:
                   }
               }
               if (-not $url) {
+                  if (Test-Path $stdout_file) { Get-Content $stdout_file }
                   if (Test-Path $stderr_file) { Get-Content $stderr_file }
                   throw "View server did not start or print URL"
               }
