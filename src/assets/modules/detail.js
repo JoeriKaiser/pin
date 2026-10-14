@@ -14,7 +14,8 @@ var callbacks = {
   openAgentDrawer: function () {},
   openCompleteModal: function () {},
   sendCommitPrItem: function () {},
-  openCloseModal: function () {}
+  openCloseModal: function () {},
+  refreshData: function () {}
 };
 
 export function setDetailCallbacks(cbs) {
@@ -196,7 +197,10 @@ export function renderActions(item) {
     }
     btn('Move to Planned', item.type !== 'idea', function () {
       sendAction(item.id, { action: 'transition', to: 'planned', expect_revision: rev })
-        .then(function () { showToast('Moved to Planned', false); })
+        .then(function () {
+          showToast('Moved to Planned', false);
+          callbacks.refreshData();
+        })
         .catch(function (err) { showToast('Action failed: ' + err.message, true); });
     });
   }
@@ -252,7 +256,10 @@ export function renderActions(item) {
   if (st === 'blocked') {
     btn('Unblock (Move to Planned)', true, function () {
       sendAction(item.id, { action: 'transition', to: 'planned', expect_revision: rev })
-        .then(function () { showToast('Moved to Planned', false); })
+        .then(function () {
+          showToast('Moved to Planned', false);
+          callbacks.refreshData();
+        })
         .catch(function (err) { showToast('Action failed: ' + err.message, true); });
     });
   }
@@ -281,7 +288,10 @@ export function renderActions(item) {
     });
     btn('Reopen to Planned', false, function () {
       sendAction(item.id, { action: 'transition', to: 'planned', expect_revision: rev })
-        .then(function () { showToast('Reopened to Planned', false); })
+        .then(function () {
+          showToast('Reopened to Planned', false);
+          callbacks.refreshData();
+        })
         .catch(function (err) { showToast('Action failed: ' + err.message, true); });
     });
   }
@@ -310,7 +320,10 @@ export function renderActions(item) {
     });
     btn('Reopen to Planned', false, function () {
       sendAction(item.id, { action: 'transition', to: 'planned', expect_revision: rev })
-        .then(function () { showToast('Reopened to Planned', false); })
+        .then(function () {
+          showToast('Reopened to Planned', false);
+          callbacks.refreshData();
+        })
         .catch(function (err) { showToast('Action failed: ' + err.message, true); });
     });
   }

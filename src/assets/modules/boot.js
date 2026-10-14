@@ -62,13 +62,14 @@ export function ingest(data) {
   applyRoute();
 }
 
-export function load(isInitial) {
-  return fetchData(state.etag)
+export function load(isInitial, force) {
+  var etag = force ? null : state.etag;
+  return fetchData(etag)
     .then(function (res) {
       if (res.status === 304) return null;
       if (!res.ok) throw new Error((isInitial ? 'Could not load vault (' : 'Data load error: ') + res.status + (isInitial ? ')' : ''));
-      var etag = res.headers && res.headers.get ? res.headers.get('ETag') : null;
-      if (etag) state.etag = etag;
+      var etagHeader = res.headers && res.headers.get ? res.headers.get('ETag') : null;
+      if (etagHeader) state.etag = etagHeader;
       return res.json();
     })
     .then(function (data) {
@@ -80,8 +81,8 @@ export function load(isInitial) {
     });
 }
 
-export function refreshData() {
-  return load(false);
+export function refreshData(force) {
+  return load(false, force);
 }
 
 export function checkUpdate(force) {

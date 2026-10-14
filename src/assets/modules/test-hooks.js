@@ -16,10 +16,11 @@ import { createItem } from './api.js';
 import {
   openAgentDrawer, closeAgentDrawer, handleAgentStreamEvent,
   formatToolCallInline, renderSwimlaneSvg, openToolInspector,
-  closeToolInspector, appendTrajectoryContextRow, filterTrajectoryRows
+  closeToolInspector, appendTrajectoryContextRow, filterTrajectoryRows,
+  updateActiveRuns
 } from './agent.js';
 import {
-  buildBoardCard, handleCardDrop, setViewMode
+  buildBoardCard, handleCardDrop, setViewMode, renderBoard
 } from './board.js';
 import {
   bind, sendRunItem, sendCommitPrItem, handleUpdateInstall, handleGitSync
@@ -64,6 +65,8 @@ if (typeof window !== 'undefined') {
     renderHandoff: renderHandoff,
     handleCardDrop: handleCardDrop,
     setViewMode: setViewMode,
+    renderBoard: renderBoard,
+    updateActiveRuns: updateActiveRuns,
     checkUpdate: checkUpdate,
     handleUpdateInstall: handleUpdateInstall,
     handleGitSync: handleGitSync,

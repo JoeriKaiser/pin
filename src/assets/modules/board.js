@@ -10,7 +10,8 @@ var callbacks = {
   openWorktreeModal: function () {},
   openCloseModal: function () {},
   openAgentDrawer: function () {},
-  sendCommitPrItem: function () {}
+  sendCommitPrItem: function () {},
+  refreshData: function () {}
 };
 
 export function setBoardCallbacks(cbs) {
@@ -28,6 +29,10 @@ export function handleCardDrop(droppedId, targetStatus) {
       callbacks.openCompleteModal(item);
     } else {
       sendAction(item.id, { action: 'transition', to: 'done', expect_revision: rev })
+        .then(function () {
+          showToast('Moved to Done', false);
+          callbacks.refreshData();
+        })
         .catch(function (err) { showToast('Action failed: ' + err.message, true); });
     }
     return;
@@ -47,7 +52,10 @@ export function handleCardDrop(droppedId, targetStatus) {
   if (targetStatus === 'planned') {
     if (cur === 'planned') return;
     sendAction(item.id, { action: 'transition', to: 'planned', expect_revision: rev })
-      .then(function () { showToast('Moved to Planned', false); })
+      .then(function () {
+        showToast('Moved to Planned', false);
+        callbacks.refreshData();
+      })
       .catch(function (err) { showToast('Action failed: ' + err.message, true); });
     return;
   }
@@ -55,6 +63,10 @@ export function handleCardDrop(droppedId, targetStatus) {
   if (targetStatus === 'created') {
     if (cur !== 'created') {
       sendAction(item.id, { action: 'transition', to: 'created', expect_revision: rev })
+        .then(function () {
+          showToast('Moved to Backlog', false);
+          callbacks.refreshData();
+        })
         .catch(function (err) { showToast('Action failed: ' + err.message, true); });
     }
     return;
@@ -177,6 +189,9 @@ export function setViewMode(mode) {
   if (els.viewDetailBtn) els.viewDetailBtn.setAttribute('aria-pressed', String(state.viewMode === 'detail'));
   if (state.viewMode === 'detail' && !state.selected && state.shown.length) {
     setRoute(state.shown[0].id);
+  }
+  if (state.viewMode === 'board') {
+    renderBoard();
   }
 }
 

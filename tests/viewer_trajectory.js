@@ -213,6 +213,13 @@ function getOrCreateElement(id) {
   }
   return elementsById.get(id);
 }
+const elementsBySelector = new Map();
+function getOrCreateBySelector(sel) {
+  if (!elementsBySelector.has(sel)) {
+    elementsBySelector.set(sel, createMockElement('', 'div'));
+  }
+  return elementsBySelector.get(sel);
+}
 
 const documentMock = {
   readyState: 'loading',
@@ -238,11 +245,11 @@ const documentMock = {
   },
   querySelector(sel) {
     if (sel.startsWith('#')) return getOrCreateElement(sel.slice(1));
-    return createMockElement('', 'div');
+    return getOrCreateBySelector(sel);
   },
   querySelectorAll(sel) {
     if (sel.startsWith('#')) return [getOrCreateElement(sel.slice(1))];
-    return [createMockElement('', 'div')];
+    return [getOrCreateBySelector(sel)];
   },
   addEventListener() {},
   removeEventListener() {}
@@ -721,7 +728,14 @@ async function runHarness() {
   assert.strictEqual(actionPayload.to, 'planned');
   assert.strictEqual(actionPayload.expect_revision, 1);
 
-  // Dropping planned card on in_progress prompts worktree modal
+  // Dropping created card on done calls transition endpoint with to: done
+  handleCardDrop('item-drop-2', 'done');
+  assert.ok(actionPayload, 'sendAction was called for transition to done');
+  assert.strictEqual(actionPayload.action, 'transition');
+  assert.strictEqual(actionPayload.to, 'done');
+  assert.strictEqual(actionPayload.expect_revision, 1);
+
+   // Dropping planned card on in_progress prompts worktree modal
   handleCardDrop('item-drop-1', 'in_progress');
   assert.strictEqual(testExports.state.pendingWorktreeItem.id, 'item-drop-1');
   assert.strictEqual(modalTitle.textContent, 'Start Agent Run');
@@ -901,27 +915,53 @@ async function runHarness() {
   assert.strictEqual(donePr.querySelector('.btn-commit-pr'), null, 'Open PR done card suppresses Commit + PR');
   assert.ok(donePr.querySelector('.btn-pr-link'), 'Open PR done card has PR link');
 
-  // Git Sync button handling
-  const handleGitSync = testExports.handleGitSync;
-  assert.ok(typeof handleGitSync === 'function', 'handleGitSync is exported');
-  let syncCalled = false;
-  fetchStub = function (url) {
-    if (url.includes('sync')) {
-      syncCalled = true;
-      return Promise.resolve({
-        ok: true,
-        status: 200,
-        json: () => Promise.resolve({ status: 'ok', synced: [{ id: 's1' }] })
-      });
-    }
-    return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) });
-  };
-  await handleGitSync();
-  assert.ok(syncCalled, 'handleGitSync called /sync endpoint');
+  // Done card while agent is running shows Running Agent and View Run, suppresses Commit + PR
+  testExports.state.activeRuns = new Set(['done-run-1']);
+  const doneRunningCard = buildBoardCard({ id: 'done-run-1', title: 'Running Done Task', status: 'done', type: 'task', timestamp: Date.now() });
+  assert.strictEqual(doneRunningCard.querySelector('.btn-commit-pr'), null, 'Running done card suppresses Commit + PR');
+  assert.ok(doneRunningCard.querySelector('.card-running-indicator'), 'Running done card has running indicator');
+  assert.ok(doneRunningCard.querySelector('.btn-view-run'), 'Running done card has view run button');
 
-  console.log('PASS: Commit + PR quick action buttons and Git sync verified');
+  // When agent run stream completes, Done card immediately gets Commit + PR created
+  testExports.state.items = [
+    { id: 'done-run-1', title: 'Running Done Task', status: 'done', type: 'task', timestamp: Date.now() }
+  ];
+  testExports.state.currentStreamingId = 'done-run-1';
+  testExports.state.viewMode = 'board';
+  testExports.handleAgentStreamEvent({ type: 'finished', update: { success: true } });
+  assert.strictEqual(testExports.state.activeRuns.has('done-run-1'), false, 'activeRuns removed completed task');
+  const doneColCards = documentMock.querySelector('.board-col-cards[data-drop-status="done"]');
+  const reRenderedCard = doneColCards.querySelector('.board-card[data-id="done-run-1"]');
+  assert.ok(reRenderedCard, 'Done column contains completed card');
+  assert.ok(reRenderedCard.querySelector('.btn-commit-pr'), 'Completed card in Done column immediately got Commit + PR button');
+  assert.strictEqual(reRenderedCard.querySelector('.card-running-indicator'), null, 'Completed card no longer has running indicator');
 
+  // Switching viewMode to board calls renderBoard and keeps cards fresh
+  testExports.setViewMode('detail');
+  testExports.state.items[0].title = 'Updated Title in Board';
+  testExports.setViewMode('board');
+  const boardCardTitle = doneColCards.querySelector('.board-card-title');
+  assert.ok(boardCardTitle.textContent.includes('Updated Title in Board'), 'setViewMode(board) immediately re-renders board cards');
 
+   // Git Sync button handling
+   const handleGitSync = testExports.handleGitSync;
+   assert.ok(typeof handleGitSync === 'function', 'handleGitSync is exported');
+   let syncCalled = false;
+   fetchStub = function (url) {
+     if (url.includes('sync')) {
+       syncCalled = true;
+       return Promise.resolve({
+         ok: true,
+         status: 200,
+         json: () => Promise.resolve({ status: 'ok', synced: [{ id: 's1' }] })
+       });
+     }
+     return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) });
+   };
+   await handleGitSync();
+   assert.ok(syncCalled, 'handleGitSync called /sync endpoint');
+
+   console.log('PASS: Commit + PR quick action buttons and Git sync verified');
   console.log('\n--- 11. Testing Auto Update Check & Update Button ---');
   const checkUpdate = testExports.checkUpdate;
   const handleUpdateInstall = testExports.handleUpdateInstall;
