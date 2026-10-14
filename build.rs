@@ -43,6 +43,9 @@ fn main() {
         .or(version_from_git)
         .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
 
-    let cleaned_version = raw_version.trim().trim_start_matches(['v', 'V']).to_string();
+    let cleaned_version = raw_version
+        .trim()
+        .trim_start_matches(['v', 'V'])
+        .to_string();
     println!("cargo:rustc-env=PIN_VERSION={cleaned_version}");
 }
