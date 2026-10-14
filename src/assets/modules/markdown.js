@@ -64,7 +64,7 @@ if (typeof marked !== 'undefined' && marked && typeof marked.Renderer === 'funct
       var viewUrl = BASE + 'screenshots/' + encodeURIComponent(filename);
       return '<p class="screenshot-ref">📷 <a href="' + escapeHtml(viewUrl) + '" target="_blank" rel="noopener"><code>' + escapeHtml(src || label || 'screenshot') + '</code></a></p>';
     };
-    marked.use({ renderer: markedRenderer, gfm: true });
+    marked.use({ renderer: markedRenderer, gfm: true, breaks: true });
   } catch (_) {}
 }
 
@@ -92,7 +92,7 @@ export function renderMarkdownSnippet(raw, container) {
   if (!trimmed) return;
   if (typeof marked !== 'undefined' && marked) {
     try {
-      var dirty = marked.parse(trimmed, { renderer: markedRenderer, gfm: true, async: false });
+      var dirty = marked.parse(trimmed, { renderer: markedRenderer, gfm: true, breaks: true, async: false });
       var clean = sanitizeHtml(dirty);
       container.innerHTML = clean;
       if (!container.textContent && !container.childNodes.length) {
@@ -108,7 +108,7 @@ export function renderMarkdown(item) {
   if (!els.body || !item) return;
   var source = bodyWithoutDuplicateTitle(item.content || item.body, item.title), dirty;
   try {
-    dirty = marked.parse(source, { renderer: markedRenderer, gfm: true, async: false });
+    dirty = marked.parse(source, { renderer: markedRenderer, gfm: true, breaks: true, async: false });
   } catch (_) {
     text(els.body, source);
     return;

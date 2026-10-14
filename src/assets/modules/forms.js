@@ -159,7 +159,7 @@ export function setSpecModalTab(tab) {
         var rendered = '';
         if (typeof marked !== 'undefined' && marked && typeof marked.parse === 'function') {
           try {
-            rendered = marked.parse(raw, { renderer: markedRenderer, gfm: true, async: false });
+            rendered = marked.parse(raw, { renderer: markedRenderer, gfm: true, breaks: true, async: false });
           } catch (_) {
             rendered = raw;
           }
