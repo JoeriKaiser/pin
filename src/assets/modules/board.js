@@ -101,6 +101,13 @@ export function buildBoardCard(item) {
   var meta = node('div', 'board-card-meta');
   meta.appendChild(node('span', 'type-badge', itemType(item)));
 
+  if (hasUnresolvedPrereqs(item)) {
+    card.classList.add('is-locked');
+    var lock = node('span', 'lock-indicator', '🔒 Locked');
+    lock.title = 'Has unresolved prerequisite dependencies';
+    meta.appendChild(lock);
+  }
+
   if (state.activeRuns.has(item.id)) {
     var runBadge = node('span', 'card-running-indicator');
     runBadge.appendChild(node('span', 'card-running-dot'));
@@ -110,13 +117,13 @@ export function buildBoardCard(item) {
     var viewRunBtn = node('button', 'btn-view-run', 'View Run');
     viewRunBtn.type = 'button';
     viewRunBtn.addEventListener('click', function (e) {
-      e.stopPropagation();
+      if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
       callbacks.openAgentDrawer(item.id);
     });
     meta.appendChild(viewRunBtn);
   } else {
     var cardStatus = itemStatus(item);
-    if (cardStatus === 'review' || cardStatus === 'done') {
+    if ((cardStatus === 'review' || cardStatus === 'done') && !item.archived_at) {
       var isMerged = item.git_status === 'merged';
       var isPrOpen = item.git_status === 'pr_open' || (item.pr_url && item.pr_url.length > 0);
       if (isPrOpen) {
@@ -128,7 +135,7 @@ export function buildBoardCard(item) {
         prLink.rel = 'noopener noreferrer';
         prLink.title = 'Open Pull Request: ' + (item.pr_url || '');
         prLink.addEventListener('click', function (e) {
-          e.stopPropagation();
+          if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
         });
         meta.appendChild(prLink);
       } else if (isMerged) {
@@ -140,20 +147,31 @@ export function buildBoardCard(item) {
         commitPrBtn.type = 'button';
         commitPrBtn.title = 'Start agent to commit worktree and create PR';
         commitPrBtn.addEventListener('click', function (e) {
-          e.stopPropagation();
+          if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
           callbacks.sendCommitPrItem(item.id);
         });
         meta.appendChild(commitPrBtn);
       }
+
+      var archiveBtn = node('button', 'btn-archive', 'Archive');
+      archiveBtn.type = 'button';
+      archiveBtn.title = 'Archive item';
+      archiveBtn.addEventListener('click', function (e) {
+        if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+        archiveBtn.disabled = true;
+        sendAction(item.id, { action: 'archive', expect_revision: item.revision })
+          .then(function () {
+            showToast('Archived ' + (item.title || item.id), false);
+            callbacks.refreshData();
+          })
+          .catch(function (err) {
+            archiveBtn.disabled = false;
+            showToast('Action failed: ' + err.message, true);
+          });
+      });
+      meta.appendChild(archiveBtn);
     }
   }
-  if (hasUnresolvedPrereqs(item)) {
-    card.classList.add('is-locked');
-    var lock = node('span', 'lock-indicator', '🔒 Locked');
-    lock.title = 'Has unresolved prerequisite dependencies';
-    meta.appendChild(lock);
-  }
-
   card.appendChild(meta);
 
   card.addEventListener('dragstart', function (e) {

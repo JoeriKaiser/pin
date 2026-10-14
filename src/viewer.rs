@@ -1,6 +1,8 @@
 use crate::acp::AcpManagerError;
 use crate::assets::*;
-use crate::model::{ArchiveFilter, IdeaMeta, Kind, OutputFormat, Priority, Status, WorkType};
+use crate::model::{
+    ArchiveFilter, IdeaMeta, Kind, OutputFormat, Priority, Resolution, Status, WorkType,
+};
 use crate::output::JsonIdeaOutput;
 use crate::vault::{
     collect_ideas, collect_ideas_with_filter, generate_token, resolve_selector, FilterOptions,
@@ -98,6 +100,8 @@ struct ActionPayload {
     title: Option<String>,
     #[serde(default)]
     body: Option<String>,
+    #[serde(default)]
+    resolution: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -1088,6 +1092,27 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                         payload.note.as_deref(),
                         payload.expect_revision,
                     ),
+                    "archive" => {
+                        let resolution = payload
+                            .resolution
+                            .as_deref()
+                            .and_then(|r| r.parse::<Resolution>().ok())
+                            .unwrap_or(Resolution::Implemented);
+                        workflow::archive_item(
+                            &snapshot.vault_path,
+                            &filename,
+                            resolution,
+                            Some(actor_to_use),
+                            payload.note.as_deref(),
+                            payload.expect_revision,
+                        )
+                    }
+                    "unarchive" => workflow::unarchive_item(
+                        &snapshot.vault_path,
+                        &filename,
+                        Some(actor_to_use),
+                        payload.expect_revision,
+                    ),
                     "commit_pr" | "commit+pr" => {
                         match snapshot.acp_manager.start_commit_pr_run(id) {
                             Ok(()) => {
@@ -1154,6 +1179,7 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                                 return;
                             }
                         } else if payload.action == "release"
+                            || payload.action == "archive"
                             || (payload.action == "transition"
                                 && payload.to != Some(Status::InProgress))
                         {
@@ -2083,6 +2109,17 @@ mod tests {
         assert_eq!(payload.action, "to_spec");
         assert_eq!(payload.title.as_deref(), Some("New Spec Title"));
         assert_eq!(payload.body.as_deref(), Some("## Problem\nDetails"));
+    }
+
+    #[test]
+    fn test_action_payload_archive() {
+        let json =
+            r###"{"action":"archive","resolution":"implemented","expect_revision":3,"note":"shipped"}"###;
+        let payload: ActionPayload = serde_json::from_str(json).unwrap();
+        assert_eq!(payload.action, "archive");
+        assert_eq!(payload.resolution.as_deref(), Some("implemented"));
+        assert_eq!(payload.expect_revision, Some(3));
+        assert_eq!(payload.note.as_deref(), Some("shipped"));
     }
 
     #[test]

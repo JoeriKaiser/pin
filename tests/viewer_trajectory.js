@@ -121,7 +121,12 @@ function createMockElement(id, tagName = 'div') {
       return true;
     },
     click() {
-      this.dispatchEvent({ type: 'click', target: this });
+      this.dispatchEvent({
+        type: 'click',
+        target: this,
+        stopPropagation() {},
+        preventDefault() {}
+      });
     },
     focus() {},
     blur() {}
@@ -956,6 +961,42 @@ async function runHarness() {
   testExports.setViewMode('board');
   const boardCardTitle = doneColCards.querySelector('.board-card-title');
   assert.ok(boardCardTitle.textContent.includes('Updated Title in Board'), 'setViewMode(board) immediately re-renders board cards');
+
+  // Quick archive button on Done / Review cards
+  assert.ok(reviewCard.querySelector('.btn-archive'), 'Review card has quick archive button');
+  assert.ok(doneCard.querySelector('.btn-archive'), 'Done card has quick archive button');
+  assert.strictEqual(plannedCard.querySelector('.btn-archive'), null, 'Planned card lacks archive button');
+  assert.ok(reviewMerged.querySelector('.btn-archive'), 'Merged review card has quick archive button');
+  assert.ok(reviewPr.querySelector('.btn-archive'), 'Open PR review card has quick archive button');
+  assert.ok(doneMerged.querySelector('.btn-archive'), 'Merged done card has quick archive button');
+  assert.ok(donePr.querySelector('.btn-archive'), 'Open PR done card has quick archive button');
+  assert.strictEqual(doneRunningCard.querySelector('.btn-archive'), null, 'Running done card suppresses quick archive button');
+
+  const alreadyArchivedCard = buildBoardCard({ id: 'arch-1', title: 'Archived Card', status: 'done', type: 'task', archived_at: 1700000000, timestamp: Date.now() });
+  assert.strictEqual(alreadyArchivedCard.querySelector('.btn-archive'), null, 'Already archived card lacks archive button');
+
+  // Clicking quick archive button sends archive action
+  let archiveActionPayload = null;
+  let archiveActionUrl = null;
+  fetchStub = function (url, opts) {
+    if (url.includes('/action')) {
+      archiveActionUrl = url;
+      archiveActionPayload = JSON.parse(opts.body);
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        headers: { get: () => null },
+        json: () => Promise.resolve({ id: 'd1', status: 'done', archived_at: Date.now() })
+      });
+    }
+    return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) });
+  };
+
+  const archiveBtn = doneCard.querySelector('.btn-archive');
+  assert.ok(archiveBtn, 'Done card has archive button');
+  archiveBtn.click();
+  assert.ok(archiveActionUrl && archiveActionUrl.includes('items/d1/action'), 'Archive button calls item action endpoint');
+  assert.strictEqual(archiveActionPayload.action, 'archive', 'Archive action payload sent');
 
    // Git Sync button handling
    const handleGitSync = testExports.handleGitSync;

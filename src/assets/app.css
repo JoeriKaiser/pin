@@ -1097,6 +1097,38 @@ a:hover {
   align-items: center;
 }
 
+
+.btn-archive {
+  padding: 0 var(--space-2);
+  height: var(--badge-height);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.btn-archive:hover {
+  background: var(--soft);
+  color: var(--ink);
+  border-color: var(--line-strong);
+}
+
+.btn-archive:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.board-card-meta > .btn-archive:only-child,
+.board-card-meta > :not(.btn-commit-pr):not(.btn-pr-link):not(.indicator-merged) + .btn-archive {
+  margin-left: auto;
+}
 /* --------------------------------------------------------------------------
    8. Quick Add & Inline Editor
    -------------------------------------------------------------------------- */

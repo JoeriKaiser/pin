@@ -286,6 +286,16 @@ export function renderActions(item) {
     btn('Close Item', false, function () {
       callbacks.openCloseModal(item);
     });
+    if (!item.archived_at) {
+      btn('Archive Item', false, function () {
+        sendAction(item.id, { action: 'archive', expect_revision: rev })
+          .then(function () {
+            showToast('Archived ' + (item.title || item.id), false);
+            callbacks.refreshData();
+          })
+          .catch(function (err) { showToast('Action failed: ' + err.message, true); });
+      });
+    }
     btn('Reopen to Planned', false, function () {
       sendAction(item.id, { action: 'transition', to: 'planned', expect_revision: rev })
         .then(function () {
@@ -318,6 +328,16 @@ export function renderActions(item) {
     btn('Close Item', false, function () {
       callbacks.openCloseModal(item);
     });
+    if (!item.archived_at) {
+      btn('Archive Item', false, function () {
+        sendAction(item.id, { action: 'archive', expect_revision: rev })
+          .then(function () {
+            showToast('Archived ' + (item.title || item.id), false);
+            callbacks.refreshData();
+          })
+          .catch(function (err) { showToast('Action failed: ' + err.message, true); });
+      });
+    }
     btn('Reopen to Planned', false, function () {
       sendAction(item.id, { action: 'transition', to: 'planned', expect_revision: rev })
         .then(function () {
@@ -331,6 +351,27 @@ export function renderActions(item) {
   if (st !== 'closed' && st !== 'cancelled' && st !== 'done' && st !== 'review') {
     btn('Close Item', false, function () {
       callbacks.openCloseModal(item);
+    });
+  }
+  if (st === 'closed' && !item.archived_at) {
+    btn('Archive Item', false, function () {
+      sendAction(item.id, { action: 'archive', expect_revision: rev })
+        .then(function () {
+          showToast('Archived ' + (item.title || item.id), false);
+          callbacks.refreshData();
+        })
+        .catch(function (err) { showToast('Action failed: ' + err.message, true); });
+    });
+  }
+
+  if (item.archived_at) {
+    btn('Unarchive Item', false, function () {
+      sendAction(item.id, { action: 'unarchive', expect_revision: rev })
+        .then(function () {
+          showToast('Unarchived ' + (item.title || item.id), false);
+          callbacks.refreshData();
+        })
+        .catch(function (err) { showToast('Action failed: ' + err.message, true); });
     });
   }
 
