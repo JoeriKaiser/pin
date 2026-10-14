@@ -83,6 +83,7 @@ impl WorktreeManager {
 
     /// Attempts to fetch the remote origin tracking refs quietly to ensure
     /// remote branches are up to date before resolving default branch.
+    #[allow(dead_code)]
     pub fn fetch_origin_quietly(repo_path: &Path) {
         let _ = Command::new("git")
             .arg("-C")
@@ -101,9 +102,6 @@ impl WorktreeManager {
     /// 5. `rev-parse --verify refs/heads/master` (local master)
     /// 6. Fallback to `"HEAD"`
     pub fn resolve_default_branch(repo_path: &Path) -> String {
-        // Attempt best-effort fetch if remote origin exists
-        Self::fetch_origin_quietly(repo_path);
-
         // 1. Try origin/main (up-to-date remote main branch)
         if let Ok(out) = Command::new("git")
             .arg("-C")

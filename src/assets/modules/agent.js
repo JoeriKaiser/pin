@@ -4,7 +4,7 @@ import { els, $ } from './dom.js';
 import { fetchRuns, fetchItemLog } from './api.js';
 import { text, clear, node, stripAnsi, cleanThoughtText } from './formatters.js';
 import { setViewMode } from './board.js';
-import { applyRoute } from './router.js';
+import { setRoute } from './router.js';
 var callbacks = { refreshData: function () {}, renderBoard: function () {} };
 export function setAgentCallbacks(cbs) { if (cbs) Object.assign(callbacks, cbs); }
 
@@ -117,8 +117,12 @@ export function openAgentDrawer(itemId) {
   state.currentStreamingId = itemId;
 
   if (state.trajectory && state.trajectory.timer) { clearInterval(state.trajectory.timer); state.trajectory.timer = null; }
-  if (state.viewMode !== 'detail') setViewMode('detail');
-  if (state.selected !== itemId) { state.selected = itemId; applyRoute(); }
+  if (state.selected !== itemId) {
+    setRoute(itemId);
+  }
+  if (state.viewMode !== 'detail') {
+    setViewMode('detail');
+  }
   state.readerTab = 'trajectory';
   if (els.tabAgentTrajectory) els.tabAgentTrajectory.classList.add('active'); if (els.tabTaskSpec) els.tabTaskSpec.classList.remove('active');
   if (els.proposal) els.proposal.hidden = true; if (els.agentDrawer) els.agentDrawer.hidden = false;

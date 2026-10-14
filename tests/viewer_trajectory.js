@@ -841,6 +841,18 @@ async function runHarness() {
   assert.strictEqual(testExports.state.agentDrawerItem, null, 'failed run does not open drawer');
   console.log('PASS: sendRunItem error toasts failure and suppresses drawer');
 
+  // Test Case 8.4: Running in board view stays in board view without opening drawer
+  testExports.setViewMode('board');
+  fetchStub = function (url) {
+    if (url.includes('runs')) {
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ running: ['item-board-run'] }) });
+    }
+    return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ status: 'started' }) });
+  };
+  await sendRunItem('item-board-run', false);
+  assert.strictEqual(testExports.state.viewMode, 'board', 'sendRunItem in board view keeps viewMode as board');
+  console.log('PASS: sendRunItem in board view preserves board view');
+
   console.log('\n--- 9. Testing Handoff Card Layout and Priority ---');
   const renderHandoff = testExports.renderHandoff || win.renderHandoff;
   assert.ok(typeof renderHandoff === 'function', 'renderHandoff is exported');
@@ -1039,6 +1051,48 @@ async function runHarness() {
   assert.ok(updateFooterEl.textContent.includes('2.3.0'), 'Footer reflects current version');
 
   console.log('PASS: Auto update check and update button verified');
+
+  console.log('\n--- 12. Testing Reactive Ingest, First Paint, and Keyed DOM Reconciliation ---');
+  const ingest = testExports.ingest;
+  const renderBoard = testExports.renderBoard;
+  assert.ok(typeof ingest === 'function', 'ingest is exported');
+
+  // Ingest initializes state.shown and populates board cards without 0 counts
+  ingest({
+    items: [
+      { id: 'item-reconcile-1', title: 'Reconcile Task 1', status: 'created', type: 'task', timestamp: Date.now() },
+      { id: 'item-reconcile-2', title: 'Reconcile Task 2', status: 'planned', type: 'task', timestamp: Date.now() }
+    ]
+  });
+  assert.strictEqual(testExports.state.shown.length, 2, 'state.shown immediately populated on ingest');
+  assert.strictEqual(testExports.els.countCreated.textContent, '1', 'Created column count updated');
+  assert.strictEqual(testExports.els.countPlanned.textContent, '1', 'Planned column count updated');
+
+  const createdCol = documentMock.querySelector('.board-col-cards[data-drop-status="created"]');
+  const initialCard1 = createdCol.querySelector('.board-card[data-id="item-reconcile-1"]');
+  assert.ok(initialCard1, 'Initial card 1 present in created column');
+
+  // Keyed DOM reconciliation: re-running renderBoard preserves exact card node when renderKey unchanged
+  renderBoard();
+  const preservedCard1 = createdCol.querySelector('.board-card[data-id="item-reconcile-1"]');
+  assert.strictEqual(preservedCard1, initialCard1, 'Existing card element identity preserved across render cycles');
+
+  // Title change triggers in-place card replacement with updated content
+  testExports.state.items[0].title = 'Reconcile Task 1 Renamed';
+  renderBoard();
+  const updatedCard1 = createdCol.querySelector('.board-card[data-id="item-reconcile-1"]');
+  assert.ok(updatedCard1, 'Updated card 1 exists');
+  const titleSpan = updatedCard1.querySelector('.board-card-title');
+  assert.ok(titleSpan && titleSpan.textContent.includes('Reconcile Task 1 Renamed'), 'Card title reflects updated state');
+
+  // Route synchronization in openAgentDrawer: updates location.hash to target item
+  mockWindow.location.hash = '#/item/item-reconcile-1';
+  testExports.openAgentDrawer('item-reconcile-2');
+  assert.ok(mockWindow.location.hash.includes('item-reconcile-2'), 'openAgentDrawer updates location.hash to target item');
+  assert.strictEqual(testExports.state.currentStreamingId, 'item-reconcile-2', 'currentStreamingId matches target item');
+  testExports.closeAgentDrawer();
+
+  console.log('PASS: Reactive ingest, first paint, and keyed reconciliation verified');
   console.log('\n========================================');
   console.log('ALL VIEWER TRAJECTORY TESTS PASSED (0)');
   console.log('========================================');

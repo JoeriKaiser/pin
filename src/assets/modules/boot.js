@@ -1,4 +1,4 @@
-import { state, ORDER, unique, fillSelect, itemStatus, itemType, kind, priority } from './state.js';
+import { state, ORDER, unique, fillSelect, itemStatus, itemType, kind, priority, updateShown } from './state.js';
 import { els } from './dom.js';
 import { fetchData, fetchUpdate } from './api.js';
 import { text, clear, node, isNarrow } from './formatters.js';
@@ -51,11 +51,19 @@ export function ingest(data) {
   if (serverFilters.tag) filterBits.push('tag: ' + serverFilters.tag);
   text(els.snapshot, 'Vault: ' + state.scope + (state.archive ? ' · ' + state.archive : '') + (filterBits.length ? ' · ' + filterBits.join(' · ') : ''));
   setupFilters();
+  updateShown();
 
-  var currentRoute = route();
-  if (!currentRoute && !isNarrow() && state.items.length && state.viewMode === 'detail') {
-    if (typeof history !== 'undefined' && history.replaceState) {
-      history.replaceState(null, '', '#/item/' + encodeURIComponent(state.items[0].id));
+  if (state.viewMode === 'board') {
+    if (typeof history !== 'undefined' && history.replaceState && typeof location !== 'undefined' && location.hash && location.hash !== '#/' && location.hash !== '#') {
+      history.replaceState(null, '', '#/');
+    }
+    state.selected = null;
+  } else {
+    var currentRoute = route();
+    if (!currentRoute && !isNarrow() && state.items.length) {
+      if (typeof history !== 'undefined' && history.replaceState) {
+        history.replaceState(null, '', '#/item/' + encodeURIComponent(state.items[0].id));
+      }
     }
   }
   setViewMode(state.viewMode);

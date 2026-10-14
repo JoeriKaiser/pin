@@ -1,4 +1,4 @@
-import { state, find, itemStatus, itemType, priority, hasUnresolvedPrereqs } from './state.js';
+import { state, find, itemStatus, itemType, priority, hasUnresolvedPrereqs, updateShown } from './state.js';
 import { els } from './dom.js';
 import { sendAction } from './api.js';
 import { node, text, clear, showToast } from './formatters.js';
@@ -178,9 +178,6 @@ export function buildBoardCard(item) {
 
 export function setViewMode(mode) {
   state.viewMode = mode === 'detail' ? 'detail' : 'board';
-  try {
-    localStorage.setItem('pin_view_mode', state.viewMode);
-  } catch (_) {}
   if (els.workspace) {
     els.workspace.classList.toggle('mode-board', state.viewMode === 'board');
     els.workspace.classList.toggle('mode-detail', state.viewMode === 'detail');
@@ -191,6 +188,10 @@ export function setViewMode(mode) {
     setRoute(state.shown[0].id);
   }
   if (state.viewMode === 'board') {
+    if (state.selected) {
+      state.selected = null;
+      setRoute(null);
+    }
     renderBoard();
   }
 }
@@ -205,11 +206,26 @@ export function renderBoard() {
     closed: document.querySelector('.board-drawer-content')
   };
 
-  Object.keys(cols).forEach(function (k) { if (cols[k]) clear(cols[k]); });
+  if (typeof updateShown === 'function') {
+    updateShown();
+  }
 
+  var existingCards = new Map();
+  Object.keys(cols).forEach(function (k) {
+    var col = cols[k];
+    if (!col || !col.children) return;
+    for (var i = 0; i < col.children.length; i++) {
+      var c = col.children[i];
+      var id = (c.dataset && c.dataset.id) || (c.getAttribute && c.getAttribute('data-id'));
+      if (id) existingCards.set(id, c);
+    }
+  });
+
+  var shownIds = new Set();
   var counts = { created: 0, planned: 0, in_progress: 0, blocked: 0, done_review: 0, closed: 0 };
 
-  state.shown.forEach(function (item) {
+  (state.shown || []).forEach(function (item) {
+    shownIds.add(item.id);
     var st = itemStatus(item);
     var targetCol = null;
     if (st === 'created') { targetCol = cols.created; counts.created++; }
@@ -219,8 +235,45 @@ export function renderBoard() {
     else if (st === 'review' || st === 'done') { targetCol = cols.done_review; counts.done_review++; }
     else if (st === 'closed' || st === 'cancelled') { targetCol = cols.closed; counts.closed++; }
 
-    if (targetCol) {
-      targetCol.appendChild(buildBoardCard(item));
+    if (!targetCol) return;
+
+    var renderKey = (item.revision || '') + ':' + (item.title || '') + ':' + itemStatus(item) + ':' + (state.activeRuns && state.activeRuns.has(item.id)) + ':' + (item.git_status || '');
+    var existing = existingCards.get(item.id);
+
+    if (existing) {
+      if (existing.dataset.renderKey !== renderKey) {
+        var updated = buildBoardCard(item);
+        updated.dataset.renderKey = renderKey;
+        if (typeof existing.replaceWith === 'function') {
+          existing.replaceWith(updated);
+        } else if (existing.parentNode && typeof existing.parentNode.replaceChild === 'function') {
+          existing.parentNode.replaceChild(updated, existing);
+        } else {
+          var p = existing.parentElement || existing.parentNode;
+          if (p && typeof p.removeChild === 'function') {
+            p.removeChild(existing);
+          }
+          targetCol.appendChild(updated);
+        }
+        existingCards.set(item.id, updated);
+      } else if ((existing.parentElement || existing.parentNode) !== targetCol) {
+        targetCol.appendChild(existing);
+      }
+    } else {
+      var card = buildBoardCard(item);
+      card.dataset.renderKey = renderKey;
+      targetCol.appendChild(card);
+      existingCards.set(item.id, card);
+    }
+  });
+
+  existingCards.forEach(function (card, id) {
+    if (!shownIds.has(id)) {
+      if (typeof card.remove === 'function') {
+        card.remove();
+      } else if (card.parentNode) {
+        card.parentNode.removeChild(card);
+      }
     }
   });
 
