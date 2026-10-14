@@ -1047,7 +1047,7 @@ fn is_assistant_message(update: &serde_json::Value) -> bool {
 fn extract_text_from_value(val: &serde_json::Value, out: &mut Vec<String>) {
     match val {
         serde_json::Value::String(s) => {
-            if !s.trim().is_empty() {
+            if !s.is_empty() {
                 out.push(s.clone());
             }
         }
@@ -1060,6 +1060,7 @@ fn extract_text_from_value(val: &serde_json::Value, out: &mut Vec<String>) {
             for key in &["content", "text", "message"] {
                 if let Some(v) = map.get(*key) {
                     extract_text_from_value(v, out);
+                    break;
                 }
             }
         }
@@ -1098,7 +1099,7 @@ fn extract_summary_and_evidence(events: &[serde_json::Value]) -> (String, String
         extract_text_from_value(update, &mut text_chunks);
     }
 
-    let full_text = text_chunks.join("\n");
+    let full_text = text_chunks.concat();
     let full_text_trimmed = full_text.trim();
 
     if full_text_trimmed.is_empty() {
@@ -1254,6 +1255,27 @@ mod tests {
         let (summary, evidence) = extract_summary_and_evidence(&events);
         assert_eq!(summary, "Implemented feature xyz.");
         assert_eq!(evidence, "Ran cargo test and 30 tests passed.");
+    }
+
+    #[test]
+    fn test_extract_summary_and_evidence_streamed_chunks() {
+        let events = vec![
+            assistant_message("## Sum"),
+            assistant_message("mary\n"),
+            assistant_message("1. Imple"),
+            assistant_message("mented feature xyz in `src/app.js`.\n\n"),
+            assistant_message("## Verification\n"),
+            assistant_message("- cargo test: "),
+            assistant_message("30 passed.\n"),
+            assistant_message("- bash tests/cli.sh: "),
+            assistant_message("passed."),
+        ];
+        let (summary, evidence) = extract_summary_and_evidence(&events);
+        assert_eq!(summary, "1. Implemented feature xyz in `src/app.js`.");
+        assert_eq!(
+            evidence,
+            "- cargo test: 30 passed.\n- bash tests/cli.sh: passed."
+        );
     }
 
     #[test]

@@ -1757,13 +1757,33 @@ a:hover {
   font-size: var(--text-xs);
   line-height: var(--leading-relaxed);
   color: var(--ink);
-  max-height: 140px;
-  overflow-y: auto;
   word-break: break-word;
 }
 
+.handoff-text h1,
+.handoff-text h2,
+.handoff-text h3,
+.handoff-text h4,
+.handoff-text h5,
+.handoff-text h6 {
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
+  color: var(--ink);
+  margin: var(--space-2) 0 var(--space-1);
+  line-height: var(--leading-snug);
+}
+
+.handoff-text h1:first-child,
+.handoff-text h2:first-child,
+.handoff-text h3:first-child,
+.handoff-text h4:first-child,
+.handoff-text h5:first-child,
+.handoff-text h6:first-child {
+  margin-top: 0;
+}
+
 .handoff-text p {
-  margin: 0 0 var(--space-1);
+  margin: 0 0 var(--space-1-5);
 }
 
 .handoff-text p:last-child {
@@ -1772,8 +1792,8 @@ a:hover {
 
 .handoff-text ul,
 .handoff-text ol {
-  margin: 0 0 var(--space-1);
-  padding-left: var(--space-3-5);
+  margin: 0 0 var(--space-1-5);
+  padding-left: var(--space-4);
 }
 
 .handoff-text ul:last-child,
@@ -1785,23 +1805,43 @@ a:hover {
   margin-bottom: var(--space-0-5);
 }
 
+.handoff-text li:last-child {
+  margin-bottom: 0;
+}
+
 .handoff-text code {
   font-family: var(--font-mono);
   font-size: 0.85em;
   background: var(--surface);
-  padding: 0.1em 0.3em;
+  padding: 0.1em 0.35em;
   border-radius: var(--radius-xs);
   border: 1px solid var(--line-subtle);
 }
 
+.handoff-text a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 0.16em;
+}
+
+.handoff-text blockquote {
+  margin: var(--space-1-5) 0;
+  padding-left: var(--space-2-5);
+  border-left: 2px solid var(--line);
+  color: var(--muted);
+}
+
 .handoff-text pre {
-  margin: var(--space-1) 0;
-  padding: var(--space-1-5) var(--space-2);
+  margin: var(--space-1-5) 0;
+  padding: var(--space-2) var(--space-2-5);
   background: var(--surface);
   border: 1px solid var(--line-subtle);
   border-radius: var(--radius-xs);
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
+  line-height: var(--leading-normal);
+  max-height: 20rem;
+  overflow-y: auto;
   overflow-x: auto;
 }
 
@@ -1814,8 +1854,8 @@ a:hover {
   background: var(--surface);
   border: 1px solid var(--line-subtle);
   border-radius: var(--radius-xs);
-  padding: var(--space-1-5) var(--space-2);
-  max-height: 140px;
+  padding: var(--space-2) var(--space-2-5);
+  max-height: 20rem;
   overflow-y: auto;
   overflow-x: auto;
   white-space: pre-wrap;
@@ -2477,6 +2517,8 @@ a:hover {
   font-size: var(--text-xs);
   line-height: var(--leading-normal);
   color: var(--muted);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .trajectory-tool-line {

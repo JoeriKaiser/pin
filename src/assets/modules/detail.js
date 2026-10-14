@@ -360,11 +360,11 @@ export function renderHandoff(item) {
 
   if (st === 'blocked') {
     addField('blocker', 'Blocker:', 'Blocked', 'handoff-pill-blocker', h.blocker, false);
-    addField('verification', 'Verification evidence:', 'Evidence', 'handoff-pill-verification', h.verification, true);
+    addField('verification', 'Verification evidence:', 'Evidence', 'handoff-pill-verification', h.verification, false);
     addField('progress', 'Progress:', null, null, h.progress, false);
     addField('next', 'Next steps:', null, null, h.next, false);
   } else {
-    addField('verification', 'Verification evidence:', 'Evidence', 'handoff-pill-verification', h.verification, true);
+    addField('verification', 'Verification evidence:', 'Evidence', 'handoff-pill-verification', h.verification, false);
     addField('progress', 'Progress:', null, null, h.progress, false);
     addField('next', 'Next steps:', null, null, h.next, false);
     addField('blocker', 'Blocker:', 'Blocker', 'handoff-pill-blocker', h.blocker, false);

@@ -846,6 +846,8 @@ async function runHarness() {
   assert.strictEqual(fields.length, 2);
   assert.ok(fields[0].classList.contains('handoff-field-verification'), 'First block is verification for review item');
   assert.ok(fields[1].classList.contains('handoff-field-progress'), 'Second block is progress');
+  assert.ok(fields[0].children.some(c => c.classList && c.classList.contains('handoff-text')), 'Verification renders as rich handoff-text');
+  assert.ok(fields[1].children.some(c => c.classList && c.classList.contains('handoff-text')), 'Progress renders as rich handoff-text');
 
   const blockedItem = {
     id: 'blocked-item-1',
