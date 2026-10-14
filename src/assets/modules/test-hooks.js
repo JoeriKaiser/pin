@@ -1,5 +1,5 @@
 import { els } from './dom.js';
-import { state } from './state.js';
+import { state, updateShown } from './state.js';
 import { stripAnsi, cleanThoughtText, escapeHtml } from './formatters.js';
 import {
   setReaderTab, renderActions, renderHandoff
@@ -25,7 +25,7 @@ import {
 import {
   bind, sendRunItem, sendCommitPrItem, handleUpdateInstall, handleGitSync
 } from './bind.js';
-import { checkUpdate } from './boot.js';
+import { ingest, checkUpdate } from './boot.js';
 
 if (typeof window !== 'undefined') {
   window._test = {
@@ -70,5 +70,7 @@ if (typeof window !== 'undefined') {
     checkUpdate: checkUpdate,
     handleUpdateInstall: handleUpdateInstall,
     handleGitSync: handleGitSync,
+    ingest: ingest,
+    updateShown: updateShown,
   };
 }

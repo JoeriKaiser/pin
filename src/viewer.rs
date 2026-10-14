@@ -733,8 +733,11 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                 Some(&viewer_actor),
             );
 
+            let resolver = crate::sync::GitStatusResolver::new(snapshot.repo_path.clone());
+            let all_items = collect_ideas(&snapshot.vault_path).unwrap_or_default();
+            let status_map = resolver.resolve_all(&all_items);
             if let Ok(mut cache_guard) = snapshot.git_cache.lock() {
-                *cache_guard = None;
+                *cache_guard = Some((Instant::now(), status_map));
             }
 
             match synced {
@@ -1725,7 +1728,7 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
         if let Some(id) = stripped.strip_suffix("/stream") {
             let id = id.trim();
             let _ = stream.set_read_timeout(None);
-            let _ = stream.set_write_timeout(None);
+            let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(10)));
 
             let mut writer = BufWriter::new(stream);
             let sse_headers = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\nAccess-Control-Allow-Origin: *\r\n\r\n";
@@ -1791,35 +1794,6 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
     }
 
     if subpath == "data.json" {
-        let viewer_actor =
-            env::var("PIN_VIEWER_ACTOR").unwrap_or_else(|_| "human:viewer".to_string());
-        let git_statuses = if let Ok(mut cache_guard) = snapshot.git_cache.lock() {
-            let needs_refresh = match &*cache_guard {
-                Some((last_instant, _)) => last_instant.elapsed() > Duration::from_secs(10),
-                None => true,
-            };
-            if needs_refresh {
-                let _ = crate::sync::reconcile_and_sync(
-                    &snapshot.vault_path,
-                    &snapshot.repo_path,
-                    None,
-                    None,
-                    false,
-                    Some(&viewer_actor),
-                );
-                let resolver = crate::sync::GitStatusResolver::new(snapshot.repo_path.clone());
-                let all_items = collect_ideas(&snapshot.vault_path).unwrap_or_default();
-                let status_map = resolver.resolve_all(&all_items);
-                *cache_guard = Some((Instant::now(), status_map));
-            }
-            cache_guard
-                .as_ref()
-                .map(|(_, map)| map.clone())
-                .unwrap_or_default()
-        } else {
-            HashMap::new()
-        };
-
         let etag = compute_vault_etag(&snapshot.vault_path);
         if let Some(if_none) = &if_none_match {
             if etags_match(if_none, &etag) {
@@ -1827,6 +1801,13 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                 return;
             }
         }
+
+        let git_statuses = snapshot
+            .git_cache
+            .lock()
+            .ok()
+            .and_then(|guard| guard.as_ref().map(|(_, map)| map.clone()))
+            .unwrap_or_default();
 
         let filter_project = if snapshot.scope_label == "all" {
             None
@@ -1983,6 +1964,12 @@ pub fn serve_view(
         false,
         Some(&viewer_actor),
     );
+    let resolver = crate::sync::GitStatusResolver::new(snapshot.repo_path.clone());
+    let all_items = collect_ideas(&snapshot.vault_path).unwrap_or_default();
+    let status_map = resolver.resolve_all(&all_items);
+    if let Ok(mut cache_guard) = snapshot.git_cache.lock() {
+        *cache_guard = Some((Instant::now(), status_map));
+    }
     let listener = TcpListener::bind(format!("127.0.0.1:{port}"))?;
     let local_addr = listener.local_addr()?;
     let base_url = format!("http://127.0.0.1:{}/{}/", local_addr.port(), snapshot.token);

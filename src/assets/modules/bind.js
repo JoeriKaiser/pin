@@ -4,7 +4,7 @@ import { sendCancel, sendRun, sendCommitPr, sendMessage, sendFinish, sendUpdate,
 import { text, showToast } from './formatters.js';
 import { setRoute, applyRoute, setOnRouteChanged } from './router.js';
 import { insertSnippetIntoTextarea, handleScreenshotPaste } from './media.js';
-import { handleCardDrop, setViewMode, setBoardCallbacks } from './board.js';
+import { handleCardDrop, setViewMode, setBoardCallbacks, renderBoard } from './board.js';
 import { renderList, renderDetail, setReaderTab, setDetailCallbacks } from './detail.js';
 import {
   SPEC_SNIPPETS, collectTicketFields, expandQuickAdd, collapseQuickAdd, submitQuickAdd,
@@ -52,8 +52,11 @@ export function sendRunItem(id, useWorktree, errorPrefix, optMode) {
       if (!data) return;
       showToast(mode === 'idea' ? 'Idea agent started' : 'Agent started', false);
       updateActiveRuns();
-      openAgentDrawer(id);
-      setReaderTab('trajectory');
+      if (state.viewMode === 'detail') {
+        openAgentDrawer(id);
+        setReaderTab('trajectory');
+      }
+      bootCallbacks.refreshData();
     })
     .catch(function (err) {
       if (err) showToast(errorPrefix ? errorPrefix + (err.message || 'Failed to start agent') : (err.message || 'Failed to start agent'), true);
@@ -502,7 +505,7 @@ export function bind(options) {
 
   setAgentCallbacks({
     refreshData: function () { bootCallbacks.refreshData(); },
-    renderBoard: renderList,
+    renderBoard: renderBoard,
     renderDetail: renderDetail
   });
 

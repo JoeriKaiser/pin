@@ -1,10 +1,10 @@
-import { state, find, itemStatus, itemType, kind, priority, tags, matches } from './state.js';
+import { state, find, itemStatus, itemType, kind, priority, tags, matches, updateShown } from './state.js';
 import { els } from './dom.js';
 import { sendAction } from './api.js';
 import { node, text, clear, date, timeAgo, showToast } from './formatters.js';
 import { renderMarkdownSnippet, renderMarkdown } from './markdown.js';
 import { setRoute } from './router.js';
-import { renderBoard } from './board.js';
+
 
 var callbacks = {
   sendRunItem: function () {},
@@ -33,7 +33,7 @@ export function addMeta(label, value) {
 }
 
 export function renderList() {
-  state.shown = state.items.filter(matches);
+  state.shown = updateShown();
   clear(els.list);
   var countText = state.shown.length === state.items.length
     ? state.items.length + (state.items.length === 1 ? ' item' : ' items')
@@ -49,7 +49,7 @@ export function renderList() {
       els.listEmpty.appendChild(node('strong', '', state.items.length ? 'No items match filters.' : 'No items in this vault.'));
       els.listEmpty.appendChild(node('p', '', state.items.length ? 'Try clearing search or filters.' : 'Add items with pin add.'));
     }
-    renderBoard();
+
     return;
   }
 
@@ -81,7 +81,7 @@ export function renderList() {
     if (els.list) els.list.appendChild(li);
   });
 
-  renderBoard();
+
 }
 
 export function renderWorkerBox(item) {
@@ -417,12 +417,8 @@ export function setReaderTab(tab) {
     if (els.proposal) els.proposal.hidden = true;
     if (els.agentDrawer) els.agentDrawer.hidden = false;
 
-    if (state.currentStreamingId === state.selected) {
-      return;
-    }
-    if (state.selected) {
-      callbacks.openAgentDrawer(state.selected);
-    }
+    if (state.currentStreamingId === state.selected) return;
+    if (state.selected) callbacks.openAgentDrawer(state.selected);
   } else {
     if (els.tabTaskSpec) els.tabTaskSpec.classList.add('active');
     if (els.tabAgentTrajectory) els.tabAgentTrajectory.classList.remove('active');

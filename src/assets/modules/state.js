@@ -6,9 +6,7 @@ export var ORDER = {
 };
 
 export var state = {
-  viewMode: (function () {
-    try { return localStorage.getItem('pin_view_mode') || 'board'; } catch (_) { return 'board'; }
-  })(),
+  viewMode: 'board',
   readerTab: 'spec',
   items: [],
   shown: [],
@@ -93,6 +91,11 @@ export function matches(item) {
     item.claimed_by, tags(item).join(' '), item.content || item.body
   ].join('\n');
   return norm(searchCorpus).indexOf(q) !== -1;
+}
+
+export function updateShown() {
+  state.shown = state.items.filter(matches);
+  return state.shown;
 }
 
 export function unique(pick) {
