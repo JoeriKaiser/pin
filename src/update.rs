@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const CURRENT_VERSION: &str = env!("PIN_VERSION");
 const CACHE_TTL_SECS: u64 = 24 * 60 * 60; // 24 hours
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]

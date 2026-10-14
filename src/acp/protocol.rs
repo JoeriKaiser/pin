@@ -199,7 +199,7 @@ mod tests {
                 client_info: ClientInfo {
                     name: "pin".to_string(),
                     title: Some("Pin Issue Tracker".to_string()),
-                    version: "2.2.0".to_string(),
+                    version: env!("PIN_VERSION").to_string(),
                 },
             },
         );

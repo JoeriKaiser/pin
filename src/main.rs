@@ -19,7 +19,7 @@ use std::env;
 use std::process;
 use vault::resolve_vault_path;
 
-const VERSION: &str = "2.2.0";
+const VERSION: &str = env!("PIN_VERSION");
 
 fn run() -> CliResult<()> {
     let args: Vec<String> = env::args().collect();

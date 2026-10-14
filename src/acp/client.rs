@@ -326,7 +326,7 @@ impl AcpClient {
             client_info: ClientInfo {
                 name: "pin".to_string(),
                 title: Some("Pin Idea Registry".to_string()),
-                version: env!("CARGO_PKG_VERSION").to_string(),
+                version: env!("PIN_VERSION").to_string(),
             },
         };
 

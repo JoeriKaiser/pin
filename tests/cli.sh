@@ -57,7 +57,8 @@ stop_view() {
 }
 
 "$PIN_BIN" --help >/dev/null 2>&1
-assert_contains "$("$PIN_BIN" --version)" "pin 2.2.0"
+pin_ver=$("$PIN_BIN" --version | cut -d' ' -f2)
+assert_contains "$("$PIN_BIN" --version)" "pin $pin_ver"
 
 mkdir -p "$TMP/repo/packages/api" "$TMP/home"
 cd "$TMP/repo"
@@ -821,7 +822,7 @@ esac
 
 mkdir -p "$TMP/mock_assets"
 mock_bin="$TMP/mock_assets/$target_asset"
-printf '#!/bin/sh\necho "pin 2.3.0"\n' >"$mock_bin"
+printf '#!/bin/sh\necho "pin 99.0.0"\n' >"$mock_bin"
 chmod +x "$mock_bin"
 
 if command -v sha256sum >/dev/null 2>&1; then
@@ -835,9 +836,9 @@ printf '%s  %s\n' "$sha_hash" "$target_asset" >"$TMP/mock_assets/$target_asset.s
 
 cat <<EOF >"$TMP/mock_release.json"
 {
-  "tag_name": "v2.3.0",
-  "name": "Release 2.3.0",
-  "html_url": "https://github.com/JoeriKaiser/pin/releases/tag/v2.3.0",
+  "tag_name": "v99.0.0",
+  "name": "Release 99.0.0",
+  "html_url": "https://github.com/JoeriKaiser/pin/releases/tag/v99.0.0",
   "assets": [
     {
       "name": "$target_asset",
@@ -853,9 +854,9 @@ EOF
 
 cat <<EOF >"$TMP/mock_uptodate.json"
 {
-  "tag_name": "v2.2.0",
-  "name": "Release 2.2.0",
-  "html_url": "https://github.com/JoeriKaiser/pin/releases/tag/v2.2.0",
+  "tag_name": "v$pin_ver",
+  "name": "Release $pin_ver",
+  "html_url": "https://github.com/JoeriKaiser/pin/releases/tag/v$pin_ver",
   "assets": []
 }
 EOF
@@ -863,25 +864,25 @@ EOF
 # CLI check update (JSON)
 check_json=$(PIN_UPDATE_URL="file://$TMP/mock_release.json" "$PIN_BIN" update --check --format json)
 assert_contains "$check_json" '"update_available":true'
-assert_contains "$check_json" '"latest_version":"2.3.0"'
-assert_contains "$check_json" '"current_version":"2.2.0"'
+assert_contains "$check_json" '"latest_version":"99.0.0"'
+assert_contains "$check_json" "\"current_version\":\"$pin_ver\""
 
 # CLI check update (Plain)
 check_plain=$(PIN_UPDATE_URL="file://$TMP/mock_release.json" "$PIN_BIN" update --check --format plain)
-assert_contains "$check_plain" "Update available: v2.3.0 (current: v2.2.0)"
+assert_contains "$check_plain" "Update available: v99.0.0 (current: v$pin_ver)"
 assert_contains "$check_plain" "Run 'pin update' to install the update."
 
 # CLI check when already up to date
 uptodate_out=$(PIN_UPDATE_URL="file://$TMP/mock_uptodate.json" "$PIN_BIN" update --check --format plain)
-assert_contains "$uptodate_out" "pin is up to date (version 2.2.0)"
+assert_contains "$uptodate_out" "pin is up to date (version $pin_ver)"
 
 # CLI update installation
 test_cli_target="$TMP/mock_cli_target_pin"
 cp "$PIN_BIN" "$test_cli_target"
 update_install_out=$(PIN_UPDATE_URL="file://$TMP/mock_release.json" PIN_TARGET_EXE="$test_cli_target" "$PIN_BIN" update --format json)
 assert_contains "$update_install_out" '"success":true'
-assert_contains "$update_install_out" '"updated_version":"2.3.0"'
-assert_contains "$("$test_cli_target")" "pin 2.3.0"
+assert_contains "$update_install_out" '"updated_version":"99.0.0"'
+assert_contains "$("$test_cli_target")" "pin 99.0.0"
 
 # CLI update when already up to date without force
 test_uptodate_install=$(PIN_UPDATE_URL="file://$TMP/mock_uptodate.json" "$PIN_BIN" update --format json)
@@ -899,7 +900,7 @@ update_origin=$(printf '%s' "$view_url" | cut -d/ -f1-3)
 # Test GET /update
 view_get_update=$(curl -s -S "${view_url}update")
 assert_contains "$view_get_update" '"update_available":true'
-assert_contains "$view_get_update" '"latest_version":"2.3.0"'
+assert_contains "$view_get_update" '"latest_version":"99.0.0"'
 
 # Test POST /update without Origin or Action header (expect 403 Forbidden)
 post_forbidden_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${view_url}update")
@@ -908,8 +909,8 @@ post_forbidden_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${view_url
 # Test POST /update with valid Origin and Action header
 post_update_out=$(curl -s -S -X POST -H "Origin: $update_origin" -H 'X-Pin-Action: true' "${view_url}update")
 assert_contains "$post_update_out" '"success":true'
-assert_contains "$post_update_out" '"updated_version":"2.3.0"'
-assert_contains "$("$PIN_TARGET_EXE")" "pin 2.3.0"
+assert_contains "$post_update_out" '"updated_version":"99.0.0"'
+assert_contains "$("$PIN_TARGET_EXE")" "pin 99.0.0"
 
 stop_view
 unset PIN_UPDATE_URL

@@ -43,6 +43,8 @@ jobs:
 
       - name: Build binary
         shell: bash
+        env:
+          PIN_VERSION: ${{ github.ref_name }}
         run: |
           cargo build --release --target ${{ matrix.target }}
           cp ${{ matrix.binary_path }} ${{ matrix.output_name }}
