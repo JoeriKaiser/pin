@@ -954,7 +954,7 @@ pub fn build_commit_pr_prompt(
     if !body.trim().is_empty() {
         prompt_parts.push(format!("\n## Description\n{}", body.trim()));
     }
-    prompt_parts.push("\n## Instructions\n1. Inspect git status and changed files in this worktree/repository.\n2. Stage and commit all relevant changes with a clear, conventional commit message referencing the task title and ID.\n3. If a git remote is configured, push the branch to origin.\n4. Create a pull request targeting the main branch (e.g. via `gh pr create` or git) with a concise title and summary of changes.\n5. If `gh` is unavailable or no remote is configured, report the commit details and status.\nSummarize what was committed and the pull request status.".to_string());
+    prompt_parts.push("\n## Instructions\n1. Inspect git status and changed files in this worktree/repository.\n2. Stage and commit all relevant changes with a clear, conventional commit message referencing the task title and ID.\n3. If a git remote is configured, push the branch to origin.\n4. Create a pull request targeting the main branch (e.g. via `gh pr create` or git) with a concise title and summary of changes.\n5. Babysit the pull request until CI checks are green before claiming to be done:\n   - Monitor CI checks on the pull request (e.g. via `gh pr checks --watch` or `gh pr checks`).\n   - If any CI check fails, inspect the failure logs (e.g. via `gh run view --log-failed`), resolve the root cause, commit the fix, and push the branch.\n   - Repeat until all CI checks are green. Never claim completion while checks are failing or pending.\n6. If `gh` is unavailable, no remote is configured, or no CI checks are configured on the repository, report the commit details and status.\nSummarize what was committed, the pull request status, and the CI check results under '## Summary' and '## Verification'. Do not archive this item; completion and handoff recording are handled automatically.".to_string());
 
     prompt_parts.join("\n")
 }
@@ -1290,6 +1290,8 @@ mod tests {
         assert!(prompt.contains("Detailed body text"));
         assert!(prompt.contains("Stage and commit all relevant changes"));
         assert!(prompt.contains("Create a pull request targeting the main branch"));
+        assert!(prompt.contains("Babysit the pull request until CI checks are green"));
+        assert!(prompt.contains("gh pr checks"));
     }
 
     #[test]
