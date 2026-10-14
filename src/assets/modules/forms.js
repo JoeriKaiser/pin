@@ -323,6 +323,7 @@ export function triggerModalSubmit() {
       .then(function () {
         closeActionModal();
         showToast('Action applied successfully', false);
+        callbacks.refreshData();
       })
       .catch(function (err) {
         if (err && err.data && err.data.status === 'primary_busy') {
@@ -363,6 +364,7 @@ export function triggerModalSubmit() {
               .then(function () {
                 closeActionModal();
                 showToast('Action applied successfully', false);
+                callbacks.refreshData();
               })
               .catch(function (retryErr) {
                 showDialogError(retryErr.message || 'Retry failed');

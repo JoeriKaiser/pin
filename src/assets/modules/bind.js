@@ -478,7 +478,8 @@ export function bind(options) {
     openWorktreeModal: openWorktreeModal,
     openCloseModal: openCloseModal,
     openAgentDrawer: openAgentDrawer,
-    sendCommitPrItem: sendCommitPrItem
+    sendCommitPrItem: sendCommitPrItem,
+    refreshData: function () { bootCallbacks.refreshData(); }
   });
 
   setDetailCallbacks({
@@ -489,7 +490,8 @@ export function bind(options) {
     openAgentDrawer: openAgentDrawer,
     openCompleteModal: openCompleteModal,
     sendCommitPrItem: sendCommitPrItem,
-    openCloseModal: openCloseModal
+    openCloseModal: openCloseModal,
+    refreshData: function () { bootCallbacks.refreshData(); }
   });
 
   setFormCallbacks({

@@ -28,7 +28,8 @@ export function updateActiveRuns() {
       }
       if (changed) {
         state.activeRuns = newSet;
-        if (state.viewMode === 'board') callbacks.renderBoard();
+        callbacks.renderBoard();
+        callbacks.renderDetail();
         if (state.selected && els.readerTrajectoryBadge) {
           els.readerTrajectoryBadge.hidden = !state.activeRuns.has(state.selected);
         }
@@ -226,7 +227,9 @@ function finishStream(success, data, defaultMsg) {
     state.trajectory.timer = null;
     updateDurationDisplay();
   }
-  if (state.activeRuns) state.activeRuns.delete(state.currentStreamingId);
+  if (state.activeRuns && state.currentStreamingId) {
+    state.activeRuns.delete(state.currentStreamingId);
+  }
   if (els.readerTrajectoryBadge) els.readerTrajectoryBadge.hidden = true;
   var msg = success ? 'Agent run completed.' : ('Agent run failed: ' + (data.message || data.error || defaultMsg));
   appendTrajectoryContextRow(msg);
@@ -235,6 +238,8 @@ function finishStream(success, data, defaultMsg) {
   if (state.currentStream) { state.currentStream.close(); state.currentStream = null; }
   if (els.agentChatContainer) els.agentChatContainer.hidden = true;
   if (success) renderSwimlaneSvg();
+  callbacks.renderBoard();
+  callbacks.renderDetail();
   updateActiveRuns();
   callbacks.refreshData();
   cacheTrajectory(state.currentStreamingId);
