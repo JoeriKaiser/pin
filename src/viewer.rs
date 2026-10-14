@@ -2113,8 +2113,7 @@ mod tests {
 
     #[test]
     fn test_action_payload_archive() {
-        let json =
-            r###"{"action":"archive","resolution":"implemented","expect_revision":3,"note":"shipped"}"###;
+        let json = r###"{"action":"archive","resolution":"implemented","expect_revision":3,"note":"shipped"}"###;
         let payload: ActionPayload = serde_json::from_str(json).unwrap();
         assert_eq!(payload.action, "archive");
         assert_eq!(payload.resolution.as_deref(), Some("implemented"));
