@@ -734,6 +734,7 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                 None,
                 None,
                 false,
+                false,
                 Some(&viewer_actor),
             );
 
@@ -1987,6 +1988,7 @@ pub fn serve_view(
         &snapshot.repo_path,
         None,
         None,
+        false,
         false,
         Some(&viewer_actor),
     );

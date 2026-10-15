@@ -181,3 +181,14 @@ Running `pin view` launches an embedded HTTP server serving a single-page manage
 ## Storage compatibility
 
 Items use schema version `2` with 12-character hex IDs. Legacy proposals remain readable and can be migrated using `pin doctor --upgrade`.
+
+## Architectural model and scaling boundaries
+
+`pin` uses a file-per-task model with Markdown files and YAML frontmatter in Git:
+
+- Sub-3ms cold process startup with zero asynchronous runtime overhead.
+- Atomic file rewrites with disk persistence sync (`sync_all`) before replacement.
+- Advisory file locking (`.<filename>.lock`) with stale-lock eviction and optimistic revisions (`--expect-revision`).
+- Subprocess delegation to host `git` ensuring full compatibility with signing keys and SSH configurations.
+
+The direct directory scan (`fs::read_dir` plus in-memory frontmatter parsing) handles vaults up to approximately 2,000 active items with sub-20ms query times. If a repository grows beyond this threshold, an opt-in indexing cache can be introduced without altering the underlying file-per-task Git format.

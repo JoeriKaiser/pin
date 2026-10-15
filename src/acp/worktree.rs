@@ -268,6 +268,21 @@ impl WorktreeManager {
         }
     }
 
+    /// Checks whether the worktree for `item_id` has uncommitted modifications or untracked files.
+    pub fn has_uncommitted_changes(repo_path: &Path, item_id: &str) -> bool {
+        let target_dir = Self::worktree_path(repo_path, item_id);
+        if !target_dir.exists() {
+            return false;
+        }
+        Command::new("git")
+            .arg("-C")
+            .arg(&target_dir)
+            .args(["status", "--porcelain"])
+            .output()
+            .map(|o| o.status.success() && !o.stdout.is_empty())
+            .unwrap_or(false)
+    }
+
     /// Removes a git worktree for `item_id`.
     ///
     /// - Runs `git -C <repo_path> worktree remove --force .pin_worktrees/{item_id}`

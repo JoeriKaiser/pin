@@ -42,8 +42,15 @@ try {
         }
 
         Write-Host "==> Downloading $assetName..."
-        Invoke-WebRequest -UseBasicParsing -Uri "$downloadRoot/$assetName" -OutFile $assetPath
-        Invoke-WebRequest -UseBasicParsing -Uri "$downloadRoot/$checksumName" -OutFile $checksumPath
+        try {
+            Invoke-WebRequest -UseBasicParsing -Uri "$downloadRoot/$assetName" -OutFile $assetPath
+            Invoke-WebRequest -UseBasicParsing -Uri "$downloadRoot/$checksumName" -OutFile $checksumPath
+        }
+        catch {
+            Write-Host "Pre-compiled binary for $target is not available at $downloadRoot/$assetName" -ForegroundColor Yellow
+            Write-Host "To install from source using Cargo, run: cargo install --git https://github.com/JoeriKaiser/pin.git pin"
+            throw $_
+        }
     }
 
     $expected = ((Get-Content -Raw $checksumPath) -split '\s+')[0].ToLowerInvariant()

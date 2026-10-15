@@ -11,11 +11,13 @@ pub fn sync(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> 
     let mut selector: Option<String> = None;
     let mut project: Option<String> = None;
     let mut dry_run = false;
+    let mut force = false;
     let mut format = None;
 
     while let Some(arg) = reader.peek()? {
         match arg {
             "--dry-run" => dry_run = true,
+            "--force" | "-f" => force = true,
             "--project" => project = Some(reader.next_val("--project")?.to_string()),
             "--format" => format = Some(reader.parse_format(false)?),
             flag if flag.starts_with("--") => {
@@ -47,6 +49,7 @@ pub fn sync(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> 
         filter_project,
         target_id,
         dry_run,
+        force,
         actor.as_deref(),
     )
     .map_err(|e| CliError::usage(e.to_string()))?;
@@ -58,21 +61,29 @@ pub fn sync(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> 
         println!("No merged tickets to sync.");
     } else {
         for res in &results {
-            let verb = if dry_run { "Would sync" } else { "Synced" };
-            println!("{verb} {} ({})", res.id, res.resolution_note);
-            if dry_run {
-                if res.worktree_removed {
-                    println!("  Would remove worktree: .pin_worktrees/{}", res.id);
-                }
-                if res.branch_deleted {
-                    println!("  Would delete branch: pin/{}", res.id);
-                }
+            if res.worktree_preserved_dirty {
+                println!("Skipped {} ({})", res.id, res.resolution_note);
+                println!(
+                    "  Worktree has uncommitted changes (preserved; use --force to delete): .pin_worktrees/{}",
+                    res.id
+                );
             } else {
-                if res.worktree_removed {
-                    println!("  Removed worktree: .pin_worktrees/{}", res.id);
-                }
-                if res.branch_deleted {
-                    println!("  Deleted branch: pin/{}", res.id);
+                let verb = if dry_run { "Would sync" } else { "Synced" };
+                println!("{verb} {} ({})", res.id, res.resolution_note);
+                if dry_run {
+                    if res.worktree_removed {
+                        println!("  Would remove worktree: .pin_worktrees/{}", res.id);
+                    }
+                    if res.branch_deleted {
+                        println!("  Would delete branch: pin/{}", res.id);
+                    }
+                } else {
+                    if res.worktree_removed {
+                        println!("  Removed worktree: .pin_worktrees/{}", res.id);
+                    }
+                    if res.branch_deleted {
+                        println!("  Deleted branch: pin/{}", res.id);
+                    }
                 }
             }
         }

@@ -153,6 +153,7 @@ pub fn atomic_write(path: &Path, content: &str) -> io::Result<()> {
     }
     temp_file.write_all(content.as_bytes())?;
     temp_file.flush()?;
+    temp_file.as_file().sync_all()?;
     temp_file.persist(path).map_err(|e| e.error)?;
     #[cfg(unix)]
     {

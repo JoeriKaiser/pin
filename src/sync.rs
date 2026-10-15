@@ -73,6 +73,8 @@ pub struct SyncResult {
     pub pr_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub commit_oid: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub worktree_preserved_dirty: bool,
 }
 
 pub fn query_gh_prs(repo_path: &Path) -> Option<Vec<GhPrInfo>> {
@@ -501,6 +503,7 @@ pub fn reconcile_and_sync(
     filter_project: Option<&str>,
     target_id: Option<&str>,
     dry_run: bool,
+    force: bool,
     actor: Option<&str>,
 ) -> Result<Vec<SyncResult>, String> {
     let all_items = collect_ideas(vault_path).map_err(|e| format!("Failed to read vault: {e}"))?;
@@ -546,11 +549,35 @@ pub fn reconcile_and_sync(
         } else {
             "Merged into main".to_string()
         };
-
         let wt_path = repo_path.join(".pin_worktrees").join(&meta.id);
         let branch_name = format!("pin/{}", meta.id);
         let had_worktree = wt_path.exists();
         let had_branch = branch_exists(repo_path, &branch_name);
+        let is_dirty = had_worktree && has_uncommitted_changes(&wt_path);
+        let should_remove_worktree = had_worktree && (!is_dirty || force);
+        let worktree_preserved_dirty = had_worktree && is_dirty && !force;
+
+        if worktree_preserved_dirty {
+            results.push(SyncResult {
+                id: meta.id.clone(),
+                title: meta.title.clone(),
+                status: "merged".to_string(),
+                action: if dry_run {
+                    "dry_run".to_string()
+                } else {
+                    "skipped_dirty".to_string()
+                },
+                resolution: "implemented".to_string(),
+                resolution_note,
+                worktree_removed: false,
+                branch_deleted: false,
+                pr_number: git_info.pr_number,
+                pr_url: git_info.pr_url,
+                commit_oid: git_info.commit_oid,
+                worktree_preserved_dirty: true,
+            });
+            continue;
+        }
 
         if !dry_run {
             workflow::archive_item(
@@ -562,14 +589,15 @@ pub fn reconcile_and_sync(
                 None,
             )
             .map_err(|e| format!("Failed to archive {}: {e}", meta.id))?;
-
             let mut worktree_removed = false;
-            if had_worktree && WorktreeManager::remove_worktree(repo_path, &meta.id).is_ok() {
+            if should_remove_worktree
+                && WorktreeManager::remove_worktree(repo_path, &meta.id).is_ok()
+            {
                 worktree_removed = true;
             }
 
             let mut branch_deleted = false;
-            if had_branch {
+            if had_branch && !worktree_preserved_dirty {
                 let del = Command::new("git")
                     .arg("-C")
                     .arg(repo_path)
@@ -605,6 +633,7 @@ pub fn reconcile_and_sync(
                 pr_number: git_info.pr_number,
                 pr_url: git_info.pr_url,
                 commit_oid: git_info.commit_oid,
+                worktree_preserved_dirty,
             });
         } else {
             results.push(SyncResult {
@@ -614,11 +643,12 @@ pub fn reconcile_and_sync(
                 action: "dry_run".to_string(),
                 resolution: "implemented".to_string(),
                 resolution_note,
-                worktree_removed: had_worktree,
-                branch_deleted: had_branch,
+                worktree_removed: should_remove_worktree,
+                branch_deleted: had_branch && !worktree_preserved_dirty,
                 pr_number: git_info.pr_number,
                 pr_url: git_info.pr_url,
                 commit_oid: git_info.commit_oid,
+                worktree_preserved_dirty,
             });
         }
     }
@@ -891,7 +921,7 @@ mod tests {
             .unwrap();
 
         // 1. Dry run first
-        let dry_res = reconcile_and_sync(&vault, &repo, None, None, true, None).unwrap();
+        let dry_res = reconcile_and_sync(&vault, &repo, None, None, true, false, None).unwrap();
         assert_eq!(dry_res.len(), 1);
         assert_eq!(dry_res[0].action, "dry_run");
         assert_eq!(dry_res[0].status, "merged");
@@ -909,7 +939,8 @@ mod tests {
 
         // 2. Real sync
         let real_res =
-            reconcile_and_sync(&vault, &repo, None, None, false, Some("agent:sync")).unwrap();
+            reconcile_and_sync(&vault, &repo, None, None, false, false, Some("agent:sync"))
+                .unwrap();
         assert_eq!(real_res.len(), 1);
         assert_eq!(real_res[0].action, "archived");
         assert_eq!(real_res[0].resolution, "implemented");
@@ -1013,5 +1044,86 @@ mod tests {
         let status = resolver.resolve_item(item_id);
         assert_eq!(status.status, GitItemStatus::Merged);
         assert!(status.commit_oid.is_some());
+    }
+
+    #[test]
+    fn test_reconcile_and_sync_preserves_dirty_worktree() {
+        let dir = tempdir().unwrap();
+        let repo = dir.path().join("repo");
+        let vault = dir.path().join("vault");
+        fs::create_dir_all(&repo).unwrap();
+        fs::create_dir_all(&vault).unwrap();
+        setup_git_repo(&repo);
+
+        let item_id = "dirtywt12345";
+        let file_path = vault.join(format!("{item_id}.md"));
+        let mut meta = IdeaMeta::new_work_item(
+            item_id.to_string(),
+            "test-proj".to_string(),
+            "Dirty WT Test".to_string(),
+            "Body".to_string(),
+            crate::model::Kind::Technical,
+            crate::model::WorkType::Task,
+            Status::Done,
+            None,
+            None,
+            Some("human:tester".to_string()),
+        );
+        meta.handoff = Some(crate::model::Handoff {
+            progress: None,
+            next: None,
+            blocker: None,
+            verification: Some("passes".to_string()),
+        });
+        let rendered = crate::frontmatter::render_full_document(&meta);
+        fs::write(&file_path, rendered).unwrap();
+
+        // Provision worktree and branch
+        let wt = WorktreeManager::provision_worktree(&repo, item_id).unwrap();
+
+        // Merge into main via squash commit
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["checkout", "main"])
+            .output()
+            .unwrap();
+        fs::write(repo.join("other.txt"), "merged").unwrap();
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["add", "."])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["commit", "-m", &format!("Squash merge item ({item_id})")])
+            .output()
+            .unwrap();
+
+        // Create an untracked scratch file in the worktree
+        let scratch = wt.join("uncommitted_scratch.txt");
+        fs::write(&scratch, "important notes").unwrap();
+        assert!(has_uncommitted_changes(&wt));
+
+        // Sync without force: must preserve the dirty worktree
+        let res_no_force =
+            reconcile_and_sync(&vault, &repo, None, None, false, false, Some("agent:sync"))
+                .unwrap();
+        assert_eq!(res_no_force.len(), 1);
+        assert!(res_no_force[0].worktree_preserved_dirty);
+        assert!(!res_no_force[0].worktree_removed);
+        assert!(wt.exists());
+        assert!(scratch.exists());
+        assert_eq!(fs::read_to_string(&scratch).unwrap(), "important notes");
+
+        // Sync with force: deletes the worktree
+        let res_force =
+            reconcile_and_sync(&vault, &repo, None, None, false, true, Some("agent:sync")).unwrap();
+        assert_eq!(res_force.len(), 1);
+        assert!(!res_force[0].worktree_preserved_dirty);
+        assert!(res_force[0].worktree_removed);
+        assert!(!wt.exists());
     }
 }
