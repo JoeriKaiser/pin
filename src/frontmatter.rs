@@ -744,9 +744,18 @@ pub fn render_full_document(meta: &IdeaMeta) -> String {
 }
 
 fn escape_yaml_string(s: &str) -> String {
-    s.replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n")
+    let mut out = String::with_capacity(s.len() + 8);
+    for ch in s.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            _ => out.push(ch),
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -929,5 +938,39 @@ Work details here.
         assert!(rendered.contains("dep012345678"));
         assert!(rendered.contains("progress: \"Step 1 done\""));
         assert!(rendered.contains("Work details here."));
+    }
+
+    #[test]
+    fn test_escape_yaml_string_handles_crlf_and_tabs() {
+        assert_eq!(
+            escape_yaml_string("Line 1\r\nLine 2\t\"quoted\"\\path"),
+            "Line 1\\r\\nLine 2\\t\\\"quoted\\\"\\\\path"
+        );
+
+        let mut meta = IdeaMeta::new_work_item(
+            "0123456789ff".to_string(),
+            "project".to_string(),
+            "Title with \r\n CRLF and \t tabs and \"quotes\"".to_string(),
+            "Body with \r\n text".to_string(),
+            Kind::Technical,
+            WorkType::Task,
+            Status::Planned,
+            None,
+            None,
+            Some("human:tester".to_string()),
+        );
+        meta.resolution_note = Some("Note with \r\n newline".to_string());
+
+        let rendered = render_full_document(&meta);
+        let mut issues = Vec::new();
+        let parsed = parse_front_matter_detailed("test.md", &rendered, &mut issues).unwrap();
+        assert_eq!(
+            parsed.title,
+            "Title with \r\n CRLF and \t tabs and \"quotes\""
+        );
+        assert_eq!(
+            parsed.resolution_note.as_deref(),
+            Some("Note with \r\n newline")
+        );
     }
 }

@@ -1069,6 +1069,38 @@ sqsh_meta=$(PIN_VAULT="$sync_vault" "$PIN_BIN" read "$sqsh_id")
 assert_contains "$sqsh_meta" 'resolution: "implemented"'
 assert_contains "$sqsh_meta" 'archived_at:'
 
+
+# 4b. Dirty worktree preservation and forced removal
+dirty_item=$(PIN_VAULT="$sync_vault" PIN_PROJECT=sync-repo "$PIN_BIN" add '# Dirty worktree item' --kind technical --type task --format json)
+dirty_id=$(printf '%s' "$dirty_item" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+PIN_VAULT="$sync_vault" "$PIN_BIN" handoff "$dirty_id" --verification 'Dirty branch verified' >/dev/null
+(
+    cd "$sync_repo"
+    PIN_VAULT="$sync_vault" "$PIN_BIN" transition "$dirty_id" --to done --worktree >/dev/null
+)
+[ -d "$sync_repo/.pin_worktrees/$dirty_id" ] || fail "worktree .pin_worktrees/$dirty_id not created"
+echo "clean code" > "$sync_repo/.pin_worktrees/$dirty_id/clean.txt"
+git -C "$sync_repo/.pin_worktrees/$dirty_id" add clean.txt
+git -C "$sync_repo/.pin_worktrees/$dirty_id" commit -q -m "feat: dirty item feature"
+git -C "$sync_repo" merge --no-ff -q -m "Merge branch pin/$dirty_id" "pin/$dirty_id"
+
+# Add untracked scratch file to dirty worktree
+echo "uncommitted scratch notes" > "$sync_repo/.pin_worktrees/$dirty_id/scratch.txt"
+
+# Sync without force: must preserve the dirty worktree
+dirty_sync_out=$(cd "$sync_repo" && PIN_VAULT="$sync_vault" "$PIN_BIN" sync --format plain)
+assert_contains "$dirty_sync_out" "Skipped $dirty_id"
+assert_contains "$dirty_sync_out" "Worktree has uncommitted changes (preserved; use --force to delete)"
+[ -f "$sync_repo/.pin_worktrees/$dirty_id/scratch.txt" ] || fail "pin sync deleted untracked file without --force"
+
+# Sync with force: must clean up the worktree
+forced_sync_out=$(cd "$sync_repo" && PIN_VAULT="$sync_vault" "$PIN_BIN" sync --force --format json)
+assert_contains "$forced_sync_out" '"worktree_removed":true'
+[ ! -d "$sync_repo/.pin_worktrees/$dirty_id" ] || fail "pin sync --force did not remove worktree"
+
+# 4c. Reject dangling dependency
+bad_dep_out=$(PIN_VAULT="$sync_vault" "$PIN_BIN" depend "$reg_id" "nonexistent999" 2>&1 || true)
+assert_contains "$bad_dep_out" "No idea matches 'nonexistent999'"
 # 5. Subsequent sync
 none_out=$(cd "$sync_repo" && PIN_VAULT="$sync_vault" "$PIN_BIN" sync --format plain)
 assert_contains "$none_out" "No merged tickets to sync."

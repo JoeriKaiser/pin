@@ -34,6 +34,7 @@ pub enum WorkflowError {
     ParseError(String),
     UnknownAction(String),
     MissingTransitionTarget,
+    DependencyNotFound(String),
 }
 
 impl fmt::Display for WorkflowError {
@@ -70,6 +71,9 @@ impl fmt::Display for WorkflowError {
             WorkflowError::UnknownAction(action) => write!(f, "Unknown action '{action}'"),
             WorkflowError::MissingTransitionTarget => {
                 write!(f, "Missing 'to' status for transition")
+            }
+            WorkflowError::DependencyNotFound(id) => {
+                write!(f, "Dependency '{id}' not found in vault")
             }
         }
     }
@@ -654,6 +658,9 @@ pub fn depend_item(
 
     // Check for transitive cycles
     let all_items = collect_ideas(vault_path)?;
+    if !all_items.iter().any(|item| item.id == dependency_id) {
+        return Err(WorkflowError::DependencyNotFound(dependency_id.to_string()));
+    }
     let mut dep_map: HashMap<String, Vec<String>> = HashMap::new();
     for item in &all_items {
         dep_map.insert(item.id.clone(), item.depends_on.clone());
@@ -1070,6 +1077,15 @@ mod tests {
         // f1 depending on f2 must fail with DependencyCycle
         let cycle = depend_item(dir.path(), &f1, "012345678902", None, None);
         assert!(matches!(cycle, Err(WorkflowError::DependencyCycle(_))));
+    }
+
+    #[test]
+    fn test_depend_item_rejects_missing_dependency() {
+        let dir = tempdir().unwrap();
+        let f1 = setup_test_item(dir.path(), "012345678901", Status::Planned, None);
+
+        let res = depend_item(dir.path(), &f1, "nonexistent99", None, None);
+        assert!(matches!(res, Err(WorkflowError::DependencyNotFound(id)) if id == "nonexistent99"));
     }
 
     #[test]
