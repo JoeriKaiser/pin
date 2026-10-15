@@ -39,9 +39,12 @@ fn main() {
                 })
         });
 
+    // Cargo.toml keeps a 0.0.0 placeholder; the real version comes from
+    // PIN_VERSION (set by the release workflow) or the nearest git tag. A
+    // source tree with neither reports 0.0.0 instead of a stale release number.
     let raw_version = version_from_env
         .or(version_from_git)
-        .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
+        .unwrap_or_else(|| "0.0.0".to_string());
 
     let cleaned_version = raw_version
         .trim()

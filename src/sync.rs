@@ -5,8 +5,10 @@ use crate::workflow;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -74,7 +76,19 @@ pub struct SyncResult {
 }
 
 pub fn query_gh_prs(repo_path: &Path) -> Option<Vec<GhPrInfo>> {
-    let output = Command::new("gh")
+    // gh talks to the GitHub API. PR data is a convenience, never a
+    // requirement, so it must not stall its callers: CI runs skip the lookup
+    // entirely (deterministic tests, no network), and anywhere else gh gets a
+    // few seconds before the process is killed and the status resolves
+    // without PR data. This call sits in the view startup path, so an
+    // offline or slow gh used to hold the server back before it printed its
+    // URL for as long as gh took to give up.
+    if std::env::var("CI").is_ok() {
+        return None;
+    }
+    const GH_TIMEOUT: Duration = Duration::from_secs(3);
+
+    let mut child = Command::new("gh")
         .arg("-C")
         .arg(repo_path)
         .args([
@@ -85,14 +99,33 @@ pub fn query_gh_prs(repo_path: &Path) -> Option<Vec<GhPrInfo>> {
             "--json",
             "number,headRefName,state,url",
         ])
-        .output()
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
         .ok()?;
 
-    if output.status.success() {
-        serde_json::from_slice(&output.stdout).ok()
-    } else {
-        None
+    let deadline = Instant::now() + GH_TIMEOUT;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(50)),
+            Err(_) => return None,
+        }
+    };
+
+    if !status.success() {
+        return None;
     }
+    let mut stdout = child.stdout.take()?;
+    let mut buf = Vec::new();
+    stdout.read_to_end(&mut buf).ok()?;
+    serde_json::from_slice(&buf).ok()
 }
 
 pub fn resolve_target_branches(repo_path: &Path) -> Vec<String> {
