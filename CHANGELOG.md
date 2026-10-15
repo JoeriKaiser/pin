@@ -5,6 +5,9 @@
 ### Added
 - Recorded run transcripts can be exported to sanitized fixtures and replayed as a scripted agent (`tests/fixtures/`). The behavior suite now covers a full replayed run, a mid-stream agent death, and user cancellation against real payloads, without spending agent tokens.
 
+### Fixed
+- `pin view` no longer stalls its startup on the `gh pr list` lookup: CI runs skip PR resolution, and anywhere else a slow or offline `gh` is killed after three seconds and the git status resolves without PR data.
+
 ### Changed
 - Version metadata reports reality: release builds stamp the release tag, source installs resolve the latest release tag before building, and `Cargo.toml` carries a `0.0.0` placeholder instead of a hand-maintained version.
 - README drops the zero-network-requests claim; the update check talks to GitHub. It also states the shape plainly: a local-first, Git-backed work ledger and execution runner where runs are ephemeral and every durable change goes through the ledger's verbs.
