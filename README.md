@@ -1,10 +1,12 @@
 # pin
 
-A local-first, Git-backed personal issue tracker and work ledger for coding agents and orchestrating humans.
+A local-first, Git-backed work ledger and execution runner for coding agents and orchestrating humans.
 
 `pin` saves tasks, bugs, ideas, and architectural decisions as Markdown files with YAML front matter. Records follow a clear lifecycle from creation to verified completion. Agents claim work, coordinate handoffs, enforce dependency ordering, and record verification evidence directly from the terminal or tool calls. Human orchestrators inspect, steer, and update work in real time using the built-in local web viewer.
 
-The vault is plain Markdown in `.pin_vault/`, tracked in Git, and requires zero external databases, cloud services, or network requests.
+Runs are ephemeral. An agent executes against an item in a worktree, and every durable change it makes happens through the ledger's verbs: claim, handoff, complete.
+
+The vault is plain Markdown in `.pin_vault/`, tracked in Git.
 
 ## Installation
 
