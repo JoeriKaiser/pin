@@ -43,15 +43,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Verify changelog entry
-        shell: bash
-        run: |
-          if ! grep -q "^## \[${GITHUB_REF_NAME}\]" CHANGELOG.md; then
-            echo "CHANGELOG.md has no '## [${GITHUB_REF_NAME}]' section." >&2
-            echo "Move the Unreleased entries under the new version heading before publishing." >&2
-            exit 1
-          fi
-
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:

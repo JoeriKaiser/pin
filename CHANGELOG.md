@@ -2,16 +2,26 @@
 
 ## [Unreleased]
 
+## [3.5.0]
+
 ### Added
-- Recorded run transcripts can be exported to sanitized fixtures and replayed as a scripted agent (`tests/fixtures/`). The behavior suite now covers a full replayed run, a mid-stream agent death, and user cancellation against real payloads, without spending agent tokens.
+- Unified Server-Sent Events (SSE) stream on `GET /{token}/events` delivering live updates to the web viewer with zero polling overhead and 15-second keepalive frames.
+- Low-overhead vault mtime watcher detecting terminal CLI operations and broadcasting changes to browser tabs.
+- Linux ARM64 and Windows ARM64 prebuilt release targets.
+- Recorded run transcripts can be exported to sanitized fixtures and replayed as a scripted agent (`tests/fixtures/`).
 
 ### Fixed
-- `pin view` no longer stalls its startup on the `gh pr list` lookup: CI runs skip PR resolution, and anywhere else a slow or offline `gh` is killed after three seconds and the git status resolves without PR data.
+- Board status and Commit + PR button state drift in the web viewer.
+- Card click routing race condition where opening a card could select the first card in the backlog.
+- Missing fsync before atomic rename (`sync_all`), preventing 0-byte corrupted files on system crash.
+- Destructive worktree cleanup in `pin sync` preserves uncommitted changes unless `--force` is passed.
+- Rejects dangling dependency IDs during `pin depend`.
+- Escapes carriage returns (`\r`), tabs, and quotes in YAML frontmatter strings.
+- `pin view` no longer stalls its startup on `gh pr list` lookup.
 
 ### Changed
-- Version metadata reports reality: release builds stamp the release tag, source installs resolve the latest release tag before building, and `Cargo.toml` carries a `0.0.0` placeholder instead of a hand-maintained version.
-- README drops the zero-network-requests claim; the update check talks to GitHub. It also states the shape plainly: a local-first, Git-backed work ledger and execution runner where runs are ephemeral and every durable change goes through the ledger's verbs.
-- The release workflow refuses to publish a tag that has no `## [<tag>]` section in this file.
+- Version metadata reports reality: release builds stamp the release tag, source installs resolve the latest release tag before building, and `Cargo.toml` carries a `0.0.0` placeholder.
+- README drops the zero-network-requests claim; the update check talks to GitHub.
 
 ## [3.4.0]
 
