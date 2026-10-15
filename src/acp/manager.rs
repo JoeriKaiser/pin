@@ -100,6 +100,7 @@ pub struct AcpManager {
     acp_command: String,
     active_runs: Arc<Mutex<HashMap<String, ActiveRun>>>,
     completed_runs: Arc<Mutex<Vec<CompletedRun>>>,
+    global_subscribers: Arc<Mutex<Vec<std::sync::mpsc::Sender<serde_json::Value>>>>,
 }
 
 impl AcpManager {
@@ -116,6 +117,13 @@ impl AcpManager {
             acp_command,
             active_runs: Arc::new(Mutex::new(HashMap::new())),
             completed_runs: Arc::new(Mutex::new(Vec::new())),
+            global_subscribers: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    pub fn add_global_listener(&self, tx: std::sync::mpsc::Sender<serde_json::Value>) {
+        if let Ok(mut subs) = self.global_subscribers.lock() {
+            subs.push(tx);
         }
     }
 
@@ -550,7 +558,13 @@ impl AcpManager {
                 runs.insert(canonical_id.clone(), active_run);
             }
         }
-
+        if let Ok(mut subs) = self.global_subscribers.lock() {
+            let start_evt = serde_json::json!({
+                "type": "run_started",
+                "id": canonical_id
+            });
+            subs.retain(|tx| tx.send(start_evt.clone()).is_ok());
+        }
         // 9. Spawn worker thread
         let worker_client = Arc::clone(&client);
         let worker_event_buffer = Arc::clone(&event_buffer);
@@ -562,9 +576,9 @@ impl AcpManager {
         let worker_filename = filename.clone();
         let worker_active_runs = Arc::clone(&self.active_runs);
         let worker_completed_runs = Arc::clone(&self.completed_runs);
+        let worker_global_subscribers = Arc::clone(&self.global_subscribers);
         let worker_work_dir = work_dir;
         let worker_is_new_worktree = is_new_worktree;
-
         let worker_prompt_rx = prompt_rx;
         thread::spawn(move || {
             // Forward client update events (client.subscribe()) to event_buffer and subscribers
@@ -746,6 +760,13 @@ impl AcpManager {
                         Some(&disk_events_path),
                         finish_event,
                     );
+                    if let Ok(mut subs) = worker_global_subscribers.lock() {
+                        let fin_evt = serde_json::json!({
+                            "type": "run_finished",
+                            "id": worker_item_id.clone()
+                        });
+                        subs.retain(|tx| tx.send(fin_evt.clone()).is_ok());
+                    }
                     let final_events = worker_event_buffer
                         .lock()
                         .map(|buf| buf.clone())
@@ -807,6 +828,13 @@ impl AcpManager {
                         Some(&disk_events_path),
                         error_event,
                     );
+                    if let Ok(mut subs) = worker_global_subscribers.lock() {
+                        let fin_evt = serde_json::json!({
+                            "type": "run_finished",
+                            "id": worker_item_id.clone()
+                        });
+                        subs.retain(|tx| tx.send(fin_evt.clone()).is_ok());
+                    }
                     let final_events = worker_event_buffer
                         .lock()
                         .map(|buf| buf.clone())
@@ -899,6 +927,13 @@ impl AcpManager {
                 let _ = WorktreeManager::remove_worktree(&self.repo_path, canonical_id);
             }
 
+            if let Ok(mut subs) = self.global_subscribers.lock() {
+                let cancel_evt = serde_json::json!({
+                    "type": "run_finished",
+                    "id": canonical_id
+                });
+                subs.retain(|tx| tx.send(cancel_evt.clone()).is_ok());
+            }
             Ok(())
         } else {
             Err(AcpManagerError::ItemNotFound(format!(

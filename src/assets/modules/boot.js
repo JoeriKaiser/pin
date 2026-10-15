@@ -1,6 +1,7 @@
 import { state, ORDER, unique, fillSelect, itemStatus, itemType, kind, priority, updateShown } from './state.js';
 import { els } from './dom.js';
 import { fetchData, fetchUpdate } from './api.js';
+import { BASE } from './config.js';
 import { text, clear, node, isNarrow } from './formatters.js';
 import { route, applyRoute } from './router.js';
 import { setViewMode } from './board.js';
@@ -124,6 +125,32 @@ export function checkUpdate(force) {
       return null;
     });
 }
+export function connectEvents() {
+  if (typeof EventSource === 'undefined') return null;
+  try {
+    var source = new EventSource(BASE + 'events');
+    source.onmessage = function (e) {
+      if (!e || !e.data) return;
+      try {
+        var msg = JSON.parse(e.data);
+        if (msg.type === 'connected') {
+          updateActiveRuns();
+        } else if (msg.type === 'vault_changed' || msg.type === 'git_updated') {
+          refreshData(true);
+        } else if (msg.type === 'run_started' || msg.type === 'run_finished') {
+          updateActiveRuns();
+          refreshData(true);
+        }
+      } catch (_) {}
+    };
+    source.onerror = function () {
+      // EventSource auto-reconnects with backoff
+    };
+    return source;
+  } catch (_) {
+    return null;
+  }
+}
 
 export function boot() {
   bind({
@@ -132,13 +159,14 @@ export function boot() {
   });
 
   checkUpdate();
+  connectEvents();
 
   load(true).then(function () {
     setInterval(function () {
       if (typeof document !== 'undefined' && !document.hidden) {
         refreshData();
       }
-    }, 3000);
+    }, 60000);
     setInterval(function () {
       if (typeof document !== 'undefined' && !document.hidden) {
         checkUpdate();

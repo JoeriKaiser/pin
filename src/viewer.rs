@@ -54,6 +54,33 @@ struct SnapshotFilters {
     item_type: Option<String>,
 }
 
+#[derive(Default)]
+pub struct ViewerBroadcaster {
+    subscribers: Mutex<Vec<std::sync::mpsc::Sender<serde_json::Value>>>,
+}
+
+impl ViewerBroadcaster {
+    pub fn new() -> Self {
+        Self {
+            subscribers: Mutex::new(Vec::new()),
+        }
+    }
+
+    pub fn subscribe(&self) -> std::sync::mpsc::Receiver<serde_json::Value> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        if let Ok(mut subs) = self.subscribers.lock() {
+            subs.push(tx);
+        }
+        rx
+    }
+
+    pub fn broadcast(&self, event: serde_json::Value) {
+        if let Ok(mut subs) = self.subscribers.lock() {
+            subs.retain(|tx| tx.send(event.clone()).is_ok());
+        }
+    }
+}
+
 pub struct ViewSnapshot {
     pub token: String,
     pub vault_path: PathBuf,
@@ -67,6 +94,7 @@ pub struct ViewSnapshot {
     pub acp_command: Option<String>,
     pub acp_manager: Arc<crate::acp::AcpManager>,
     pub git_cache: Arc<Mutex<Option<(Instant, HashMap<String, crate::sync::GitItemInfo>)>>>,
+    pub broadcaster: Arc<ViewerBroadcaster>,
 }
 
 #[derive(Deserialize)]
@@ -167,6 +195,7 @@ pub fn create_snapshot(
         acp_command: None,
         acp_manager,
         git_cache: Arc::new(Mutex::new(None)),
+        broadcaster: Arc::new(ViewerBroadcaster::new()),
     }
 }
 /// Reverts the status change that opened a run which then failed to start.
@@ -744,7 +773,12 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
             if let Ok(mut cache_guard) = snapshot.git_cache.lock() {
                 *cache_guard = Some((Instant::now(), status_map));
             }
-
+            snapshot.broadcaster.broadcast(serde_json::json!({
+                "type": "vault_changed"
+            }));
+            snapshot.broadcaster.broadcast(serde_json::json!({
+                "type": "git_updated"
+            }));
             match synced {
                 Ok(results) => {
                     #[derive(Serialize)]
@@ -1186,6 +1220,11 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                         {
                             let _ = snapshot.acp_manager.cancel_run(id);
                         }
+                        snapshot.broadcaster.broadcast(serde_json::json!({
+                            "type": "vault_changed",
+                            "id": id,
+                            "action": payload.action
+                        }));
                         let json_item = JsonIdeaOutput::from(&updated_meta);
                         let body_str = serde_json::to_string(&json_item).unwrap_or_default();
                         send_response(
@@ -1302,6 +1341,7 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                 };
                 match run_result {
                     Ok(()) => {
+                        // AcpManager automatically broadcasts run_started and vault_changed
                         send_response(
                             &mut stream,
                             200,
@@ -1338,6 +1378,18 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                 let id = id_part.trim();
                 match snapshot.acp_manager.start_commit_pr_run(id) {
                     Ok(()) => {
+                        snapshot.broadcaster.broadcast(serde_json::json!({
+                            "type": "run_started",
+                            "id": id,
+                            "mode": "commit_pr"
+                        }));
+                        snapshot.broadcaster.broadcast(serde_json::json!({
+                            "type": "git_updated",
+                            "id": id
+                        }));
+                        if let Ok(mut cache_guard) = snapshot.git_cache.lock() {
+                            *cache_guard = None;
+                        }
                         send_response(
                             &mut stream,
                             200,
@@ -1536,6 +1588,7 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                 let id = id_part.trim();
                 match snapshot.acp_manager.cancel_run(id) {
                     Ok(()) => {
+                        // AcpManager automatically broadcasts run_finished and vault_changed
                         send_response(
                             &mut stream,
                             200,
@@ -1820,22 +1873,91 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
         }
     }
 
-    if subpath == "data.json" {
-        let etag = compute_vault_etag(&snapshot.vault_path);
-        if let Some(if_none) = &if_none_match {
-            if etags_match(if_none, &etag) {
-                send_not_modified(&mut stream, &etag);
-                return;
-            }
+    if subpath == "events" {
+        let _ = stream.set_read_timeout(None);
+        let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(10)));
+
+        let mut writer = BufWriter::new(stream);
+        let sse_headers = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\nAccess-Control-Allow-Origin: *\r\n\r\n";
+        if writer.write_all(sse_headers.as_bytes()).is_err() || writer.flush().is_err() {
+            return;
         }
 
-        let git_statuses = snapshot
+        if method == "HEAD" {
+            return;
+        }
+        let init_event = serde_json::json!({
+            "type": "connected"
+        });
+        let payload = serde_json::to_string(&init_event).unwrap_or_default();
+        let frame = format!("data: {payload}\n\n");
+        if writer.write_all(frame.as_bytes()).is_err() || writer.flush().is_err() {
+            return;
+        }
+
+        let rx = snapshot.broadcaster.subscribe();
+        loop {
+            match rx.recv_timeout(std::time::Duration::from_secs(15)) {
+                Ok(event) => {
+                    let payload = serde_json::to_string(&event).unwrap_or_default();
+                    let frame = format!("data: {payload}\n\n");
+                    if writer.write_all(frame.as_bytes()).is_err() || writer.flush().is_err() {
+                        return;
+                    }
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    if writer.write_all(b": keepalive\n\n").is_err() || writer.flush().is_err() {
+                        return;
+                    }
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    return;
+                }
+            }
+        }
+    }
+
+    if subpath == "data.json" {
+        let is_git_stale = snapshot
             .git_cache
             .lock()
             .ok()
-            .and_then(|guard| guard.as_ref().map(|(_, map)| map.clone()))
-            .unwrap_or_default();
+            .map(|guard| {
+                guard
+                    .as_ref()
+                    .map(|(instant, _)| instant.elapsed() > std::time::Duration::from_secs(5))
+                    .unwrap_or(true)
+            })
+            .unwrap_or(true);
 
+        let vault_etag = compute_vault_etag(&snapshot.vault_path);
+
+        if !is_git_stale {
+            if let Some(if_none) = &if_none_match {
+                if etags_match(if_none, &vault_etag) {
+                    send_not_modified(&mut stream, &vault_etag);
+                    return;
+                }
+            }
+        }
+
+        let git_statuses = if is_git_stale {
+            let resolver = crate::sync::GitStatusResolver::new(snapshot.repo_path.clone());
+            let fresh_map = collect_ideas(&snapshot.vault_path)
+                .map(|all_items| resolver.resolve_all(&all_items))
+                .unwrap_or_default();
+            if let Ok(mut cache_guard) = snapshot.git_cache.lock() {
+                *cache_guard = Some((Instant::now(), fresh_map.clone()));
+            }
+            fresh_map
+        } else {
+            snapshot
+                .git_cache
+                .lock()
+                .ok()
+                .and_then(|guard| guard.as_ref().map(|(_, map)| map.clone()))
+                .unwrap_or_default()
+        };
         let filter_project = if snapshot.scope_label == "all" {
             None
         } else {
@@ -1897,7 +2019,7 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
             data_json.as_bytes(),
             true,
             method == "GET",
-            Some(&etag),
+            Some(&vault_etag),
         );
         return;
     }
@@ -2030,6 +2152,40 @@ pub fn serve_view(
     let shared_snapshot = Arc::new(snapshot);
     let server_port = local_addr.port();
 
+    // 1. Forward ACP manager run events to the global broadcaster
+    {
+        let (acp_tx, acp_rx) = std::sync::mpsc::channel();
+        shared_snapshot.acp_manager.add_global_listener(acp_tx);
+        let b = Arc::clone(&shared_snapshot.broadcaster);
+        thread::spawn(move || {
+            while let Ok(event) = acp_rx.recv() {
+                let event_type = event.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                if event_type == "run_started" || event_type == "run_finished" {
+                    b.broadcast(event);
+                    b.broadcast(serde_json::json!({ "type": "vault_changed" }));
+                }
+            }
+        });
+    }
+
+    // 2. Background vault mtime watcher to detect external terminal CLI operations
+    {
+        let watcher_snap = Arc::clone(&shared_snapshot);
+        thread::spawn(move || {
+            let mut last_etag = compute_vault_etag(&watcher_snap.vault_path);
+            loop {
+                thread::sleep(std::time::Duration::from_millis(500));
+                let current_etag = compute_vault_etag(&watcher_snap.vault_path);
+                if current_etag != last_etag {
+                    last_etag = current_etag;
+                    watcher_snap.broadcaster.broadcast(serde_json::json!({
+                        "type": "vault_changed"
+                    }));
+                }
+            }
+        });
+    }
+
     for stream in listener.incoming().flatten() {
         let snap = Arc::clone(&shared_snapshot);
         thread::spawn(move || {
@@ -2075,6 +2231,49 @@ mod tests {
         assert_eq!(snapshot.archive_filter, ArchiveFilter::All);
     }
 
+    #[test]
+    fn test_viewer_broadcaster_pub_sub_and_pruning() {
+        let broadcaster = ViewerBroadcaster::new();
+        let rx1 = broadcaster.subscribe();
+        let rx2 = broadcaster.subscribe();
+
+        broadcaster.broadcast(serde_json::json!({
+            "type": "vault_changed",
+            "id": "123"
+        }));
+
+        let msg1 = rx1
+            .recv_timeout(std::time::Duration::from_millis(100))
+            .unwrap();
+        assert_eq!(
+            msg1.get("type").and_then(|v| v.as_str()),
+            Some("vault_changed")
+        );
+        assert_eq!(msg1.get("id").and_then(|v| v.as_str()), Some("123"));
+
+        let msg2 = rx2
+            .recv_timeout(std::time::Duration::from_millis(100))
+            .unwrap();
+        assert_eq!(
+            msg2.get("type").and_then(|v| v.as_str()),
+            Some("vault_changed")
+        );
+
+        // Drop rx1, verify rx2 still receives and rx1 is cleanly pruned on next broadcast
+        drop(rx1);
+        broadcaster.broadcast(serde_json::json!({
+            "type": "run_started",
+            "id": "456"
+        }));
+
+        let msg2_next = rx2
+            .recv_timeout(std::time::Duration::from_millis(100))
+            .unwrap();
+        assert_eq!(
+            msg2_next.get("type").and_then(|v| v.as_str()),
+            Some("run_started")
+        );
+    }
     #[test]
     fn test_screenshot_filename_validation() {
         assert!(is_valid_screenshot_filename("screenshot-123_456_1.png"));
