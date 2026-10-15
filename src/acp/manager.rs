@@ -445,12 +445,12 @@ impl AcpManager {
         if let Some(m) = &meta {
             if let Some(val) = m.raw_frontmatter_map.get("acceptance_criteria") {
                 match val {
-                    serde_yaml::Value::String(s) => acceptance_criteria = Some(s.clone()),
-                    serde_yaml::Value::Sequence(seq) => {
+                    serde_norway::Value::String(s) => acceptance_criteria = Some(s.clone()),
+                    serde_norway::Value::Sequence(seq) => {
                         let items: Vec<String> = seq
                             .iter()
                             .filter_map(|item| match item {
-                                serde_yaml::Value::String(s) => Some(format!("- {s}")),
+                                serde_norway::Value::String(s) => Some(format!("- {s}")),
                                 _ => None,
                             })
                             .collect();

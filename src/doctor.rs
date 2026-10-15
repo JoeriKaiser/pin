@@ -450,4 +450,55 @@ mod tests {
             "a completed dependency must not be reported"
         );
     }
+
+    #[test]
+    fn test_repair_and_upgrade_vault_roundtrip() {
+        let dir = tempdir().unwrap();
+        let raw_item = r#"---
+id: "short"
+project: "test"
+kind: "technical"
+timestamp: 1700000000
+title: "Repair test item"
+custom_meta: "preserved"
+---
+# Repair test item
+
+Body content.
+"#;
+        let file_path = dir.path().join("repair_me.md");
+        fs::write(&file_path, raw_item).unwrap();
+
+        let repaired = repair_vault(dir.path());
+        assert_eq!(repaired, 1);
+
+        let scan = scan_vault(dir.path());
+        assert_eq!(scan.valid_files, 1);
+        let meta = &scan.metas[0];
+        assert_eq!(meta.schema, Some(1));
+        assert_eq!(meta.id.len(), 12);
+        assert_eq!(
+            meta.raw_frontmatter_map
+                .get("custom_meta")
+                .and_then(|v| v.as_str()),
+            Some("preserved")
+        );
+
+        let upgraded = upgrade_vault(dir.path());
+        assert_eq!(upgraded, 1);
+
+        let scan_after = scan_vault(dir.path());
+        assert_eq!(scan_after.valid_files, 1);
+        let meta_after = &scan_after.metas[0];
+        assert_eq!(meta_after.schema, Some(2));
+        assert_eq!(meta_after.status, Some(Status::Created));
+        assert_eq!(meta_after.revision, Some(1));
+        assert_eq!(
+            meta_after
+                .raw_frontmatter_map
+                .get("custom_meta")
+                .and_then(|v| v.as_str()),
+            Some("preserved")
+        );
+    }
 }

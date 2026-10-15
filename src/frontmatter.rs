@@ -1,7 +1,7 @@
 use crate::model::{
     ActivityEvent, Handoff, IdeaMeta, Kind, Priority, Resolution, Status, WorkType,
 };
-use serde_yaml::{Mapping, Value};
+use serde_norway::{Mapping, Value};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Severity {
@@ -107,7 +107,7 @@ pub fn parse_front_matter_detailed(
         }
     };
 
-    let mapping: Mapping = match serde_yaml::from_str(fm_str) {
+    let mapping: Mapping = match serde_norway::from_str(fm_str) {
         Ok(Value::Mapping(map)) => map,
         Ok(_) | Err(_) => {
             issues.push(Issue {
@@ -402,12 +402,12 @@ pub fn parse_front_matter_detailed(
                 }
             }
             "handoff" => {
-                if let Ok(h) = serde_yaml::from_value::<Handoff>(v.clone()) {
+                if let Ok(h) = serde_norway::from_value::<Handoff>(v.clone()) {
                     handoff = Some(h);
                 }
             }
             "activity" => {
-                if let Ok(events) = serde_yaml::from_value::<Vec<ActivityEvent>>(v.clone()) {
+                if let Ok(events) = serde_norway::from_value::<Vec<ActivityEvent>>(v.clone()) {
                     activity = events;
                 }
             }
@@ -713,16 +713,16 @@ pub fn serialize_front_matter(meta: &IdeaMeta) -> String {
                 continue;
             }
             if v.is_mapping() || v.is_sequence() {
-                let mut single_map = serde_yaml::Mapping::new();
+                let mut single_map = serde_norway::Mapping::new();
                 single_map.insert(k.clone(), v.clone());
-                if let Ok(entry_str) = serde_yaml::to_string(&single_map) {
+                if let Ok(entry_str) = serde_norway::to_string(&single_map) {
                     let entry_str = entry_str.strip_prefix("---\n").unwrap_or(&entry_str);
                     out.push_str(entry_str);
                     if !entry_str.ends_with('\n') {
                         out.push('\n');
                     }
                 }
-            } else if let Ok(v_str) = serde_yaml::to_string(v) {
+            } else if let Ok(v_str) = serde_norway::to_string(v) {
                 let v_str = v_str.strip_prefix("---\n").unwrap_or(&v_str);
                 let v_str = v_str.trim_end_matches(['\r', '\n']);
                 out.push_str(&format!("{key}: {v_str}\n"));
@@ -971,6 +971,160 @@ Work details here.
         assert_eq!(
             parsed.resolution_note.as_deref(),
             Some("Note with \r\n newline")
+        );
+    }
+
+    #[test]
+    fn test_handoff_multiline_and_quoted_roundtrip() {
+        let mut meta = IdeaMeta::new_work_item(
+            "0123456789aa".to_string(),
+            "project".to_string(),
+            "Handoff test".to_string(),
+            "Body".to_string(),
+            Kind::Technical,
+            WorkType::Task,
+            Status::InProgress,
+            None,
+            None,
+            Some("agent:worker".to_string()),
+        );
+        meta.handoff = Some(Handoff {
+            progress: Some("Line 1: completed\nLine 2: \"in progress\"\nLine 3: 100%".to_string()),
+            next: Some("Step 1: 'verify'\nStep 2: deploy:now".to_string()),
+            blocker: Some("None: all clear".to_string()),
+            verification: Some("ran `cargo test`:\nresult: ok".to_string()),
+        });
+
+        let rendered = render_full_document(&meta);
+        let mut issues = Vec::new();
+        let parsed = parse_front_matter_detailed("test.md", &rendered, &mut issues).unwrap();
+        assert!(issues.is_empty(), "Issues: {issues:?}");
+        let h = parsed.handoff.expect("handoff must be parsed");
+        assert_eq!(
+            h.progress.as_deref(),
+            Some("Line 1: completed\nLine 2: \"in progress\"\nLine 3: 100%")
+        );
+        assert_eq!(
+            h.next.as_deref(),
+            Some("Step 1: 'verify'\nStep 2: deploy:now")
+        );
+        assert_eq!(h.blocker.as_deref(), Some("None: all clear"));
+        assert_eq!(
+            h.verification.as_deref(),
+            Some("ran `cargo test`:\nresult: ok")
+        );
+    }
+
+    #[test]
+    fn test_activity_with_complex_notes_roundtrip() {
+        let mut meta = IdeaMeta::new_work_item(
+            "0123456789bb".to_string(),
+            "project".to_string(),
+            "Activity test".to_string(),
+            "Body".to_string(),
+            Kind::Technical,
+            WorkType::Task,
+            Status::Planned,
+            None,
+            None,
+            Some("human:owner".to_string()),
+        );
+        meta.activity.push(ActivityEvent {
+            at: 1700000000,
+            actor: "agent:test-worker".to_string(),
+            action: "transitioned".to_string(),
+            from: Some(Status::Planned),
+            to: Some(Status::InProgress),
+            note: Some("Started: \"quoted note\" with \n newline and: colons".to_string()),
+        });
+
+        let rendered = render_full_document(&meta);
+        let mut issues = Vec::new();
+        let parsed = parse_front_matter_detailed("test.md", &rendered, &mut issues).unwrap();
+        assert!(issues.is_empty(), "Issues: {issues:?}");
+        assert_eq!(parsed.activity.len(), 2);
+        assert_eq!(parsed.activity[0].action, "created");
+        let ev = &parsed.activity[1];
+        assert_eq!(ev.actor, "agent:test-worker");
+        assert_eq!(ev.action, "transitioned");
+        assert_eq!(ev.from, Some(Status::Planned));
+        assert_eq!(ev.to, Some(Status::InProgress));
+        assert_eq!(
+            ev.note.as_deref(),
+            Some("Started: \"quoted note\" with \n newline and: colons")
+        );
+    }
+
+    #[test]
+    fn test_legacy_review_status_in_front_matter() {
+        let content = r#"---
+schema: 1
+id: "0123456789cc"
+project: "test"
+kind: "technical"
+status: "review"
+timestamp: 1700000000
+title: "Legacy Review Idea"
+---
+# Legacy Review Idea
+
+Details.
+"#;
+        let mut issues = Vec::new();
+        let meta = parse_front_matter_detailed("test.md", content, &mut issues).unwrap();
+        assert_eq!(meta.status, Some(Status::Done));
+
+        let doc = render_full_document(&meta);
+        assert!(doc.contains("status: \"done\""));
+        assert!(!doc.contains("status: \"review\""));
+
+        let mut parse_issues = Vec::new();
+        let reparsed = parse_front_matter_detailed("test.md", &doc, &mut parse_issues).unwrap();
+        assert_eq!(reparsed.status, Some(Status::Done));
+    }
+
+    #[test]
+    fn test_yaml_norway_boolean_strings_preservation() {
+        let content = r#"---
+schema: 2
+id: "0123456789dd"
+project: "NO"
+kind: "technical"
+status: "planned"
+timestamp: 1700000000
+title: "Norway Problem Handling"
+tags: "no, yes, true, false, off, on"
+custom_code: "no"
+custom_flag: true
+---
+# Norway Problem Handling
+"#;
+        let mut issues = Vec::new();
+        let meta = parse_front_matter_detailed("test.md", content, &mut issues).unwrap();
+        assert_eq!(meta.project, "NO");
+        assert_eq!(meta.tags.as_deref(), Some("no, yes, true, false, off, on"));
+
+        let doc = render_full_document(&meta);
+        let mut parse_issues = Vec::new();
+        let reparsed = parse_front_matter_detailed("test.md", &doc, &mut parse_issues).unwrap();
+        assert_eq!(reparsed.project, "NO");
+        assert_eq!(
+            reparsed.tags.as_deref(),
+            Some("no, yes, true, false, off, on")
+        );
+        assert_eq!(
+            reparsed
+                .raw_frontmatter_map
+                .get("custom_code")
+                .and_then(|v| v.as_str()),
+            Some("no")
+        );
+        assert_eq!(
+            reparsed
+                .raw_frontmatter_map
+                .get("custom_flag")
+                .and_then(|v| v.as_bool()),
+            Some(true)
         );
     }
 }

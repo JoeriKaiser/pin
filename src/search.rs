@@ -94,7 +94,7 @@ mod tests {
             filename: format!("{id}.md"),
             body: body.to_string(),
             score: None,
-            raw_frontmatter_map: serde_yaml::Mapping::new(),
+            raw_frontmatter_map: serde_norway::Mapping::new(),
         }
     }
 

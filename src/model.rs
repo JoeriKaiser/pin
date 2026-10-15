@@ -389,7 +389,7 @@ pub struct IdeaMeta {
     pub score: Option<usize>,
 
     #[serde(skip_serializing, skip_deserializing)]
-    pub raw_frontmatter_map: serde_yaml::Mapping,
+    pub raw_frontmatter_map: serde_norway::Mapping,
 }
 
 impl IdeaMeta {
@@ -514,7 +514,7 @@ impl IdeaMeta {
             filename,
             body,
             score: None,
-            raw_frontmatter_map: serde_yaml::Mapping::new(),
+            raw_frontmatter_map: serde_norway::Mapping::new(),
         }
     }
 }
@@ -526,7 +526,7 @@ mod tests {
     #[test]
     fn test_retired_review_status_reads_as_done() {
         // Records written before `review` was retired still say status: "review".
-        let parsed: Status = serde_yaml::from_str("\"review\"").unwrap();
+        let parsed: Status = serde_norway::from_str("\"review\"").unwrap();
         assert_eq!(parsed, Status::Done);
 
         // The retired name also resolves on the CLI surface.
@@ -536,7 +536,7 @@ mod tests {
 
     #[test]
     fn test_status_round_trip_uses_done() {
-        let rendered = serde_yaml::to_string(&Status::Done).unwrap();
+        let rendered = serde_norway::to_string(&Status::Done).unwrap();
         assert_eq!(rendered.trim(), "done");
         assert_eq!(Status::Done.as_str(), "done");
     }
