@@ -33,6 +33,7 @@ export function applyRoute() {
 }
 
 export function setRoute(id) {
+  state.selected = id;
   var next = id ? '#/item/' + encodeURIComponent(id) : '#/';
   try {
     if (typeof location !== 'undefined' && location) {
@@ -44,6 +45,5 @@ export function setRoute(id) {
       return;
     }
   } catch (_) {}
-  state.selected = id;
   applyRoute();
 }

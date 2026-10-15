@@ -20,12 +20,13 @@ import {
   updateActiveRuns
 } from './agent.js';
 import {
-  buildBoardCard, handleCardDrop, setViewMode, renderBoard
+  buildBoardCard, handleCardDrop, setViewMode, renderBoard, computeRenderKey
 } from './board.js';
 import {
   bind, sendRunItem, sendCommitPrItem, handleUpdateInstall, handleGitSync
 } from './bind.js';
-import { ingest, checkUpdate } from './boot.js';
+import { ingest, checkUpdate, connectEvents, refreshData } from './boot.js';
+import { setRoute } from './router.js';
 
 if (typeof window !== 'undefined') {
   window._test = {
@@ -73,5 +74,9 @@ if (typeof window !== 'undefined') {
     handleGitSync: handleGitSync,
     ingest: ingest,
     updateShown: updateShown,
+    connectEvents: connectEvents,
+    refreshData: refreshData,
+    setRoute: setRoute,
+    computeRenderKey: computeRenderKey,
   };
 }

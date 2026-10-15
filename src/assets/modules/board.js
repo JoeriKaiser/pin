@@ -214,6 +214,10 @@ export function setViewMode(mode) {
   }
 }
 
+export function computeRenderKey(item) {
+  return (item.revision || '') + ':' + (item.title || '') + ':' + itemStatus(item) + ':' + (state.activeRuns && state.activeRuns.has(item.id)) + ':' + (item.git_status || '') + ':' + (item.pr_number || '') + ':' + (item.pr_url || '') + ':' + (item.claim_expires_at || '') + ':' + (item.claimed_by || '');
+}
+
 export function renderBoard() {
   var cols = {
     created: document.querySelector('.board-col-cards[data-drop-status="created"]'),
@@ -255,7 +259,7 @@ export function renderBoard() {
 
     if (!targetCol) return;
 
-    var renderKey = (item.revision || '') + ':' + (item.title || '') + ':' + itemStatus(item) + ':' + (state.activeRuns && state.activeRuns.has(item.id)) + ':' + (item.git_status || '');
+    var renderKey = computeRenderKey(item);
     var existing = existingCards.get(item.id);
 
     if (existing) {

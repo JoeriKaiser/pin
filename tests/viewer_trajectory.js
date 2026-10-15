@@ -1181,6 +1181,70 @@ async function runHarness() {
   testExports.closeAgentDrawer();
 
   console.log('PASS: Reactive ingest, first paint, and keyed reconciliation verified');
+
+  console.log('\n--- 13. Testing Unified SSE Event Bus and Synchronous Routing ---');
+  const setRoute = testExports.setRoute;
+  assert.ok(typeof setRoute === 'function', 'setRoute is exported');
+
+  // Test synchronous route selection
+  setRoute('item-target-123');
+  assert.strictEqual(testExports.state.selected, 'item-target-123', 'state.selected updated synchronously by setRoute');
+
+  // Test connectEvents and SSE message handling
+  let sseInstance = null;
+  global.EventSource = function (url) {
+    this.url = url;
+    this.onmessage = null;
+    this.onerror = null;
+    this.close = () => {};
+    sseInstance = this;
+  };
+
+  const connectEvents = testExports.connectEvents;
+  const sseSource = connectEvents();
+  assert.ok(sseSource, 'connectEvents returns EventSource instance');
+  assert.ok(sseSource.url.endsWith('events'), 'EventSource connects to /events');
+
+  let refreshedWithForce = false;
+  fetchStub = function (url, opts) {
+    if (url.includes('data.json')) {
+      if (!opts || !opts.headers || !opts.headers['If-None-Match']) {
+        refreshedWithForce = true;
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ items: [] })
+      });
+    }
+    return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve([]) });
+  };
+
+  // Simulate vault_changed event arriving over SSE
+  assert.ok(typeof sseSource.onmessage === 'function', 'onmessage handler attached');
+  sseSource.onmessage({ data: JSON.stringify({ type: 'vault_changed' }) });
+  assert.strictEqual(refreshedWithForce, true, 'vault_changed event triggers refreshData(true) without If-None-Match header');
+
+  // Test PR renderKey expansion in board cards
+  const itemWithPr = {
+    id: 'item-pr-1',
+    title: 'PR Task',
+    status: 'done',
+    type: 'task',
+    revision: 1,
+    pr_number: null,
+    pr_url: null,
+    timestamp: Date.now()
+  };
+  const keyNoPr = testExports.computeRenderKey(itemWithPr);
+
+  itemWithPr.pr_number = 42;
+  itemWithPr.pr_url = 'https://github.com/org/repo/pull/42';
+  const keyWithPr = testExports.computeRenderKey(itemWithPr);
+  assert.notStrictEqual(keyNoPr, keyWithPr, 'renderKey changes when PR status/number is added');
+  assert.ok(keyWithPr.includes('42'), 'renderKey includes pr_number');
+
+  console.log('PASS: Unified SSE event bus and synchronous routing verified');
   console.log('\n========================================');
   console.log('ALL VIEWER TRAJECTORY TESTS PASSED (0)');
   console.log('========================================');

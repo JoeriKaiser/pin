@@ -538,6 +538,12 @@ assert_contains "$runs_json" '"primary_busy":null'
 stream_headers=$(curl -s -S -I --max-time 1 "${url}items/${view_id}/stream" || true)
 assert_contains "$stream_headers" "text/event-stream"
 
+# Test global unified SSE events stream endpoint
+events_headers=$(curl -s -S -I --max-time 1 "${url}events" || true)
+assert_contains "$events_headers" "text/event-stream"
+events_initial=$(curl -s -N --max-time 1 "${url}events" 2>/dev/null | head -n 2 || true)
+assert_contains "$events_initial" '"type":"connected"'
+
 # Test UI contains agent drawer elements with collapsed tool calls and clean thoughts
 assert_contains "$(cat "$curl_html")" 'id="agent-drawer"'
 assert_contains "$(cat "$curl_html")" 'id="worktree-modal"'
