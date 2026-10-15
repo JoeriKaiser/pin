@@ -71,10 +71,19 @@ if [ -z "$BINARY_NAME" ]; then
         exit 1
     fi
 
-    git clone --depth 1 https://github.com/JoeriKaiser/pin.git "$TEMP_DIR/pin-src"
+    # Bind the build to the newest release tag when it can be resolved, so a
+    # source install reports a real version instead of the Cargo placeholder.
+    # An empty value is ignored by build.rs.
+    RELEASE_TAG=$(curl -fsSL "https://api.github.com/repos/JoeriKaiser/pin/releases/latest" 2>/dev/null | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1)
+    if [ -n "$RELEASE_TAG" ]; then
+        echo "==> Building from source at release $RELEASE_TAG..."
+        git clone --depth 1 --branch "$RELEASE_TAG" https://github.com/JoeriKaiser/pin.git "$TEMP_DIR/pin-src"
+    else
+        git clone --depth 1 https://github.com/JoeriKaiser/pin.git "$TEMP_DIR/pin-src"
+    fi
     (
         cd "$TEMP_DIR/pin-src"
-        cargo build --release
+        PIN_VERSION="$RELEASE_TAG" cargo build --release
     )
     cp "$TEMP_DIR/pin-src/target/release/pin" "$TEMP_DIR/pin"
     BINARY_NAME="pin"

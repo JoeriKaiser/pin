@@ -1,9 +1,12 @@
 [package]
 name = "pin"
-version = "2.2.0"
+# The version comes from the release tag at build time: the release workflow
+# sets PIN_VERSION and build.rs otherwise falls back to `git describe`.
+# This placeholder is reported only when neither source is available.
+version = "0.0.0"
 edition = "2021"
 authors = ["Joeri Kaiser"]
-description = "A zero-runtime-dependency idea registry for humans and coding agents."
+description = "A local-first, Git-backed work ledger and execution runner for coding agents and orchestrating humans."
 license = "MIT"
 
 [dependencies]
