@@ -603,6 +603,82 @@ kill "$view_pid" 2>/dev/null || true
 wait "$view_pid" 2>/dev/null || true
 view_pid=
 
+# ── Recorded transcript replay: real agent frames, no live agent ────────
+# viewer-archive-button-run.jsonl was recorded from a real run and is
+# replayed by tests/fixtures/replay-agent.js, so the client framing,
+# manager lifecycle, and evidence extraction all run against real payloads.
+replay_transcript="$ROOT/tests/fixtures/transcripts/viewer-archive-button-run.jsonl"
+mkdir -p "$TMP/replay-vault"
+replay_item=$(PIN_VAULT="$TMP/replay-vault" PIN_PROJECT=replay "$PIN_BIN" add '# Replayed run target' --kind technical --priority low --format json)
+replay_id=$(printf '%s' "$replay_item" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+
+start_view "$TMP/replay-vault" "$TMP/replay-view.log" "node $ROOT/tests/fixtures/replay-agent.js $replay_transcript"
+replay_origin=$(printf '%s' "$view_url" | cut -d/ -f1-3)
+replay_run=$(curl -s -S -X POST -H "Origin: $replay_origin" -H 'Content-Type: application/json' -H 'X-Pin-Action: true' "${view_url}items/${replay_id}/run")
+assert_contains "$replay_run" '"status":"started"'
+
+replay_read=""
+for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25; do
+    sleep 0.1
+    replay_read=$(PIN_VAULT="$TMP/replay-vault" "$PIN_BIN" read "$replay_id" 2>/dev/null || true)
+    if printf '%s' "$replay_read" | grep -q 'status: "done"'; then
+        break
+    fi
+done
+assert_contains "$replay_read" 'status: "done"'
+assert_contains "$replay_read" 'Viewer Backend'
+assert_contains "$replay_read" 'running 72 tests'
+[ -f "$TMP/replay-vault/runs/${replay_id}.events.jsonl" ] || fail "replayed run events file was not created"
+stop_view
+
+# Mid-stream agent death: the item returns to planned without a claim
+fail_item=$(PIN_VAULT="$TMP/replay-vault" PIN_PROJECT=replay "$PIN_BIN" add '# Failing run target' --kind technical --priority low --format json)
+fail_id=$(printf '%s' "$fail_item" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+
+start_view "$TMP/replay-vault" "$TMP/replay-view.log" "node $ROOT/tests/fixtures/replay-agent.js $replay_transcript --die-after 10"
+fail_origin=$(printf '%s' "$view_url" | cut -d/ -f1-3)
+fail_run=$(curl -s -S -X POST -H "Origin: $fail_origin" -H 'Content-Type: application/json' -H 'X-Pin-Action: true' "${view_url}items/${fail_id}/run")
+assert_contains "$fail_run" '"status":"started"'
+
+fail_read=""
+for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25; do
+    sleep 0.1
+    fail_read=$(PIN_VAULT="$TMP/replay-vault" "$PIN_BIN" read "$fail_id" 2>/dev/null || true)
+    if printf '%s' "$fail_read" | grep -q 'status: "planned"' && ! printf '%s' "$fail_read" | grep -q 'claimed_by:'; then
+        break
+    fi
+done
+assert_contains "$fail_read" 'status: "planned"'
+if printf '%s' "$fail_read" | grep -q 'claimed_by:'; then
+    fail "a failed run kept its claim attribution"
+fi
+grep -q '"type":"error"' "$TMP/replay-vault/runs/${fail_id}.events.jsonl" || fail "a failed run wrote no error event"
+stop_view
+
+# User cancellation kills the stalled agent and releases the claim
+cancel_item=$(PIN_VAULT="$TMP/replay-vault" PIN_PROJECT=replay "$PIN_BIN" add '# Cancelled run target' --kind technical --priority low --format json)
+cancel_id=$(printf '%s' "$cancel_item" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+
+start_view "$TMP/replay-vault" "$TMP/replay-view.log" "node $ROOT/tests/fixtures/replay-agent.js $replay_transcript --hang"
+cancel_origin=$(printf '%s' "$view_url" | cut -d/ -f1-3)
+cancel_run=$(curl -s -S -X POST -H "Origin: $cancel_origin" -H 'Content-Type: application/json' -H 'X-Pin-Action: true' "${view_url}items/${cancel_id}/run")
+assert_contains "$cancel_run" '"status":"started"'
+sleep 0.3
+cancel_resp=$(curl -s -S -X POST -H "Origin: $cancel_origin" -H 'Content-Type: application/json' -H 'X-Pin-Action: true' "${view_url}items/${cancel_id}/cancel")
+assert_contains "$cancel_resp" '"status":"cancelled"'
+
+cancel_read=""
+for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25; do
+    sleep 0.1
+    cancel_read=$(PIN_VAULT="$TMP/replay-vault" "$PIN_BIN" read "$cancel_id" 2>/dev/null || true)
+    if printf '%s' "$cancel_read" | grep -q 'status: "planned"' && ! printf '%s' "$cancel_read" | grep -q 'claimed_by:'; then
+        break
+    fi
+done
+assert_contains "$cancel_read" 'status: "planned"'
+grep -q 'Cancelled by user' "$TMP/replay-vault/runs/${cancel_id}.events.jsonl" || fail "cancelled run wrote no cancel event"
+stop_view
+
 # ── CLI filters must survive into the served snapshot ───────────────────
 mkdir -p "$TMP/filter-vault"
 filter_match=$(PIN_VAULT="$TMP/filter-vault" PIN_PROJECT=filter "$PIN_BIN" add '# Filter match' --kind technical --type bug --tags 'perf' --format json)
