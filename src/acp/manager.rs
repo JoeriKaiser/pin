@@ -84,6 +84,14 @@ pub struct ActiveRun {
     pub prompt_sender: Option<Sender<String>>,
     pub mode: RunMode,
 }
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct ActiveRunInfo {
+    pub item_id: String,
+    pub mode: String,
+    pub is_primary_worktree: bool,
+    pub worktree_path: Option<String>,
+    pub started_at: i64,
+}
 #[derive(Clone)]
 pub struct CompletedRun {
     pub item_id: String,
@@ -175,6 +183,31 @@ impl AcpManager {
             (items, timings)
         } else {
             (Vec::new(), std::collections::HashMap::new())
+        }
+    }
+    pub fn active_runs_info(&self) -> Vec<ActiveRunInfo> {
+        if let Ok(runs) = self.active_runs.lock() {
+            let mut list: Vec<ActiveRunInfo> = runs
+                .values()
+                .map(|run| {
+                    let mode_str = match run.mode {
+                        RunMode::Implement { .. } => "implement",
+                        RunMode::CommitPr => "commit_pr",
+                        RunMode::Idea { .. } => "idea",
+                    };
+                    ActiveRunInfo {
+                        item_id: run.item_id.clone(),
+                        mode: mode_str.to_string(),
+                        is_primary_worktree: run.is_primary_worktree,
+                        worktree_path: run.worktree_path.as_ref().map(|p| p.display().to_string()),
+                        started_at: run.started_at,
+                    }
+                })
+                .collect();
+            list.sort_by(|a, b| a.item_id.cmp(&b.item_id));
+            list
+        } else {
+            Vec::new()
         }
     }
 
@@ -1492,5 +1525,65 @@ mod tests {
         );
         let res = mgr.start_idea_run("nonexistent", false);
         assert!(matches!(res, Err(AcpManagerError::ItemNotFound(_))));
+    }
+    #[test]
+    fn test_active_runs_info() {
+        let vault_dir = tempfile::tempdir().unwrap();
+        let repo_dir = tempfile::tempdir().unwrap();
+        let mgr = AcpManager::new(
+            vault_dir.path().to_path_buf(),
+            repo_dir.path().to_path_buf(),
+            None,
+        );
+
+        assert!(mgr.active_runs_info().is_empty());
+
+        let log_path = vault_dir.path().join("test.log");
+        let client = Arc::new(AcpClient::spawn("cat", repo_dir.path(), &log_path).unwrap());
+        let run1 = ActiveRun {
+            item_id: "item-b".to_string(),
+            client: Arc::clone(&client),
+            worktree_path: Some(PathBuf::from("/tmp/wt-b")),
+            is_primary_worktree: false,
+            event_buffer: Arc::new(Mutex::new(Vec::new())),
+            subscribers: Arc::new(Mutex::new(Vec::new())),
+            started_at: 200,
+            cancel_requested: Arc::new(AtomicBool::new(false)),
+            prompt_sender: None,
+            mode: RunMode::Idea { use_worktree: true },
+        };
+        let run2 = ActiveRun {
+            item_id: "item-a".to_string(),
+            client: Arc::clone(&client),
+            worktree_path: None,
+            is_primary_worktree: true,
+            event_buffer: Arc::new(Mutex::new(Vec::new())),
+            subscribers: Arc::new(Mutex::new(Vec::new())),
+            started_at: 100,
+            cancel_requested: Arc::new(AtomicBool::new(false)),
+            prompt_sender: None,
+            mode: RunMode::CommitPr,
+        };
+
+        {
+            let mut runs = mgr.active_runs.lock().unwrap();
+            runs.insert("item-b".to_string(), run1);
+            runs.insert("item-a".to_string(), run2);
+        }
+
+        let info = mgr.active_runs_info();
+        assert_eq!(info.len(), 2);
+        // Verified sorted by item_id
+        assert_eq!(info[0].item_id, "item-a");
+        assert_eq!(info[0].mode, "commit_pr");
+        assert!(info[0].is_primary_worktree);
+        assert_eq!(info[0].worktree_path, None);
+        assert_eq!(info[0].started_at, 100);
+
+        assert_eq!(info[1].item_id, "item-b");
+        assert_eq!(info[1].mode, "idea");
+        assert!(!info[1].is_primary_worktree);
+        assert_eq!(info[1].worktree_path.as_deref(), Some("/tmp/wt-b"));
+        assert_eq!(info[1].started_at, 200);
     }
 }

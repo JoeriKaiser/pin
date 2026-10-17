@@ -27,6 +27,7 @@ import {
 } from './bind.js';
 import { ingest, checkUpdate, connectEvents, refreshData } from './boot.js';
 import { setRoute } from './router.js';
+import { renderAgentsTable, formatDuration, updateAgentDurations } from './agents-view.js';
 
 if (typeof window !== 'undefined') {
   window._test = {
@@ -78,5 +79,8 @@ if (typeof window !== 'undefined') {
     refreshData: refreshData,
     setRoute: setRoute,
     computeRenderKey: computeRenderKey,
+    renderAgentsTable: renderAgentsTable,
+    formatDuration: formatDuration,
+    updateAgentDurations: updateAgentDurations,
   };
 }

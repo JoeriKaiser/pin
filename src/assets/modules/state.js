@@ -17,6 +17,7 @@ export var state = {
   etag: null,
   filters: { text: '', status: '', type: '', kind: '', priority: '', project: '' },
   activeRuns: new Set(),
+  activeRunsInfo: [],
   currentStream: null,
   currentStreamingId: null,
   pendingWorktreeItem: null,

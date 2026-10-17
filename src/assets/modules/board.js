@@ -11,7 +11,8 @@ var callbacks = {
   openCloseModal: function () {},
   openAgentDrawer: function () {},
   sendCommitPrItem: function () {},
-  refreshData: function () {}
+  refreshData: function () {},
+  renderAgentsTable: function () {}
 };
 
 export function setBoardCallbacks(cbs) {
@@ -195,13 +196,17 @@ export function buildBoardCard(item) {
 }
 
 export function setViewMode(mode) {
-  state.viewMode = mode === 'detail' ? 'detail' : 'board';
+  state.viewMode = mode === 'detail' ? 'detail' : (mode === 'agents' ? 'agents' : 'board');
   if (els.workspace) {
     els.workspace.classList.toggle('mode-board', state.viewMode === 'board');
     els.workspace.classList.toggle('mode-detail', state.viewMode === 'detail');
+    els.workspace.classList.toggle('mode-agents', state.viewMode === 'agents');
   }
   if (els.viewBoardBtn) els.viewBoardBtn.setAttribute('aria-pressed', String(state.viewMode === 'board'));
   if (els.viewDetailBtn) els.viewDetailBtn.setAttribute('aria-pressed', String(state.viewMode === 'detail'));
+  if (els.viewAgentsBtn) els.viewAgentsBtn.setAttribute('aria-pressed', String(state.viewMode === 'agents'));
+  if (els.board) els.board.hidden = state.viewMode !== 'board';
+  if (els.agents) els.agents.hidden = state.viewMode !== 'agents';
   if (state.viewMode === 'detail' && !state.selected && state.shown.length) {
     setRoute(state.shown[0].id);
   }
@@ -209,8 +214,21 @@ export function setViewMode(mode) {
     if (state.selected) {
       state.selected = null;
       setRoute(null);
+    } else if (typeof location !== 'undefined' && location && location.hash === '#/agents') {
+      setRoute(null);
     }
     renderBoard();
+  }
+  if (state.viewMode === 'agents') {
+    if (state.selected) {
+      state.selected = null;
+    }
+    if (typeof location !== 'undefined' && location && location.hash !== '#/agents') {
+      setRoute('agents');
+    }
+    if (callbacks.renderAgentsTable) {
+      callbacks.renderAgentsTable();
+    }
   }
 }
 

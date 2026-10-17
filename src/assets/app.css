@@ -711,11 +711,13 @@ a:hover {
 }
 
 .workspace.mode-board #index,
-.workspace.mode-board #reader {
+.workspace.mode-board #reader,
+.workspace.mode-board #agents {
   display: none;
 }
 
-.workspace.mode-detail #board {
+.workspace.mode-detail #board,
+.workspace.mode-detail #agents {
   display: none;
 }
 
@@ -728,6 +730,177 @@ a:hover {
 .workspace.mode-detail #index,
 .workspace.mode-detail #reader {
   display: block;
+}
+
+.workspace.mode-agents #agents {
+  display: flex;
+}
+
+.workspace.mode-agents #board,
+.workspace.mode-agents #index,
+.workspace.mode-agents #reader {
+  display: none;
+}
+
+/* --------------------------------------------------------------------------
+   5b. Running Agents Table View
+   -------------------------------------------------------------------------- */
+.agents-view {
+  padding: var(--space-6) var(--space-8);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  height: 100%;
+  overflow-y: auto;
+  background: var(--bg);
+}
+
+.agents-container {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  max-width: 1200px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.agents-empty {
+  background: var(--surface);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-md);
+  padding: var(--space-12) var(--space-6);
+  text-align: center;
+  color: var(--muted);
+  font-size: var(--text-base);
+}
+
+.agents-table-wrap {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  overflow-x: auto;
+  box-shadow: var(--shadow-xs);
+}
+
+.agents-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: var(--text-sm);
+}
+
+.agents-table th {
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-raised);
+  color: var(--muted);
+  font-weight: var(--weight-semibold);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.agents-table td {
+  padding: var(--space-3-5) var(--space-4);
+  border-bottom: 1px solid var(--line);
+  color: var(--ink);
+  vertical-align: middle;
+}
+
+.agents-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.agents-table tbody tr:hover td {
+  background: var(--soft);
+}
+
+.agent-col-item {
+  max-width: 280px;
+}
+
+.agent-item-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--ink);
+  font-size: inherit;
+  font-family: inherit;
+  font-weight: var(--weight-medium);
+  text-align: left;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.agent-item-link:hover {
+  color: var(--accent);
+}
+
+.agent-item-id {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+.agent-duration-ticker {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+.agent-col-actions {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  white-space: nowrap;
+}
+
+.badge-mode-implement {
+  background: var(--status-in_progress-bg);
+  color: var(--status-in_progress-ink);
+  border: 1px solid var(--status-in_progress-border);
+}
+
+.badge-mode-commit-pr {
+  background: var(--status-planned-bg);
+  color: var(--status-planned-ink);
+  border: 1px solid var(--status-planned-border);
+}
+
+.badge-mode-idea {
+  background: var(--status-created-bg);
+  color: var(--status-created-ink);
+  border: 1px solid var(--status-created-border);
+}
+
+.badge-wt-primary {
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+.badge-wt-isolated {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--ink);
+}
+
+.agent-actor {
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+.agent-activity {
+  font-size: var(--text-xs);
+  color: var(--muted);
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
 }
 
 /* --------------------------------------------------------------------------
