@@ -1745,12 +1745,15 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
             running: Vec<String>,
             primary_busy: Option<String>,
             timings: std::collections::HashMap<String, i64>,
+            runs: Vec<crate::acp::ActiveRunInfo>,
         }
         let (running, timings) = snapshot.acp_manager.running_items_with_timing();
+        let runs = snapshot.acp_manager.active_runs_info();
         let out = RunsOutput {
             running,
             primary_busy: snapshot.acp_manager.is_primary_busy(),
             timings,
+            runs,
         };
         let out_json = serde_json::to_string(&out).unwrap_or_else(|_| "{}".to_string());
         send_response(
@@ -2336,5 +2339,37 @@ mod tests {
         let payload: RunPayload = serde_json::from_str(json).unwrap();
         assert_eq!(payload.mode.as_deref(), Some("idea"));
         assert_eq!(payload.use_worktree, Some(true));
+    }
+    #[test]
+    fn test_runs_output_serialization() {
+        let run_info = crate::acp::ActiveRunInfo {
+            item_id: "item-1".to_string(),
+            mode: "implement".to_string(),
+            is_primary_worktree: false,
+            worktree_path: Some("/tmp/wt".to_string()),
+            started_at: 1234567,
+        };
+        #[derive(Serialize)]
+        struct TestRunsOutput {
+            running: Vec<String>,
+            primary_busy: Option<String>,
+            timings: std::collections::HashMap<String, i64>,
+            runs: Vec<crate::acp::ActiveRunInfo>,
+        }
+        let mut timings = std::collections::HashMap::new();
+        timings.insert("item-1".to_string(), 1234567);
+        let out = TestRunsOutput {
+            running: vec!["item-1".to_string()],
+            primary_busy: None,
+            timings,
+            runs: vec![run_info],
+        };
+        let json = serde_json::to_value(&out).unwrap();
+        assert_eq!(json["running"][0], "item-1");
+        assert_eq!(json["runs"][0]["item_id"], "item-1");
+        assert_eq!(json["runs"][0]["mode"], "implement");
+        assert_eq!(json["runs"][0]["is_primary_worktree"], false);
+        assert_eq!(json["runs"][0]["worktree_path"], "/tmp/wt");
+        assert_eq!(json["runs"][0]["started_at"], 1234567);
     }
 }

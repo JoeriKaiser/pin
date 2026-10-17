@@ -5,6 +5,7 @@ import { text, showToast } from './formatters.js';
 import { setRoute, applyRoute, setOnRouteChanged } from './router.js';
 import { insertSnippetIntoTextarea, handleScreenshotPaste } from './media.js';
 import { handleCardDrop, setViewMode, setBoardCallbacks, renderBoard } from './board.js';
+import { renderAgentsTable, setAgentsViewCallbacks } from './agents-view.js';
 import { renderList, renderDetail, setReaderTab, setDetailCallbacks } from './detail.js';
 import {
   SPEC_SNIPPETS, collectTicketFields, expandQuickAdd, collapseQuickAdd, submitQuickAdd,
@@ -217,6 +218,7 @@ export function handleGitSync() {
 export function bindNavigation() {
   if (els.viewBoardBtn) els.viewBoardBtn.addEventListener('click', function () { setViewMode('board'); });
   if (els.viewDetailBtn) els.viewDetailBtn.addEventListener('click', function () { setViewMode('detail'); });
+  if (els.viewAgentsBtn) els.viewAgentsBtn.addEventListener('click', function () { setViewMode('agents'); });
   if (els.back) els.back.addEventListener('click', function () { setRoute(null); });
   if (els.btnNewTicket) els.btnNewTicket.addEventListener('click', function () { openSpecModal(); });
   if (els.btnUpdate) els.btnUpdate.addEventListener('click', handleUpdateInstall);
@@ -451,7 +453,7 @@ export function bindGlobalShortcuts() {
         if (els.filterToggle) els.filterToggle.setAttribute('aria-expanded', 'false');
         return;
       }
-      if (state.viewMode === 'detail') { event.preventDefault(); setViewMode('board'); return; }
+      if (state.viewMode === 'detail' || state.viewMode === 'agents') { event.preventDefault(); setViewMode('board'); return; }
       if (/^(INPUT|SELECT|TEXTAREA)$/.test(event.target.tagName)) { event.target.blur(); return; }
       if (state.selected) { setRoute(null); return; }
       return;
@@ -491,6 +493,13 @@ export function bind(options) {
   if (options) setBindCallbacks(options);
 
   // Wire callbacks into earlier modules
+  setAgentsViewCallbacks({
+    openAgentDrawer: openAgentDrawer,
+    updateActiveRuns: updateActiveRuns,
+    setViewMode: setViewMode,
+    setRoute: setRoute
+  });
+
   setBoardCallbacks({
     openCompleteModal: openCompleteModal,
     openBlockedModal: openBlockedModal,
@@ -498,9 +507,9 @@ export function bind(options) {
     openCloseModal: openCloseModal,
     openAgentDrawer: openAgentDrawer,
     sendCommitPrItem: sendCommitPrItem,
-    refreshData: function () { bootCallbacks.refreshData(); }
+    refreshData: function () { bootCallbacks.refreshData(); },
+    renderAgentsTable: renderAgentsTable
   });
-
   setDetailCallbacks({
     sendRunItem: sendRunItem,
     convertIdeaToSpec: convertIdeaToSpec,
@@ -518,11 +527,11 @@ export function bind(options) {
     refreshData: function () { bootCallbacks.refreshData(); },
     ingest: function (data) { bootCallbacks.ingest(data); }
   });
-
   setAgentCallbacks({
     refreshData: function () { bootCallbacks.refreshData(); },
     renderBoard: renderBoard,
-    renderDetail: renderDetail
+    renderDetail: renderDetail,
+    renderAgentsTable: renderAgentsTable
   });
 
   setOnRouteChanged(function (selected) {

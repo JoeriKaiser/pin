@@ -1245,12 +1245,228 @@ async function runHarness() {
   assert.ok(keyWithPr.includes('42'), 'renderKey includes pr_number');
 
   console.log('PASS: Unified SSE event bus and synchronous routing verified');
+
+  console.log('\n--- 14. Testing Running Agents Table View & Live Duration Ticker ---');
+  // Settle any pending SSE refresh from prior test
+  await new Promise(r => setTimeout(r, 20));
+
+
+  const viewAgentsBtn = documentMock.getElementById('view-agents-btn');
+  const viewBoardBtn = documentMock.getElementById('view-board-btn');
+  const viewDetailBtn = documentMock.getElementById('view-detail-btn');
+  const agentsCountBadge = documentMock.getElementById('agents-count-badge');
+  const agentsSection = documentMock.getElementById('agents');
+  const boardSection = documentMock.getElementById('board');
+  const workspaceEl = documentMock.getElementById('workspace');
+  const agentsTableBody = documentMock.getElementById('agents-table-body');
+  const agentsEmpty = documentMock.getElementById('agents-empty');
+  const agentsTableWrap = documentMock.getElementById('agents-table-wrap');
+
+  // Verify DOM elements exist
+  assert.ok(viewAgentsBtn, 'view-agents-btn exists in topbar');
+  assert.ok(agentsCountBadge, 'agents-count-badge exists');
+  assert.ok(agentsSection, 'agents view section exists');
+  assert.ok(agentsTableBody, 'agents-table-body exists');
+  assert.ok(agentsEmpty, 'agents-empty exists');
+
+  // Test 1: Switching to agents view via setViewMode('agents')
+  testExports.setViewMode('agents');
+  assert.strictEqual(testExports.state.viewMode, 'agents', 'viewMode set to agents');
+  assert.ok(workspaceEl.classList.contains('mode-agents'), 'workspace has mode-agents class');
+  assert.strictEqual(viewAgentsBtn.getAttribute('aria-pressed'), 'true', 'Agents button aria-pressed true');
+  assert.strictEqual(viewBoardBtn.getAttribute('aria-pressed'), 'false', 'Board button aria-pressed false');
+  assert.strictEqual(viewDetailBtn.getAttribute('aria-pressed'), 'false', 'Detail button aria-pressed false');
+  assert.strictEqual(agentsSection.hidden, false, 'agents section visible');
+  assert.strictEqual(boardSection.hidden, true, 'board section hidden');
+
+  // Test 2: Navigating via route #/agents
+  win.location.hash = '#/agents';
+  testExports.setRoute('agents');
+  assert.strictEqual(testExports.state.viewMode, 'agents', 'setRoute("agents") sets viewMode to agents');
+  assert.strictEqual(testExports.state.selected, null, 'setRoute("agents") leaves state.selected null');
+  assert.strictEqual(win.location.hash, '#/agents', 'location.hash is #/agents');
+
+  // Test 3: Empty state when no agents are running
+  testExports.state.activeRunsInfo = [];
+  testExports.state.activeRuns = new Set();
+  testExports.renderAgentsTable();
+  assert.strictEqual(agentsEmpty.hidden, false, 'agents-empty shown when no runs active');
+  assert.ok(agentsEmpty.textContent.includes('No agents currently running'), 'empty state message text correct');
+  assert.strictEqual(agentsTableWrap.hidden, true, 'agents-table-wrap hidden when no runs');
+  assert.strictEqual(agentsTableBody.children.length, 0, 'no rows in table body');
+
+  // Test 4: Duration ticker formatting
+  const nowSec = Math.floor(Date.now() / 1000);
+  assert.strictEqual(testExports.formatDuration(nowSec), '00:00', 'formatDuration 0 elapsed');
+  assert.strictEqual(testExports.formatDuration(nowSec - 65), '01:05', 'formatDuration 65s elapsed');
+  assert.strictEqual(testExports.formatDuration(nowSec - 3661), '61:01', 'formatDuration >1hr elapsed');
+
+  // Test 5: Populating active runs and rendering table rows
+  const testItems = [
+    { id: 'item-agent-1', title: 'Implement agent feature', claimed_by: '@agent:omp', type: 'task' },
+    { id: 'item-agent-2', title: 'Explore architecture idea', claimed_by: 'alice', type: 'idea' }
+  ];
+  testExports.ingest({ items: testItems });
+
+  const nowMs = Date.now();
+  const mockRuns = [
+    {
+      item_id: 'item-agent-1',
+      mode: 'implement',
+      is_primary_worktree: false,
+      worktree_path: '/path/to/.pin_worktrees/item-agent-1',
+      started_at: Math.floor(nowMs / 1000) - 120
+    },
+    {
+      item_id: 'item-agent-2',
+      mode: 'idea',
+      is_primary_worktree: true,
+      worktree_path: null,
+      started_at: Math.floor(nowMs / 1000) - 45
+    }
+  ];
+
+  fetchStub = function (url) {
+    if (url.includes('runs')) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({
+          running: ['item-agent-1', 'item-agent-2'],
+          timings: { 'item-agent-1': mockRuns[0].started_at, 'item-agent-2': mockRuns[1].started_at },
+          runs: mockRuns
+        })
+      });
+    }
+    if (url.includes('data.json')) {
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ items: testItems }) });
+    }
+    return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve([]) });
+  };
+
+  await testExports.updateActiveRuns();
+  assert.strictEqual(agentsCountBadge.hidden, false, 'agents-count-badge visible when runs active');
+  assert.strictEqual(agentsCountBadge.textContent, '2', 'agents-count-badge displays 2');
+  assert.strictEqual(agentsEmpty.hidden, true, 'agents-empty hidden when runs active');
+  assert.strictEqual(agentsTableWrap.hidden, false, 'table wrap visible when runs active');
+  assert.strictEqual(agentsTableBody.children.length, 2, '2 rows rendered in agents table');
+
+  // Verify Row 1 contents
+  const row1 = agentsTableBody.children[0];
+  const itemBtn1 = row1.querySelector('.agent-item-link');
+  assert.ok(itemBtn1, 'Row 1 item link exists');
+  assert.ok(itemBtn1.textContent.includes('item-age'), 'Row 1 has short id');
+  assert.ok(itemBtn1.textContent.includes('Implement agent feature'), 'Row 1 has title');
+  const modeBadge1 = row1.querySelector('.badge-mode-implement');
+  assert.ok(modeBadge1, 'Row 1 has implement mode badge');
+  assert.strictEqual(modeBadge1.textContent, 'Implement', 'Row 1 mode badge text');
+  const wt1 = row1.querySelector('.badge-wt-isolated');
+  assert.ok(wt1, 'Row 1 worktree target is isolated');
+  assert.ok(wt1.title.includes('item-agent-1'), 'Row 1 worktree path in title');
+  const actor1 = row1.querySelector('.agent-actor');
+  assert.strictEqual(actor1.textContent, '@agent:omp', 'Row 1 actor is @agent:omp');
+  const ticker1 = row1.querySelector('.agent-duration-ticker');
+  assert.ok(ticker1, 'Row 1 has duration ticker');
+  assert.strictEqual(ticker1.textContent, '02:00', 'Row 1 duration ticker 02:00');
+
+  // Verify Row 2 contents (Idea mode)
+  const row2 = agentsTableBody.children[1];
+  const modeBadge2 = row2.querySelector('.badge-mode-idea');
+  assert.ok(modeBadge2, 'Row 2 has idea mode badge');
+  assert.strictEqual(modeBadge2.textContent, 'Idea', 'Row 2 mode badge text');
+  const wt2 = row2.querySelector('.badge-wt-primary');
+  assert.ok(wt2, 'Row 2 worktree target is primary');
+  assert.strictEqual(wt2.textContent, 'Primary', 'Row 2 primary target text');
+  const actor2 = row2.querySelector('.agent-actor');
+  assert.strictEqual(actor2.textContent, 'alice', 'Row 2 actor is alice');
+  const openChatBtn2 = row2.querySelector('.btn-open-chat');
+  assert.ok(openChatBtn2, 'Row 2 has Open Chat button for Idea mode');
+
+  // Test 6: "View Run" button opens trajectory drawer
+  const viewRunBtn1 = row1.querySelector('.btn-view-run');
+  assert.ok(viewRunBtn1, 'View Run button exists on row 1');
+  viewRunBtn1.click();
+  assert.strictEqual(testExports.state.viewMode, 'detail', 'Clicking View Run switches to detail view');
+  assert.strictEqual(testExports.state.readerTab, 'trajectory', 'Clicking View Run activates trajectory tab');
+  assert.strictEqual(testExports.state.currentStreamingId, 'item-agent-1', 'Streaming ID set to item-agent-1');
+
+  // Return to agents view
+  testExports.setViewMode('agents');
+  assert.strictEqual(testExports.state.viewMode, 'agents');
+
+  // Test 7: "Cancel" button sends POST /items/:id/cancel
+  let cancelCalledUrl = null;
+  let cancelMethod = null;
+  fetchStub = function (url, opts) {
+    if (url.includes('cancel')) {
+      cancelCalledUrl = url;
+      cancelMethod = opts && opts.method;
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ status: 'cancelled' })
+      });
+    }
+    if (url.includes('runs')) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({
+          running: ['item-agent-2'],
+          timings: { 'item-agent-2': mockRuns[1].started_at },
+          runs: [mockRuns[1]]
+        })
+      });
+    }
+    return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve([]) });
+  };
+
+  const cancelBtn1 = row1.querySelector('.btn-cancel-run');
+  assert.ok(cancelBtn1, 'Cancel button exists on row 1');
+  cancelBtn1.click();
+
+  // Wait a tick for promise resolution
+  await new Promise(r => setTimeout(r, 10));
+  assert.ok(cancelCalledUrl && cancelCalledUrl.includes('items/item-agent-1/cancel'), 'Cancel button called POST /items/:id/cancel');
+  assert.strictEqual(cancelMethod, 'POST', 'Cancel request method was POST');
+  assert.strictEqual(agentsTableBody.children.length, 1, 'Table updated after cancellation, now 1 row');
+  assert.strictEqual(agentsCountBadge.textContent, '1', 'Badge updated after cancellation to 1');
+
+  // Test 8: Live Duration Ticker updates textContent without replacing elements
+  testExports.updateAgentDurations();
+  const tickerRemaining = agentsTableBody.children[0].querySelector('.agent-duration-ticker');
+  assert.ok(tickerRemaining, 'Ticker element still present');
+
+  // Test 9: Reactive SSE run_finished event completes last agent
+  fetchStub = function (url) {
+    if (url.includes('runs')) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ running: [], timings: {}, runs: [] })
+      });
+    }
+    return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ items: [] }) });
+  };
+
+  sseSource.onmessage({ data: JSON.stringify({ type: 'run_finished', item_id: 'item-agent-2' }) });
+  await new Promise(r => setTimeout(r, 10));
+
+  assert.strictEqual(agentsEmpty.hidden, false, 'agents-empty visible after SSE run_finished');
+  assert.strictEqual(agentsCountBadge.hidden, true, 'agentsCountBadge hidden when 0 runs');
+  assert.strictEqual(agentsTableBody.children.length, 0, 'table body empty after last run finished');
+
+  console.log('PASS: Running agents table view, live ticker, drawer opening, cancel dispatch, and SSE reactivity verified');
   console.log('\n========================================');
   console.log('ALL VIEWER TRAJECTORY TESTS PASSED (0)');
   console.log('========================================');
 }
 
-runHarness().catch(err => {
-  console.error('FAIL in viewer trajectory harness:', err);
-  process.exit(1);
-});
+runHarness()
+  .then(() => {
+    process.exit(0);
+  })
+  .catch(err => {
+    console.error('FAIL in viewer trajectory harness:', err);
+    process.exit(1);
+  });

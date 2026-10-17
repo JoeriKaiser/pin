@@ -5,7 +5,7 @@ import { fetchRuns, fetchItemLog } from './api.js';
 import { text, clear, node, stripAnsi, cleanThoughtText } from './formatters.js';
 import { setViewMode } from './board.js';
 import { setRoute } from './router.js';
-var callbacks = { refreshData: function () {}, renderBoard: function () {} };
+var callbacks = { refreshData: function () {}, renderBoard: function () {}, renderDetail: function () {}, renderAgentsTable: function () {} };
 export function setAgentCallbacks(cbs) { if (cbs) Object.assign(callbacks, cbs); }
 
 function setStatusPill(status, cls) {
@@ -21,6 +21,31 @@ export function updateActiveRuns() {
     .then(function (data) {
       if (!data || !Array.isArray(data.running)) return;
       state.activeRunsTimings = data.timings || {};
+      if (Array.isArray(data.runs)) {
+        state.activeRunsInfo = data.runs;
+      } else {
+        state.activeRunsInfo = data.running.map(function (id) {
+          return {
+            item_id: id,
+            mode: 'implement',
+            is_primary_worktree: true,
+            worktree_path: null,
+            started_at: (data.timings && data.timings[id]) || 0
+          };
+        });
+      }
+
+      var activeCount = data.running.length;
+      if (els.agentsCountBadge) {
+        if (activeCount > 0) {
+          els.agentsCountBadge.hidden = false;
+          text(els.agentsCountBadge, String(activeCount));
+        } else {
+          els.agentsCountBadge.hidden = true;
+          text(els.agentsCountBadge, '0');
+        }
+      }
+
       var newSet = new Set(data.running);
       var changed = newSet.size !== state.activeRuns.size;
       if (!changed) {
@@ -33,6 +58,9 @@ export function updateActiveRuns() {
         if (state.selected && els.readerTrajectoryBadge) {
           els.readerTrajectoryBadge.hidden = !state.activeRuns.has(state.selected);
         }
+      }
+      if (state.viewMode === 'agents' && callbacks.renderAgentsTable) {
+        callbacks.renderAgentsTable();
       }
     })
     .catch(function () {});

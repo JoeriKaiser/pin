@@ -54,7 +54,10 @@ export function ingest(data) {
   setupFilters();
   updateShown();
 
-  if (state.viewMode === 'board') {
+  if (state.viewMode === 'agents' || (typeof location !== 'undefined' && location && location.hash === '#/agents')) {
+    state.viewMode = 'agents';
+    state.selected = null;
+  } else if (state.viewMode === 'board') {
     if (typeof history !== 'undefined' && history.replaceState && typeof location !== 'undefined' && location.hash && location.hash !== '#/' && location.hash !== '#') {
       history.replaceState(null, '', '#/');
     }

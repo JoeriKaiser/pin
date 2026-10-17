@@ -18,6 +18,7 @@
     <div class="view-switch" role="group" aria-label="View mode">
       <button id="view-board-btn" class="control view-btn" type="button" aria-pressed="true">Board</button>
       <button id="view-detail-btn" class="control view-btn" type="button" aria-pressed="false">Detail</button>
+      <button id="view-agents-btn" class="control view-btn" type="button" aria-pressed="false">Agents <span id="agents-count-badge" class="badge-mini" hidden>0</span></button>
     </div>
     <button id="filter-toggle" class="control" type="button" aria-expanded="false" aria-controls="filters">Filters</button>
     <span id="count" class="count" aria-live="polite">Loading…</span>
@@ -235,6 +236,29 @@
         </div>
       </div>
     </aside>
+  </section>
+  <section id="agents" class="agents-view" aria-label="Running agents" hidden>
+    <div class="agents-container">
+      <div id="agents-empty" class="agents-empty" hidden>
+        <p>No agents currently running</p>
+      </div>
+      <div id="agents-table-wrap" class="agents-table-wrap">
+        <table class="agents-table">
+          <thead>
+            <tr>
+              <th>Item</th>
+              <th>Mode</th>
+              <th>Worktree</th>
+              <th>Actor</th>
+              <th>Duration</th>
+              <th>Activity</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="agents-table-body"></tbody>
+        </table>
+      </div>
+    </div>
   </section>
 </main>
 
