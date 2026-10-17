@@ -16,7 +16,7 @@ import {
 import {
   openAgentDrawer, closeAgentDrawer, updateActiveRuns, toggleAllToolCards,
   openToolInspector, closeToolInspector, copyToolOutput, filterTrajectoryRows,
-  appendTrajectoryUserRow, appendTrajectoryContextRow, setAgentCallbacks
+  appendTrajectoryContextRow, setAgentCallbacks
 } from './agent.js';
 
 var bootCallbacks = {
@@ -102,29 +102,25 @@ export function sendCommitPrItem(id) {
 }
 
 export function sendAgentChatMessage(itemId) {
-  if (!els.agentChatInput) return;
+  if (!els.agentChatInput || els.agentChatInput.disabled) return;
   var message = els.agentChatInput.value.trim();
   if (!message) return;
+  els.agentChatInput.value = '';
+  els.agentChatInput.disabled = true;
   if (els.btnAgentChatSend) els.btnAgentChatSend.disabled = true;
-  if (els.agentChatInput) els.agentChatInput.disabled = true;
 
-  appendTrajectoryUserRow(message);
   sendMessage(itemId, message)
     .then(function (res) {
       if (!res.ok) throw new Error('Failed to send message (' + res.status + ')');
       return res.json();
     })
-    .then(function () {
+    .catch(function (err) {
+      showToast(err.message || 'Failed to send message', true);
       if (els.agentChatInput) {
-        els.agentChatInput.value = '';
+        els.agentChatInput.value = message;
         els.agentChatInput.disabled = false;
         els.agentChatInput.focus();
       }
-      if (els.btnAgentChatSend) els.btnAgentChatSend.disabled = false;
-    })
-    .catch(function (err) {
-      showToast(err.message || 'Failed to send message', true);
-      if (els.agentChatInput) els.agentChatInput.disabled = false;
       if (els.btnAgentChatSend) els.btnAgentChatSend.disabled = false;
     });
 }
@@ -412,6 +408,7 @@ export function bindAgent() {
   if (els.agentChatInput) {
     els.agentChatInput.addEventListener('keydown', function (e) {
       if (e.key === 'Enter' && !e.shiftKey) {
+        if (e.isComposing || e.keyCode === 229 || e.repeat) return;
         e.preventDefault();
         if (state.currentStreamingId) sendAgentChatMessage(state.currentStreamingId);
       }
