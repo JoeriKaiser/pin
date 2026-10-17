@@ -1457,6 +1457,143 @@ async function runHarness() {
   assert.strictEqual(agentsTableBody.children.length, 0, 'table body empty after last run finished');
 
   console.log('PASS: Running agents table view, live ticker, drawer opening, cancel dispatch, and SSE reactivity verified');
+
+  console.log('\n--- 15. Testing Idea Mode Enter Key & Agent Chat Input ---');
+  const chatInput = documentMock.getElementById('agent-chat-input');
+  const sendBtn = documentMock.getElementById('btn-agent-chat-send');
+  const chatContainer = documentMock.getElementById('agent-chat-container');
+  const stream = documentMock.getElementById('agent-trajectory-stream');
+
+  assert.ok(chatInput, 'agent-chat-input exists');
+  assert.ok(sendBtn, 'btn-agent-chat-send exists');
+
+  testExports.state.currentStreamingId = 'idea-ticket-1';
+  chatContainer.hidden = false;
+  chatInput.disabled = false;
+  sendBtn.disabled = false;
+  chatInput.value = 'First idea proposal';
+
+  let sentMessages = [];
+  fetchStub = function (url, opts) {
+    if (url.includes('/message')) {
+      const body = JSON.parse(opts.body || '{}');
+      sentMessages.push({ url, body });
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ status: 'sent' }) });
+    }
+    return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve([]) });
+  };
+
+  // 1. Shift+Enter should NOT send message (allows multiline)
+  let shiftEnterPrevented = false;
+  chatInput.dispatchEvent({
+    type: 'keydown',
+    key: 'Enter',
+    shiftKey: true,
+    preventDefault() { shiftEnterPrevented = true; }
+  });
+  assert.strictEqual(sentMessages.length, 0, 'Shift+Enter does not send message');
+  assert.strictEqual(shiftEnterPrevented, false, 'Shift+Enter does not prevent default');
+  assert.strictEqual(chatInput.value, 'First idea proposal', 'Input value preserved on Shift+Enter');
+
+  // 2. IME composing Enter should NOT send message
+  let composingPrevented = false;
+  chatInput.dispatchEvent({
+    type: 'keydown',
+    key: 'Enter',
+    shiftKey: false,
+    isComposing: true,
+    preventDefault() { composingPrevented = true; }
+  });
+  assert.strictEqual(sentMessages.length, 0, 'isComposing Enter does not send message');
+
+  // 3. Key repeat Enter should NOT send message
+  let repeatPrevented = false;
+  chatInput.dispatchEvent({
+    type: 'keydown',
+    key: 'Enter',
+    shiftKey: false,
+    repeat: true,
+    preventDefault() { repeatPrevented = true; }
+  });
+  assert.strictEqual(sentMessages.length, 0, 'repeat Enter does not send message');
+
+  // 4. Clean Enter keydown sends message exactly once
+  stream.children = [];
+  stream.childNodes = [];
+
+  let enterPrevented = false;
+  chatInput.dispatchEvent({
+    type: 'keydown',
+    key: 'Enter',
+    shiftKey: false,
+    preventDefault() { enterPrevented = true; }
+  });
+  assert.strictEqual(enterPrevented, true, 'Enter keydown calls preventDefault');
+  assert.strictEqual(sentMessages.length, 1, 'Enter sends message to server exactly once');
+  assert.strictEqual(sentMessages[0].body.message, 'First idea proposal', 'Correct message body sent');
+
+  // Immediately upon sending, chat input is cleared and disabled, Send button disabled
+  assert.strictEqual(chatInput.value, '', 'Chat input value cleared immediately upon sending');
+  assert.strictEqual(chatInput.disabled, true, 'Chat input disabled immediately upon sending');
+  assert.strictEqual(sendBtn.disabled, true, 'Send button disabled immediately upon sending');
+
+  // sendAgentChatMessage must not optimistically append user row,
+  // preventing double message when SSE stream delivers user_message event
+  const userRowsBeforeSse = (stream.children || []).filter(c => (c.className || '').includes('trajectory-row-user'));
+  assert.strictEqual(userRowsBeforeSse.length, 0, 'No user row appended before SSE user_message event');
+
+  // 5. Subsequent Enter while disabled does NOT trigger additional sends
+  chatInput.value = 'Duplicate attempt';
+  chatInput.dispatchEvent({
+    type: 'keydown',
+    key: 'Enter',
+    shiftKey: false,
+    preventDefault() {}
+  });
+  assert.strictEqual(sentMessages.length, 1, 'Subsequent Enter while disabled ignored');
+
+  // 6. Simulate SSE stream delivering the server-recorded user_message event
+  testExports.handleAgentStreamEvent({
+    type: 'user_message',
+    update: {
+      type: 'user_message',
+      content: 'First idea proposal',
+      timestamp: Date.now()
+    }
+  });
+
+  const userRowsAfterSse = (stream.children || []).filter(c => (c.className || '').includes('trajectory-row-user'));
+  assert.strictEqual(userRowsAfterSse.length, 1, 'Exactly ONE user row present after SSE event');
+  assert.ok(userRowsAfterSse[0].textContent.includes('First idea proposal'), 'User row displays message text');
+
+  // Input remains disabled while agent is running
+  assert.strictEqual(chatInput.disabled, true, 'Chat input remains disabled while agent runs');
+
+  // 7. When agent finishes turn and is waiting for user reply, inputs are re-enabled
+  testExports.handleAgentStreamEvent({
+    type: 'waiting_for_user',
+    stopReason: 'end_turn'
+  });
+  assert.strictEqual(chatInput.disabled, false, 'Chat input re-enabled on waiting_for_user event');
+  assert.strictEqual(sendBtn.disabled, false, 'Send button re-enabled on waiting_for_user event');
+
+  // 8. Error during send restores input value and re-enables inputs
+  fetchStub = function (url) {
+    return Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({ error: 'Server unavailable' }) });
+  };
+  chatInput.value = 'Failed message';
+  chatInput.dispatchEvent({
+    type: 'keydown',
+    key: 'Enter',
+    shiftKey: false,
+    preventDefault() {}
+  });
+  await new Promise(r => setTimeout(r, 10));
+  assert.strictEqual(chatInput.value, 'Failed message', 'Input value restored on send failure');
+  assert.strictEqual(chatInput.disabled, false, 'Input re-enabled on send failure');
+  assert.strictEqual(sendBtn.disabled, false, 'Send button re-enabled on send failure');
+
+  console.log('PASS: Idea mode enter key and agent chat input verified');
   console.log('\n========================================');
   console.log('ALL VIEWER TRAJECTORY TESTS PASSED (0)');
   console.log('========================================');

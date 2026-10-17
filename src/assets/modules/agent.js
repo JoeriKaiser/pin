@@ -201,7 +201,14 @@ export function openAgentDrawer(itemId) {
   if (isRunning) {
     updateDurationDisplay();
     state.trajectory.timer = setInterval(updateDurationDisplay, 1000);
-    if (els.agentChatContainer) { els.agentChatContainer.hidden = false; if (els.agentChatInput) els.agentChatInput.value = ''; }
+    if (els.agentChatContainer) {
+      els.agentChatContainer.hidden = false;
+      if (els.agentChatInput) {
+        els.agentChatInput.value = '';
+        els.agentChatInput.disabled = true;
+      }
+      if (els.btnAgentChatSend) els.btnAgentChatSend.disabled = true;
+    }
   } else if (els.agentChatContainer) {
     els.agentChatContainer.hidden = true;
   }

@@ -23,7 +23,7 @@ import {
   buildBoardCard, handleCardDrop, setViewMode, renderBoard, computeRenderKey
 } from './board.js';
 import {
-  bind, sendRunItem, sendCommitPrItem, handleUpdateInstall, handleGitSync
+  bind, sendRunItem, sendCommitPrItem, handleUpdateInstall, handleGitSync, sendAgentChatMessage
 } from './bind.js';
 import { ingest, checkUpdate, connectEvents, refreshData } from './boot.js';
 import { setRoute } from './router.js';
@@ -73,6 +73,7 @@ if (typeof window !== 'undefined') {
     checkUpdate: checkUpdate,
     handleUpdateInstall: handleUpdateInstall,
     handleGitSync: handleGitSync,
+    sendAgentChatMessage: sendAgentChatMessage,
     ingest: ingest,
     updateShown: updateShown,
     connectEvents: connectEvents,
