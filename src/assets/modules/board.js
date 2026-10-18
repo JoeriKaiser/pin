@@ -126,9 +126,9 @@ export function buildBoardCard(item) {
     var cardStatus = itemStatus(item);
     if (cardStatus === 'done' && !item.archived_at) {
       var isMerged = item.git_status === 'merged';
-      var isPrOpen = item.git_status === 'pr_open' || (item.pr_url && item.pr_url.length > 0);
+      var isPrOpen = !isMerged && (item.git_status === 'pr_open' || (item.pr_url && item.pr_url.length > 0));
       if (isPrOpen) {
-        var prLabel = item.pr_number ? 'PR #' + item.pr_number + ' ↗' : 'PR ↗';
+        var prLabel = item.pr_number ? 'View PR #' + item.pr_number + ' ↗' : 'View PR ↗';
         var prLink = node('a', 'btn-pr-link', prLabel);
         prLink.href = item.pr_url || '#';
         prLink.setAttribute('href', item.pr_url || '#');

@@ -437,6 +437,24 @@ pub fn handoff_item(
     if let Some(v) = verification {
         handoff.verification = Some(v.to_string());
     }
+    if meta.pr_url.is_none() {
+        if let Some(v) = verification {
+            let (u, n) = extract_pr_from_text(v);
+            if u.is_some() {
+                meta.pr_url = u;
+                meta.pr_number = n;
+            }
+        }
+    }
+    if meta.pr_url.is_none() {
+        if let Some(p) = progress {
+            let (u, n) = extract_pr_from_text(p);
+            if u.is_some() {
+                meta.pr_url = u;
+                meta.pr_number = n;
+            }
+        }
+    }
     meta.handoff = Some(handoff);
 
     meta.activity.push(ActivityEvent {
@@ -452,11 +470,54 @@ pub fn handoff_item(
     Ok(meta)
 }
 
-pub fn complete_item(
+pub fn extract_pr_from_text(text: &str) -> (Option<String>, Option<u64>) {
+    let mut last_match = None;
+    let markers = ["/pull/", "/merge_requests/"];
+    for marker in markers {
+        let mut search_start = 0;
+        while let Some(rel_idx) = text[search_start..].find(marker) {
+            let idx = search_start + rel_idx;
+            search_start = idx + marker.len();
+
+            let rem = &text[search_start..];
+            let digits_len = rem.bytes().take_while(|b| b.is_ascii_digit()).count();
+
+            if digits_len == 0 {
+                continue;
+            }
+
+            let num_str = &rem[..digits_len];
+            let end_idx = search_start + digits_len;
+
+            let prefix = &text[..idx];
+            let start_idx = prefix
+                .rfind(|c: char| {
+                    c.is_whitespace() || matches!(c, '"' | '\'' | '`' | '(' | '[' | '<' | '>')
+                })
+                .map(|p| p + 1)
+                .unwrap_or(0);
+
+            let token = &text[start_idx..end_idx];
+            if token.starts_with("http://") || token.starts_with("https://") {
+                if let Ok(num) = num_str.parse::<u64>() {
+                    last_match = Some((token.to_string(), num));
+                }
+            }
+        }
+    }
+    match last_match {
+        Some((url, num)) => (Some(url), Some(num)),
+        None => (None, None),
+    }
+}
+
+pub fn complete_item_with_pr(
     vault_path: &Path,
     filename: &str,
     actor: Option<&str>,
     evidence: &str,
+    pr_url: Option<String>,
+    pr_number: Option<u64>,
     expect_revision: Option<u64>,
 ) -> Result<IdeaMeta, WorkflowError> {
     let trimmed = evidence.trim();
@@ -484,6 +545,15 @@ pub fn complete_item(
     meta.claim_expires_at = None;
     meta.status = Some(Status::Done);
 
+    let (detected_pr_url, detected_pr_num) = extract_pr_from_text(trimmed);
+    if let Some(u) = pr_url {
+        meta.pr_url = Some(u);
+        meta.pr_number = pr_number;
+    } else if let Some(u) = detected_pr_url {
+        meta.pr_url = Some(u);
+        meta.pr_number = detected_pr_num;
+    }
+
     let mut handoff = meta.handoff.take().unwrap_or_default();
     handoff.verification = Some(trimmed.to_string());
     meta.handoff = Some(handoff);
@@ -499,6 +569,24 @@ pub fn complete_item(
 
     save_item(vault_path, &mut meta)?;
     Ok(meta)
+}
+
+pub fn complete_item(
+    vault_path: &Path,
+    filename: &str,
+    actor: Option<&str>,
+    evidence: &str,
+    expect_revision: Option<u64>,
+) -> Result<IdeaMeta, WorkflowError> {
+    complete_item_with_pr(
+        vault_path,
+        filename,
+        actor,
+        evidence,
+        None,
+        None,
+        expect_revision,
+    )
 }
 
 pub fn close_item(
@@ -1063,6 +1151,81 @@ mod tests {
         )
         .unwrap();
         assert_eq!(reverified.current_status(), Status::Done);
+    }
+
+    #[test]
+    fn test_extract_pr_from_text() {
+        let (url, num) = extract_pr_from_text("Opened https://github.com/foo/bar/pull/42.");
+        assert_eq!(url.as_deref(), Some("https://github.com/foo/bar/pull/42"));
+        assert_eq!(num, Some(42));
+
+        let (url, num) =
+            extract_pr_from_text("See https://gitlab.com/org/repo/-/merge_requests/99\nDone");
+        assert_eq!(
+            url.as_deref(),
+            Some("https://gitlab.com/org/repo/-/merge_requests/99")
+        );
+        assert_eq!(num, Some(99));
+
+        let (url, num) = extract_pr_from_text(
+            "Old PR was https://github.com/org/repo/pull/1, new PR is https://github.com/org/repo/pull/2!"
+        );
+        assert_eq!(url.as_deref(), Some("https://github.com/org/repo/pull/2"));
+        assert_eq!(num, Some(2));
+
+        let (url, num) = extract_pr_from_text("No PR here.");
+        assert_eq!(url, None);
+        assert_eq!(num, None);
+    }
+
+    #[test]
+    fn test_complete_item_with_pr_and_evidence_pr_extraction() {
+        let dir = tempdir().unwrap();
+        let filename = setup_test_item(dir.path(), "0123456789e1", Status::InProgress, None);
+
+        // Complete with explicit PR
+        let completed = complete_item_with_pr(
+            dir.path(),
+            &filename,
+            Some("agent:omp"),
+            "Changes committed and pushed",
+            Some("https://github.com/foo/bar/pull/101".to_string()),
+            Some(101),
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            completed.pr_url.as_deref(),
+            Some("https://github.com/foo/bar/pull/101")
+        );
+        assert_eq!(completed.pr_number, Some(101));
+
+        // Verify file on disk preserved PR frontmatter
+        let content = fs::read_to_string(dir.path().join(&filename)).unwrap();
+        let mut issues = Vec::new();
+        let reparsed = parse_front_matter_detailed(&filename, &content, &mut issues).unwrap();
+        assert!(issues.is_empty(), "Issues: {issues:?}");
+        assert_eq!(
+            reparsed.pr_url.as_deref(),
+            Some("https://github.com/foo/bar/pull/101")
+        );
+        assert_eq!(reparsed.pr_number, Some(101));
+
+        // Complete with PR URL mentioned in evidence
+        let filename2 = setup_test_item(dir.path(), "0123456789e2", Status::InProgress, None);
+        let completed2 = complete_item(
+            dir.path(),
+            &filename2,
+            Some("agent:omp"),
+            "Created PR at https://github.com/foo/bar/pull/202 with tests passing",
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            completed2.pr_url.as_deref(),
+            Some("https://github.com/foo/bar/pull/202")
+        );
+        assert_eq!(completed2.pr_number, Some(202));
     }
 
     #[test]

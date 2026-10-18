@@ -971,6 +971,7 @@ async function runHarness() {
   assert.ok(prLink, 'Open PR card has PR link button');
   assert.strictEqual(prLink.getAttribute('href'), 'https://github.com/JoeriKaiser/pin/pull/42');
   assert.ok(prLink.textContent.includes('PR #42'), 'PR link button displays PR number');
+  assert.ok(prLink.textContent.includes('View PR'), 'PR link button displays View PR');
 
   // Merged done card suppresses Commit + PR
   const doneMerged = buildBoardCard({ id: 'dm1', title: 'Done Merged', status: 'done', type: 'task', git_status: 'merged', timestamp: Date.now() });
@@ -1002,6 +1003,34 @@ async function runHarness() {
   assert.ok(reRenderedCard, 'Done column contains completed card');
   assert.ok(reRenderedCard.querySelector('.btn-commit-pr'), 'Completed card in Done column immediately got Commit + PR button');
   assert.strictEqual(reRenderedCard.querySelector('.card-running-indicator'), null, 'Completed card no longer has running indicator');
+
+  // When commit+pr stream completes with a PR URL, CTA is replaced with View PR button
+  testExports.state.items = [
+    { id: 'done-commit-pr-1', title: 'Commit PR Task', status: 'done', type: 'task', timestamp: Date.now() }
+  ];
+  testExports.state.currentStreamingId = 'done-commit-pr-1';
+  testExports.state.viewMode = 'board';
+  testExports.handleAgentStreamEvent({
+    type: 'finished',
+    pr_url: 'https://github.com/JoeriKaiser/pin/pull/88',
+    pr_number: 88,
+    update: { success: true }
+  });
+  const commitPrDoneCol = documentMock.querySelector('.board-col-cards[data-drop-status="done"]');
+  const commitPrCard = commitPrDoneCol.querySelector('.board-card[data-id="done-commit-pr-1"]');
+  assert.ok(commitPrCard, 'Done column contains completed commit+pr card');
+  assert.strictEqual(commitPrCard.querySelector('.btn-commit-pr'), null, 'Commit + PR CTA is removed when PR is opened');
+  const commitPrBtnLink = commitPrCard.querySelector('.btn-pr-link');
+  assert.ok(commitPrBtnLink, 'CTA is replaced with View PR button');
+  assert.ok(commitPrBtnLink.textContent.includes('View PR #88'), 'View PR button text includes PR number');
+  assert.strictEqual(commitPrBtnLink.getAttribute('href'), 'https://github.com/JoeriKaiser/pin/pull/88');
+
+  // Verify scanForPrUrl helper
+  const scanForPrUrl = testExports.scanForPrUrl;
+  assert.ok(typeof scanForPrUrl === 'function', 'scanForPrUrl is exported');
+  assert.deepStrictEqual(scanForPrUrl('Created https://github.com/org/repo/pull/123\n'), { url: 'https://github.com/org/repo/pull/123', number: 123 });
+  assert.deepStrictEqual(scanForPrUrl('See https://gitlab.com/org/repo/-/merge_requests/456.'), { url: 'https://gitlab.com/org/repo/-/merge_requests/456', number: 456 });
+  assert.strictEqual(scanForPrUrl('No PR mentioned in this output'), null);
 
   // Switching viewMode to board calls renderBoard and keeps cards fresh
   testExports.setViewMode('detail');

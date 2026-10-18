@@ -1,10 +1,11 @@
-import { state, ORDER, unique, fillSelect, itemStatus, itemType, kind, priority, updateShown } from './state.js';
+import { state, ORDER, unique, fillSelect, itemStatus, itemType, kind, priority, updateShown, find } from './state.js';
 import { els } from './dom.js';
 import { fetchData, fetchUpdate } from './api.js';
 import { BASE } from './config.js';
 import { text, clear, node, isNarrow } from './formatters.js';
 import { route, applyRoute } from './router.js';
-import { setViewMode } from './board.js';
+import { setViewMode, renderBoard } from './board.js';
+import { renderDetail } from './detail.js';
 import { updateActiveRuns } from './agent.js';
 import { bind } from './bind.js';
 
@@ -141,6 +142,17 @@ export function connectEvents() {
         } else if (msg.type === 'vault_changed' || msg.type === 'git_updated') {
           refreshData(true);
         } else if (msg.type === 'run_started' || msg.type === 'run_finished') {
+          if (msg.type === 'run_finished' && msg.id && msg.pr_url) {
+            var itm = find(msg.id);
+            if (itm) {
+              itm.status = 'done';
+              itm.pr_url = msg.pr_url;
+              itm.pr_number = msg.pr_number;
+              itm.git_status = 'pr_open';
+              renderBoard();
+              renderDetail();
+            }
+          }
           updateActiveRuns();
           refreshData(true);
         }
