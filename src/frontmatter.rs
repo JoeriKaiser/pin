@@ -145,6 +145,8 @@ pub fn parse_front_matter_detailed(
     let mut archived_at: Option<i64> = None;
     let mut resolution: Option<Resolution> = None;
     let mut resolution_note: Option<String> = None;
+    let mut pr_url: Option<String> = None;
+    let mut pr_number: Option<u64> = None;
 
     for (k, v) in &mapping {
         let key = match k.as_str() {
@@ -444,6 +446,18 @@ pub fn parse_front_matter_detailed(
                     resolution_note = Some(s.to_string());
                 }
             }
+            "pr_url" => {
+                if let Some(s) = v.as_str() {
+                    pr_url = Some(s.to_string());
+                }
+            }
+            "pr_number" => {
+                if let Some(n) = v.as_u64() {
+                    pr_number = Some(n);
+                } else if let Some(s) = v.as_str() {
+                    pr_number = s.parse::<u64>().ok();
+                }
+            }
             unknown_key => {
                 issues.push(Issue {
                     severity: Severity::Warning,
@@ -539,6 +553,8 @@ pub fn parse_front_matter_detailed(
         archived_at,
         resolution,
         resolution_note,
+        pr_url,
+        pr_number,
         filename: filename.to_string(),
         body: body.to_string(),
         score: None,
@@ -679,6 +695,12 @@ pub fn serialize_front_matter(meta: &IdeaMeta) -> String {
             ));
         }
     }
+    if let Some(pr_url) = &meta.pr_url {
+        out.push_str(&format!("pr_url: \"{}\"\n", escape_yaml_string(pr_url)));
+    }
+    if let Some(pr_number) = meta.pr_number {
+        out.push_str(&format!("pr_number: {pr_number}\n"));
+    }
 
     // Preserve any custom unknown fields that were in raw_frontmatter_map
     for (k, v) in &meta.raw_frontmatter_map {
@@ -709,6 +731,8 @@ pub fn serialize_front_matter(meta: &IdeaMeta) -> String {
                     | "archived_at"
                     | "resolution"
                     | "resolution_note"
+                    | "pr_url"
+                    | "pr_number"
             ) {
                 continue;
             }

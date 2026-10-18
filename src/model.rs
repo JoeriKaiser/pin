@@ -380,6 +380,10 @@ pub struct IdeaMeta {
     pub resolution: Option<Resolution>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resolution_note: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pr_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pr_number: Option<u64>,
 
     #[serde(default)]
     pub filename: String,
@@ -511,6 +515,8 @@ impl IdeaMeta {
             archived_at: None,
             resolution: None,
             resolution_note: None,
+            pr_url: None,
+            pr_number: None,
             filename,
             body,
             score: None,

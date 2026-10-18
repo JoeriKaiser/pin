@@ -91,6 +91,8 @@ mod tests {
             archived_at: None,
             resolution: None,
             resolution_note: None,
+            pr_url: None,
+            pr_number: None,
             filename: format!("{id}.md"),
             body: body.to_string(),
             score: None,

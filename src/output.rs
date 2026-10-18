@@ -96,8 +96,8 @@ impl<'a> From<&'a IdeaMeta> for JsonIdeaOutput<'a> {
             score: meta.score,
             content: None,
             git_status: None,
-            pr_url: None,
-            pr_number: None,
+            pr_url: meta.pr_url.clone(),
+            pr_number: meta.pr_number,
         }
     }
 }

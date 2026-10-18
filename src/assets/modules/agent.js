@@ -251,6 +251,37 @@ export function openAgentDrawer(itemId) {
   };
 }
 
+export function scanForPrUrl(text) {
+  if (!text || typeof text !== 'string') return null;
+  var markers = ['/pull/', '/merge_requests/'];
+  var lastMatch = null;
+  for (var i = 0; i < markers.length; i++) {
+    var marker = markers[i];
+    var searchStart = 0;
+    while (true) {
+      var idx = text.indexOf(marker, searchStart);
+      if (idx === -1) break;
+      searchStart = idx + marker.length;
+      var endIdx = searchStart;
+      while (endIdx < text.length && text.charCodeAt(endIdx) >= 48 && text.charCodeAt(endIdx) <= 57) {
+        endIdx++;
+      }
+      if (endIdx === searchStart) continue;
+      var numStr = text.slice(searchStart, endIdx);
+      var startIdx = idx;
+      var stopChars = ' \t\r\n"\'`()[]<>';
+      while (startIdx > 0 && stopChars.indexOf(text.charAt(startIdx - 1)) === -1) {
+        startIdx--;
+      }
+      var token = text.slice(startIdx, endIdx);
+      if (token.indexOf('http://') === 0 || token.indexOf('https://') === 0) {
+        lastMatch = { url: token, number: parseInt(numStr, 10) };
+      }
+    }
+  }
+  return lastMatch;
+}
+
 function finishStream(success, data, defaultMsg) {
   if (state.trajectory) {
     if (data.startedAt != null) state.trajectory.startedAt = data.startedAt;
@@ -261,6 +292,17 @@ function finishStream(success, data, defaultMsg) {
   }
   if (state.activeRuns && state.currentStreamingId) {
     state.activeRuns.delete(state.currentStreamingId);
+  }
+  var prUrl = (data && data.pr_url) || (state.trajectory && state.trajectory.prUrl);
+  var prNumber = (data && data.pr_number) || (state.trajectory && state.trajectory.prNumber);
+  if (state.currentStreamingId) {
+    var itm = find(state.currentStreamingId);
+    if (itm && prUrl) {
+      itm.status = 'done';
+      itm.pr_url = prUrl;
+      itm.pr_number = prNumber;
+      itm.git_status = 'pr_open';
+    }
   }
   if (els.readerTrajectoryBadge) els.readerTrajectoryBadge.hidden = true;
   var msg = success ? 'Agent run completed.' : ('Agent run failed: ' + (data.message || data.error || defaultMsg));
@@ -273,12 +315,16 @@ function finishStream(success, data, defaultMsg) {
   callbacks.renderBoard();
   callbacks.renderDetail();
   updateActiveRuns();
-  callbacks.refreshData();
+  callbacks.refreshData(true);
   cacheTrajectory(state.currentStreamingId);
 }
 
 export function handleAgentStreamEvent(data) {
   if (!data) return;
+  if (data.pr_url && state.trajectory) {
+    state.trajectory.prUrl = data.pr_url;
+    if (data.pr_number != null) state.trajectory.prNumber = data.pr_number;
+  }
   if (data.type === 'waiting_for_user') {
     if (els.agentChatContainer) {
       els.agentChatContainer.hidden = false;
@@ -315,6 +361,13 @@ export function handleAgentStreamEvent(data) {
     var rawThought = extractThoughtContent(update);
     appendAgentThought(rawThought);
     var cleaned = cleanThoughtText(rawThought);
+    if (state.trajectory && !state.trajectory.prUrl && rawThought) {
+      var thoughtPr = scanForPrUrl(rawThought);
+      if (thoughtPr) {
+        state.trajectory.prUrl = thoughtPr.url;
+        state.trajectory.prNumber = thoughtPr.number;
+      }
+    }
     if (!state.trajectory) return;
 
     if (!state.trajectory.activeAssistantRow) {
@@ -422,6 +475,13 @@ export function handleAgentStreamEvent(data) {
     });
     var out = update.rawOutput || update.output || update.result || update.error || update.content;
     if (out) record.rawOutput = out;
+    if (state.trajectory && !state.trajectory.prUrl && out) {
+      var outPr = scanForPrUrl(typeof out === 'string' ? out : JSON.stringify(out));
+      if (outPr) {
+        state.trajectory.prUrl = outPr.url;
+        state.trajectory.prNumber = outPr.number;
+      }
+    }
     var inp = update.rawInput || update.input || update.arguments || update.params || update.args;
     if (inp) record.rawInput = inp;
     if (update.status) record.status = update.status;

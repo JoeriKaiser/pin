@@ -1151,6 +1151,18 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                     "commit_pr" | "commit+pr" => {
                         match snapshot.acp_manager.start_commit_pr_run(id) {
                             Ok(()) => {
+                                snapshot.broadcaster.broadcast(serde_json::json!({
+                                    "type": "run_started",
+                                    "id": id,
+                                    "mode": "commit_pr"
+                                }));
+                                snapshot.broadcaster.broadcast(serde_json::json!({
+                                    "type": "git_updated",
+                                    "id": id
+                                }));
+                                if let Ok(mut cache_guard) = snapshot.git_cache.lock() {
+                                    *cache_guard = None;
+                                }
                                 send_response(
                                     &mut stream,
                                     200,
@@ -1985,8 +1997,22 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                 item.content = Some(&meta.body);
                 if let Some(info) = git_statuses.get(&meta.id) {
                     item.git_status = Some(info.status.as_str());
-                    item.pr_url = info.pr_url.clone();
-                    item.pr_number = info.pr_number;
+                    if info.pr_url.is_some() {
+                        item.pr_url = info.pr_url.clone();
+                        item.pr_number = info.pr_number;
+                    }
+                }
+                if item.pr_url.is_none() && meta.pr_url.is_some() {
+                    item.pr_url = meta.pr_url.clone();
+                    item.pr_number = meta.pr_number;
+                }
+                if item.pr_url.is_some()
+                    && (item.git_status.is_none()
+                        || item.git_status == Some("none")
+                        || item.git_status == Some("changes_pending")
+                        || item.git_status == Some("committed"))
+                {
+                    item.git_status = Some("pr_open");
                 }
                 item
             })
@@ -2160,11 +2186,16 @@ pub fn serve_view(
         let (acp_tx, acp_rx) = std::sync::mpsc::channel();
         shared_snapshot.acp_manager.add_global_listener(acp_tx);
         let b = Arc::clone(&shared_snapshot.broadcaster);
+        let watcher_snap = Arc::clone(&shared_snapshot);
         thread::spawn(move || {
             while let Ok(event) = acp_rx.recv() {
                 let event_type = event.get("type").and_then(|v| v.as_str()).unwrap_or("");
                 if event_type == "run_started" || event_type == "run_finished" {
+                    if let Ok(mut cache_guard) = watcher_snap.git_cache.lock() {
+                        *cache_guard = None;
+                    }
                     b.broadcast(event);
+                    b.broadcast(serde_json::json!({ "type": "git_updated" }));
                     b.broadcast(serde_json::json!({ "type": "vault_changed" }));
                 }
             }

@@ -744,7 +744,31 @@ impl AcpManager {
                         .map(|buf| buf.clone())
                         .unwrap_or_default();
                     let (summary, evidence) = extract_summary_and_evidence(&events);
-
+                    let (mut pr_url, mut pr_number) = extract_pr_info(&events);
+                    if pr_url.is_none() {
+                        let (u, n) = crate::workflow::extract_pr_from_text(&summary);
+                        if u.is_some() {
+                            pr_url = u;
+                            pr_number = n;
+                        }
+                    }
+                    if pr_url.is_none() {
+                        let (u, n) = crate::workflow::extract_pr_from_text(&evidence);
+                        if u.is_some() {
+                            pr_url = u;
+                            pr_number = n;
+                        }
+                    }
+                    if pr_url.is_none() {
+                        if let Some(prs) = crate::sync::query_gh_prs(&worker_repo_path) {
+                            if let Some(gh_pr) =
+                                crate::sync::find_pr_for_item(&prs, &worker_item_id)
+                            {
+                                pr_url = Some(gh_pr.url.clone());
+                                pr_number = Some(gh_pr.number);
+                            }
+                        }
+                    }
                     // Record the handoff, then complete the item. `done` is the
                     // single end status: the agent verified its own work, so the
                     // run finishes by completing with the extracted evidence. A
@@ -767,11 +791,13 @@ impl AcpManager {
                         .map(|meta| meta.current_status() == crate::model::Status::InProgress)
                         .unwrap_or(true);
                     if still_running {
-                        let _ = crate::workflow::complete_item(
+                        let _ = crate::workflow::complete_item_with_pr(
                             &worker_vault_path,
                             &worker_filename,
                             Some("agent:omp"),
                             &evidence,
+                            pr_url.clone(),
+                            pr_number,
                             None,
                         );
                     }
@@ -781,12 +807,18 @@ impl AcpManager {
 
                     // Sends {"type": "finished", "stopReason": stop_reason} to subscribers
                     let finished_at = chrono::Utc::now().timestamp();
-                    let finish_event = serde_json::json!({
+                    let mut finish_event = serde_json::json!({
                         "type": "finished",
                         "stopReason": stop_reason.clone(),
                         "startedAt": started_at,
                         "finishedAt": finished_at
                     });
+                    if let Some(u) = &pr_url {
+                        finish_event["pr_url"] = serde_json::Value::String(u.clone());
+                    }
+                    if let Some(n) = pr_number {
+                        finish_event["pr_number"] = serde_json::json!(n);
+                    }
                     push_event(
                         &worker_event_buffer,
                         &worker_subscribers,
@@ -794,10 +826,16 @@ impl AcpManager {
                         finish_event,
                     );
                     if let Ok(mut subs) = worker_global_subscribers.lock() {
-                        let fin_evt = serde_json::json!({
+                        let mut fin_evt = serde_json::json!({
                             "type": "run_finished",
                             "id": worker_item_id.clone()
                         });
+                        if let Some(u) = &pr_url {
+                            fin_evt["pr_url"] = serde_json::Value::String(u.clone());
+                        }
+                        if let Some(n) = pr_number {
+                            fin_evt["pr_number"] = serde_json::json!(n);
+                        }
                         subs.retain(|tx| tx.send(fin_evt.clone()).is_ok());
                     }
                     let final_events = worker_event_buffer
@@ -1143,6 +1181,36 @@ fn clean_header_prefix(text: &str, prefixes: &[&str]) -> String {
     trimmed.to_string()
 }
 
+fn collect_all_text_from_value(val: &serde_json::Value, out: &mut Vec<String>) {
+    match val {
+        serde_json::Value::String(s) => {
+            if !s.is_empty() {
+                out.push(s.clone());
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            for item in arr {
+                collect_all_text_from_value(item, out);
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for v in map.values() {
+                collect_all_text_from_value(v, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+pub fn extract_pr_info(events: &[serde_json::Value]) -> (Option<String>, Option<u64>) {
+    let mut texts = Vec::new();
+    for event in events {
+        collect_all_text_from_value(event, &mut texts);
+    }
+    let combined = texts.join("\n");
+    crate::workflow::extract_pr_from_text(&combined)
+}
+
 const DEFAULT_SUMMARY: &str = "Task completed by agent.";
 const DEFAULT_EVIDENCE: &str = "Run completed without explicit verification output.";
 
@@ -1339,6 +1407,30 @@ mod tests {
             evidence,
             "- cargo test: 30 passed.\n- bash tests/cli.sh: passed."
         );
+    }
+
+    #[test]
+    fn test_extract_pr_info() {
+        let events = vec![
+            serde_json::json!({
+                "params": {
+                    "update": {
+                        "sessionUpdate": "tool_call",
+                        "title": "$ gh pr create --title 'feat' --body 'body'",
+                        "rawOutput": "https://github.com/JoeriKaiser/pin/pull/150\n"
+                    }
+                }
+            }),
+            assistant_message(
+                "Opened pull request https://github.com/JoeriKaiser/pin/pull/150 for this work.",
+            ),
+        ];
+        let (url, num) = extract_pr_info(&events);
+        assert_eq!(
+            url.as_deref(),
+            Some("https://github.com/JoeriKaiser/pin/pull/150")
+        );
+        assert_eq!(num, Some(150));
     }
 
     #[test]
