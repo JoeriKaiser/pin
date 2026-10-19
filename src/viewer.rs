@@ -91,7 +91,6 @@ pub struct ViewSnapshot {
     pub filter_tag: Option<String>,
     pub filter_kind: Option<Kind>,
     pub filter_type: Option<WorkType>,
-    pub acp_command: Option<String>,
     pub acp_manager: Arc<crate::acp::AcpManager>,
     pub git_cache: Arc<Mutex<Option<(Instant, HashMap<String, crate::sync::GitItemInfo>)>>>,
     pub broadcaster: Arc<ViewerBroadcaster>,
@@ -138,6 +137,26 @@ struct RunPayload {
     pub use_worktree: Option<bool>,
     #[serde(default)]
     pub mode: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct RunnerSettingsPayload {
+    #[serde(default)]
+    command: Option<String>,
+    #[serde(default)]
+    actor: Option<String>,
+    /// Omitted keeps the current model; `null` clears it.
+    #[serde(default, deserialize_with = "deserialize_runner_model")]
+    model: Option<Option<String>>,
+}
+
+/// `Option<Option<T>>` serde collapses `null` into `None`; this keeps the
+/// three states the runner API needs: omitted, cleared, selected.
+fn deserialize_runner_model<'de, D>(deserializer: D) -> Result<Option<Option<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<String>::deserialize(deserializer).map(Some)
 }
 #[derive(Deserialize)]
 struct MessagePayload {
@@ -192,7 +211,6 @@ pub fn create_snapshot(
         filter_tag,
         filter_kind,
         filter_type,
-        acp_command: None,
         acp_manager,
         git_cache: Arc::new(Mutex::new(None)),
         broadcaster: Arc::new(ViewerBroadcaster::new()),
@@ -209,11 +227,12 @@ fn rollback_failed_start(snapshot: &ViewSnapshot, filename: &str, updated_meta: 
     if previous == updated_meta.current_status() {
         return;
     }
+    let actor = snapshot.acp_manager.runner_settings().actor;
     let _ = workflow::transition_item(
         &snapshot.vault_path,
         filename,
         previous,
-        Some("agent:omp"),
+        Some(&actor),
         Some("Agent run failed to start"),
         None,
     );
@@ -419,6 +438,11 @@ const ASSETS: &[(&str, &str, &str)] = &[
         MODULES_AGENT_JS,
     ),
     (
+        "modules/agents-view.js",
+        "text/javascript; charset=utf-8",
+        MODULES_AGENTS_VIEW_JS,
+    ),
+    (
         "modules/bind.js",
         "text/javascript; charset=utf-8",
         MODULES_BIND_JS,
@@ -427,6 +451,11 @@ const ASSETS: &[(&str, &str, &str)] = &[
         "modules/boot.js",
         "text/javascript; charset=utf-8",
         MODULES_BOOT_JS,
+    ),
+    (
+        "modules/runner.js",
+        "text/javascript; charset=utf-8",
+        MODULES_RUNNER_JS,
     ),
     (
         "modules/test-hooks.js",
@@ -540,8 +569,112 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
         );
         return;
     }
-    // POST /items/{id}/action
+    // POST /runner/settings
     if method == "POST" {
+        if subpath == "runner/settings" {
+            let valid_origin = origin_header.as_deref().is_some_and(|orig| {
+                orig == format!("http://127.0.0.1:{port}")
+                    || orig == format!("http://localhost:{port}")
+            });
+
+            if !valid_origin || !has_pin_action_header {
+                send_response(
+                    &mut stream,
+                    403,
+                    "Forbidden",
+                    "application/json; charset=utf-8",
+                    b"{\"error\":\"Forbidden request\"}",
+                    false,
+                    true,
+                    None,
+                );
+                return;
+            }
+
+            let mut body_bytes = vec![0u8; content_length];
+            if content_length > 0 && reader.read_exact(&mut body_bytes).is_err() {
+                send_response(
+                    &mut stream,
+                    400,
+                    "Bad Request",
+                    "application/json; charset=utf-8",
+                    b"{\"error\":\"Failed to read body\"}",
+                    false,
+                    true,
+                    None,
+                );
+                return;
+            }
+
+            let payload: RunnerSettingsPayload = if content_length > 0 {
+                match serde_json::from_slice(&body_bytes) {
+                    Ok(payload) => payload,
+                    Err(e) => {
+                        let msg = serde_json::json!({
+                            "error": format!("Invalid JSON: {e}")
+                        })
+                        .to_string();
+                        send_response(
+                            &mut stream,
+                            400,
+                            "Bad Request",
+                            "application/json; charset=utf-8",
+                            msg.as_bytes(),
+                            false,
+                            true,
+                            None,
+                        );
+                        return;
+                    }
+                }
+            } else {
+                RunnerSettingsPayload {
+                    command: None,
+                    actor: None,
+                    model: None,
+                }
+            };
+
+            match snapshot.acp_manager.update_runner_settings(
+                payload.command,
+                payload.actor,
+                payload.model,
+            ) {
+                Ok(settings) => {
+                    snapshot.broadcaster.broadcast(serde_json::json!({
+                        "type": "runner_settings",
+                        "settings": settings,
+                    }));
+                    let body =
+                        serde_json::to_string(&settings).unwrap_or_else(|_| "{}".to_string());
+                    send_response(
+                        &mut stream,
+                        200,
+                        "OK",
+                        "application/json; charset=utf-8",
+                        body.as_bytes(),
+                        true,
+                        true,
+                        None,
+                    );
+                }
+                Err(err) => {
+                    let body = serde_json::json!({ "error": err.to_string() }).to_string();
+                    send_response(
+                        &mut stream,
+                        400,
+                        "Bad Request",
+                        "application/json; charset=utf-8",
+                        body.as_bytes(),
+                        true,
+                        true,
+                        None,
+                    );
+                }
+            }
+            return;
+        }
+
         if subpath == "screenshots" || subpath == "screenshots/upload" {
             let valid_origin = origin_header.as_deref().is_some_and(|orig| {
                 orig == format!("http://127.0.0.1:{port}")
@@ -1751,6 +1884,63 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
         return;
     }
 
+    if subpath == "runner" {
+        let settings = snapshot.acp_manager.runner_settings();
+        let out_json = serde_json::to_string(&settings).unwrap_or_else(|_| "{}".to_string());
+        send_response(
+            &mut stream,
+            200,
+            "OK",
+            "application/json; charset=utf-8",
+            out_json.as_bytes(),
+            true,
+            method == "GET",
+            None,
+        );
+        return;
+    }
+
+    if subpath == "runner/models" || subpath.starts_with("runner/models?") {
+        let refresh = subpath
+            .split_once('?')
+            .map(|(_, query)| {
+                query
+                    .split('&')
+                    .any(|part| part == "refresh=1" || part == "refresh=true")
+            })
+            .unwrap_or(false);
+
+        match snapshot.acp_manager.runner_models(refresh) {
+            Ok(models) => {
+                let out_json = serde_json::to_string(&models).unwrap_or_else(|_| "{}".to_string());
+                send_response(
+                    &mut stream,
+                    200,
+                    "OK",
+                    "application/json; charset=utf-8",
+                    out_json.as_bytes(),
+                    true,
+                    method == "GET",
+                    None,
+                );
+            }
+            Err(err) => {
+                let body = serde_json::json!({ "error": err.to_string() }).to_string();
+                send_response(
+                    &mut stream,
+                    502,
+                    "Bad Gateway",
+                    "application/json; charset=utf-8",
+                    body.as_bytes(),
+                    true,
+                    method == "GET",
+                    None,
+                );
+            }
+        }
+        return;
+    }
+
     if subpath == "runs" {
         #[derive(Serialize)]
         struct RunsOutput {
@@ -2115,10 +2305,9 @@ pub fn serve_view(
     no_open: bool,
     format: OutputFormat,
     acp_command: Option<String>,
+    acp_actor: Option<String>,
+    acp_model: Option<String>,
 ) -> io::Result<()> {
-    if acp_command.is_some() {
-        snapshot.acp_command = acp_command.clone();
-    }
     let repo_path = std::env::current_dir().unwrap_or_else(|_| {
         snapshot
             .vault_path
@@ -2127,10 +2316,11 @@ pub fn serve_view(
             .to_path_buf()
     });
     snapshot.repo_path = repo_path.clone();
-    let acp_mgr = Arc::new(crate::acp::AcpManager::new(
+    let runner = crate::acp::RunnerSettings::resolve(acp_command, acp_actor, acp_model);
+    let acp_mgr = Arc::new(crate::acp::AcpManager::with_runner(
         snapshot.vault_path.clone(),
         repo_path,
-        acp_command,
+        runner,
     ));
     snapshot.acp_manager = acp_mgr;
     let viewer_actor = env::var("PIN_VIEWER_ACTOR").unwrap_or_else(|_| "human:viewer".to_string());
@@ -2379,6 +2569,8 @@ mod tests {
             is_primary_worktree: false,
             worktree_path: Some("/tmp/wt".to_string()),
             started_at: 1234567,
+            actor: "agent:test".to_string(),
+            model: Some("mock/fast".to_string()),
         };
         #[derive(Serialize)]
         struct TestRunsOutput {
@@ -2402,5 +2594,26 @@ mod tests {
         assert_eq!(json["runs"][0]["is_primary_worktree"], false);
         assert_eq!(json["runs"][0]["worktree_path"], "/tmp/wt");
         assert_eq!(json["runs"][0]["started_at"], 1234567);
+        assert_eq!(json["runs"][0]["actor"], "agent:test");
+        assert_eq!(json["runs"][0]["model"], "mock/fast");
+    }
+
+    #[test]
+    fn test_runner_settings_payload_partial_and_clear() {
+        let omitted: RunnerSettingsPayload = serde_json::from_str("{}").unwrap();
+        assert!(omitted.command.is_none());
+        assert!(omitted.actor.is_none());
+        assert!(omitted.model.is_none());
+
+        let cleared: RunnerSettingsPayload = serde_json::from_str(r#"{"model":null}"#).unwrap();
+        assert_eq!(cleared.model, Some(None));
+
+        let selected: RunnerSettingsPayload = serde_json::from_str(
+            r#"{"command":"opencode acp","actor":"agent:opencode","model":"opencode/free"}"#,
+        )
+        .unwrap();
+        assert_eq!(selected.command.as_deref(), Some("opencode acp"));
+        assert_eq!(selected.actor.as_deref(), Some("agent:opencode"));
+        assert_eq!(selected.model, Some(Some("opencode/free".to_string())));
     }
 }

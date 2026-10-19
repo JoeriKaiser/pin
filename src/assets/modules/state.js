@@ -21,6 +21,19 @@ export var state = {
   currentStream: null,
   currentStreamingId: null,
   pendingWorktreeItem: null,
+  runner: {
+    command: '',
+    actor: 'agent:omp',
+    model: null,
+    modelCurrent: null,
+    models: [],
+    modelsCommand: '',
+    modelsLoaded: false,
+    loadingModels: false,
+    modelsError: '',
+    loaded: false,
+    error: ''
+  },
   trajectory: {
     startTime: 0,
     turns: 0,

@@ -1344,14 +1344,18 @@ async function runHarness() {
       mode: 'implement',
       is_primary_worktree: false,
       worktree_path: '/path/to/.pin_worktrees/item-agent-1',
-      started_at: Math.floor(nowMs / 1000) - 120
+      started_at: Math.floor(nowMs / 1000) - 120,
+      actor: 'agent:custom',
+      model: 'mock/fast'
     },
     {
       item_id: 'item-agent-2',
       mode: 'idea',
       is_primary_worktree: true,
       worktree_path: null,
-      started_at: Math.floor(nowMs / 1000) - 45
+      started_at: Math.floor(nowMs / 1000) - 45,
+      actor: 'agent:idea',
+      model: null
     }
   ];
 
@@ -1393,7 +1397,10 @@ async function runHarness() {
   assert.ok(wt1, 'Row 1 worktree target is isolated');
   assert.ok(wt1.title.includes('item-agent-1'), 'Row 1 worktree path in title');
   const actor1 = row1.querySelector('.agent-actor');
-  assert.strictEqual(actor1.textContent, '@agent:omp', 'Row 1 actor is @agent:omp');
+  assert.strictEqual(actor1.textContent, 'agent:custom', 'Row 1 actor is the run actor');
+  const model1 = row1.querySelector('.agent-model');
+  assert.ok(model1, 'Row 1 has model cell');
+  assert.strictEqual(model1.textContent, 'mock/fast', 'Row 1 model is the captured model');
   const ticker1 = row1.querySelector('.agent-duration-ticker');
   assert.ok(ticker1, 'Row 1 has duration ticker');
   assert.strictEqual(ticker1.textContent, '02:00', 'Row 1 duration ticker 02:00');
@@ -1407,7 +1414,10 @@ async function runHarness() {
   assert.ok(wt2, 'Row 2 worktree target is primary');
   assert.strictEqual(wt2.textContent, 'Primary', 'Row 2 primary target text');
   const actor2 = row2.querySelector('.agent-actor');
-  assert.strictEqual(actor2.textContent, 'alice', 'Row 2 actor is alice');
+  assert.strictEqual(actor2.textContent, 'agent:idea', 'Row 2 actor is the run actor');
+  const model2 = row2.querySelector('.agent-model');
+  assert.ok(model2, 'Row 2 has model cell');
+  assert.strictEqual(model2.textContent, 'Agent default', 'Row 2 shows agent default model');
   const openChatBtn2 = row2.querySelector('.btn-open-chat');
   assert.ok(openChatBtn2, 'Row 2 has Open Chat button for Idea mode');
 
@@ -1623,6 +1633,194 @@ async function runHarness() {
   assert.strictEqual(sendBtn.disabled, false, 'Send button re-enabled on send failure');
 
   console.log('PASS: Idea mode enter key and agent chat input verified');
+
+  console.log('\n--- 16. Testing Runner Settings and Model Selection ---');
+  const btnRunner = documentMock.getElementById('btn-runner');
+  const runnerSummary = documentMock.getElementById('runner-summary');
+  const runnerDialog = documentMock.getElementById('runner-dialog');
+  const runnerCommandInput = documentMock.getElementById('runner-command-input');
+  const runnerActorInput = documentMock.getElementById('runner-actor-input');
+  const runnerModelFilter = documentMock.getElementById('runner-model-filter');
+  const runnerModelSelect = documentMock.getElementById('runner-model-select');
+  const runnerModelStatus = documentMock.getElementById('runner-model-status');
+  const worktreeRunnerSummary = documentMock.getElementById('worktree-runner-summary');
+
+  const runnerHarnessOmp = documentMock.getElementById('runner-harness-omp');
+  const runnerHarnessOpenCode = documentMock.getElementById('runner-harness-opencode');
+
+  assert.ok(btnRunner, 'runner button exists');
+  assert.ok(runnerDialog, 'runner dialog exists');
+  assert.ok(typeof testExports.loadRunnerSettings === 'function', 'loadRunnerSettings exported');
+  assert.strictEqual(testExports.harnessForCommand('omp acp'), 'omp', 'OMP command maps to the OMP preset');
+  assert.strictEqual(testExports.harnessForCommand('  opencode acp  '), 'opencode', 'OpenCode command maps to the OpenCode preset');
+  assert.strictEqual(testExports.harnessForCommand('opencode --print-logs acp'), 'custom', 'other commands map to custom');
+
+  let runnerPosts = [];
+  let modelRequests = [];
+  fetchStub = function (url, opts) {
+    if (url.indexOf('runner/models') !== -1) {
+      modelRequests.push(url);
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({
+          command: testExports.state.runner.command || 'omp acp',
+          current: 'mock/default',
+          options: [
+            { value: 'mock/default', name: 'Mock Default' },
+            { value: 'mock/fast', name: 'Mock Fast', description: 'A fast model' },
+            { value: 'other/slow', name: 'Other Slow' }
+          ]
+        })
+      });
+    }
+    if (url.indexOf('runner/settings') !== -1) {
+      const body = JSON.parse((opts && opts.body) || '{}');
+      runnerPosts.push(body);
+      const out = {
+        command: body.command || 'omp acp',
+        actor: body.actor || 'agent:omp'
+      };
+      if (body.model) out.model = body.model;
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(out) });
+    }
+    if (url.indexOf('runner') !== -1) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ command: 'omp acp', actor: 'agent:omp' })
+      });
+    }
+    return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve([]) });
+  };
+
+  await testExports.loadRunnerSettings();
+  assert.strictEqual(testExports.state.runner.command, 'omp acp', 'runner command loaded');
+  assert.strictEqual(testExports.state.runner.actor, 'agent:omp', 'runner actor defaults to agent:omp');
+  assert.ok(runnerSummary.textContent.indexOf('agent:omp') === 0, 'topbar summarises the actor');
+
+  testExports.openRunnerDialog();
+  assert.strictEqual(runnerDialog.open, true, 'runner dialog opens');
+  assert.strictEqual(runnerHarnessOmp.getAttribute('aria-pressed'), 'true', 'OMP preset is active initially');
+  assert.strictEqual(runnerHarnessOpenCode.getAttribute('aria-pressed'), 'false', 'OpenCode preset is inactive initially');
+  runnerHarnessOpenCode.click();
+  assert.strictEqual(runnerCommandInput.value, 'opencode acp', 'OpenCode preset fills the command');
+  assert.strictEqual(runnerHarnessOmp.getAttribute('aria-pressed'), 'false', 'OMP preset deactivates');
+  assert.strictEqual(runnerHarnessOpenCode.getAttribute('aria-pressed'), 'true', 'OpenCode preset activates');
+  assert.ok(runnerModelStatus.textContent.indexOf('Save the new agent command') !== -1, 'preset change asks for a save');
+  runnerHarnessOmp.click();
+  assert.strictEqual(runnerCommandInput.value, 'omp acp', 'OMP preset restores the command');
+  assert.strictEqual(runnerHarnessOmp.getAttribute('aria-pressed'), 'true', 'OMP preset reactivates');
+  assert.strictEqual(runnerHarnessOpenCode.getAttribute('aria-pressed'), 'false', 'OpenCode preset deactivates');
+  assert.ok(runnerModelStatus.textContent.indexOf('Save the new agent command') === -1, 'restoring the saved command restores model status');
+  await new Promise(r => setTimeout(r, 10));
+  assert.ok(modelRequests.length >= 1, 'opening the dialog discovers models');
+  assert.strictEqual(testExports.state.runner.models.length, 3, 'all discovered models are stored');
+  assert.strictEqual(runnerModelSelect.children.length, 4, 'model list has default plus options');
+  const fastOption = runnerModelSelect.children.find
+    ? runnerModelSelect.children.find(c => c.textContent.indexOf('Mock Fast') !== -1)
+    : null;
+  assert.ok(fastOption || runnerModelSelect.children[2].textContent.indexOf('Mock Fast') !== -1, 'friendly model name shown');
+
+  runnerModelFilter.value = 'fast';
+  testExports.renderRunnerModelList();
+  assert.strictEqual(runnerModelSelect.children.length, 2, 'model filter narrows the list');
+  runnerModelFilter.value = '';
+
+  testExports.applyRunnerSettings({ command: 'omp acp', actor: 'agent:omp', model: 'mock/fast' });
+  assert.strictEqual(testExports.state.runner.model, 'mock/fast', 'selected model applied to state');
+  assert.ok(runnerSummary.textContent.indexOf('Mock Fast') !== -1, 'topbar summarises the selected model');
+
+  const postsBeforeModelSave = runnerPosts.length;
+  testExports.saveRunnerSettingsFromDialog();
+  await new Promise(r => setTimeout(r, 10));
+  assert.strictEqual(runnerPosts.length, postsBeforeModelSave + 1, 'saving posts runner settings');
+  assert.strictEqual(runnerPosts[runnerPosts.length - 1].model, 'mock/fast', 'save sends the selected model');
+  assert.strictEqual(runnerDialog.open, false, 'dialog closes after a model-only save');
+  const runnerToast = documentMock.getElementById('toast');
+  assert.strictEqual(runnerToast.hidden, false, 'runner save unhides the toast');
+  assert.strictEqual(runnerToast.textContent, 'Runner updated', 'runner save toast text');
+  assert.ok(runnerToast.classList.contains('toast-success'), 'runner save toast uses success style');
+
+  testExports.handleRunnerSettingsEvent({ command: 'opencode acp', actor: 'agent:opencode', model: null });
+  await new Promise(r => setTimeout(r, 10));
+  assert.strictEqual(testExports.state.runner.command, 'opencode acp', 'SSE updates the agent command');
+  assert.strictEqual(testExports.state.runner.actor, 'agent:opencode', 'SSE updates the actor');
+  assert.strictEqual(testExports.state.runner.model, null, 'SSE can clear the model');
+  assert.ok(modelRequests.length >= 2, 'command change triggers model discovery');
+
+  testExports.applyRunnerSettings({ command: 'opencode acp', actor: 'agent:opencode', model: 'mock/fast' });
+  testExports.openWorktreeModal({ id: 'runner-item' }, null);
+  assert.ok(worktreeRunnerSummary.textContent.indexOf('agent:opencode') !== -1, 'worktree modal shows runner actor');
+  assert.ok(worktreeRunnerSummary.textContent.indexOf('Mock Fast') !== -1, 'worktree modal shows runner model');
+  testExports.closeWorktreeModal();
+
+  testExports.openRunnerDialog();
+  await new Promise(r => setTimeout(r, 10));
+  runnerCommandInput.value = 'other acp';
+  runnerCommandInput.dispatchEvent({ type: 'input', target: runnerCommandInput });
+  assert.strictEqual(runnerHarnessOmp.getAttribute('aria-pressed'), 'false', 'custom command clears the OMP preset');
+  assert.strictEqual(runnerHarnessOpenCode.getAttribute('aria-pressed'), 'false', 'custom command clears the OpenCode preset');
+  runnerActorInput.value = 'agent:other';
+  const postsBeforeCommandSave = runnerPosts.length;
+  testExports.saveRunnerSettingsFromDialog();
+  await new Promise(r => setTimeout(r, 10));
+  assert.strictEqual(runnerPosts.length, postsBeforeCommandSave + 1, 'command change posts settings');
+  assert.strictEqual(runnerPosts[runnerPosts.length - 1].command, 'other acp', 'save sends the new command');
+  assert.strictEqual(runnerPosts[runnerPosts.length - 1].model, null, 'command change clears the old model');
+  assert.strictEqual(runnerDialog.open, true, 'dialog stays open to pick a model for the new command');
+  assert.strictEqual(testExports.state.runner.command, 'other acp', 'new command applied');
+  assert.strictEqual(testExports.state.runner.model, null, 'old model cleared when switching agents');
+  testExports.closeRunnerDialog();
+  assert.strictEqual(runnerDialog.open, false, 'runner dialog closes');
+
+  const statusText = runnerModelStatus.textContent || '';
+  assert.ok(statusText.length > 0, 'model status is described');
+
+  // A slow discovery for the previous command must not overwrite the new
+  // command's model list, and duplicate requests should share one fetch.
+  const pendingDiscoveries = {};
+  fetchStub = function (url) {
+    if (url.indexOf('runner/models') !== -1) {
+      const command = testExports.state.runner.command;
+      return new Promise(function (resolve) {
+        pendingDiscoveries[command] = function (values) {
+          resolve({
+            ok: true,
+            status: 200,
+            json: () => Promise.resolve({
+              command: command,
+              current: values[0],
+              options: values.map(v => ({ value: v, name: v }))
+            })
+          });
+        };
+      });
+    }
+    return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) });
+  };
+
+  testExports.applyRunnerSettings({ command: 'agent/a', actor: 'agent:a', model: null });
+  const loadA = testExports.loadRunnerModels(false);
+  testExports.applyRunnerSettings({ command: 'agent/b', actor: 'agent:b', model: null });
+  const loadB = testExports.loadRunnerModels(false);
+  const loadBDuplicate = testExports.loadRunnerModels(false);
+  assert.strictEqual(loadB, loadBDuplicate, 'concurrent discovery requests are shared');
+  assert.ok(pendingDiscoveries['agent/a'] && pendingDiscoveries['agent/b'], 'both discoveries are in flight');
+
+  pendingDiscoveries['agent/a'](['a-model']);
+  await new Promise(r => setTimeout(r, 10));
+  assert.strictEqual(testExports.state.runner.models.length, 0, 'stale discovery does not repopulate models');
+  assert.strictEqual(testExports.state.runner.command, 'agent/b', 'new command is still selected');
+
+  pendingDiscoveries['agent/b'](['b-model']);
+  await Promise.all([loadA, loadB]);
+  await new Promise(r => setTimeout(r, 10));
+  assert.strictEqual(testExports.state.runner.models.length, 1, 'current discovery populates models');
+  assert.strictEqual(testExports.state.runner.models[0].value, 'b-model', 'current discovery options applied');
+  assert.strictEqual(testExports.state.runner.modelsCommand, 'agent/b', 'model list is tagged with its command');
+  console.log('PASS: Runner settings, model discovery, save, SSE, and worktree summary verified');
+
   console.log('\n========================================');
   console.log('ALL VIEWER TRAJECTORY TESTS PASSED (0)');
   console.log('========================================');

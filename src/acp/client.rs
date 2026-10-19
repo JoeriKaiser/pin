@@ -13,7 +13,7 @@ use crate::acp::protocol::{
     ClientInfo, ContentBlock, InitializeParams, InitializeResult, JsonRpcRequest, JsonRpcResponse,
     RequestPermissionOutcome, RequestPermissionParams, RequestPermissionResult,
     SessionCancelParams, SessionNewParams, SessionNewResult, SessionPromptParams,
-    SessionPromptResult,
+    SessionPromptResult, SessionSetConfigOptionParams,
 };
 use crate::cli::split_shell_words;
 
@@ -334,13 +334,37 @@ impl AcpClient {
     }
 
     pub fn new_session(&self, cwd: &Path) -> Result<String, AcpError> {
+        self.new_session_with_config(cwd)
+            .map(|result| result.session_id)
+    }
+
+    /// Creates a session and returns the agent's advertised config options,
+    /// which is where model choices come from.
+    pub fn new_session_with_config(&self, cwd: &Path) -> Result<SessionNewResult, AcpError> {
         let params = SessionNewParams {
             cwd: cwd.to_string_lossy().to_string(),
             mcp_servers: vec![],
         };
 
-        let res: SessionNewResult = self.send_request("session/new", params)?;
-        Ok(res.session_id)
+        self.send_request("session/new", params)
+    }
+
+    /// Applies a session config option such as the model. Must be called after
+    /// `session/new` and before the first prompt.
+    pub fn set_config_option(
+        &self,
+        session_id: &str,
+        config_id: &str,
+        value: serde_json::Value,
+    ) -> Result<(), AcpError> {
+        let params = SessionSetConfigOptionParams {
+            session_id: session_id.to_string(),
+            config_id: config_id.to_string(),
+            value,
+        };
+
+        let _: serde_json::Value = self.send_request("session/set_config_option", params)?;
+        Ok(())
     }
 
     pub fn prompt(&self, session_id: &str, text: &str) -> Result<SessionPromptResult, AcpError> {
@@ -426,16 +450,20 @@ mod tests {
         let script = r#"#!/bin/sh
 echo "agent stderr log" >&2
 while IFS= read -r line; do
+  req_id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
   case "$line" in
     *initialize*)
-      echo '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{}}}'
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentCapabilities":{}}}\n' "$req_id"
       ;;
     *session/new*)
-      echo '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"mock-session-42"}}'
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"mock-session-42","configOptions":[{"id":"model","name":"Model","category":"model","type":"select","currentValue":"mock/default","options":[{"value":"mock/default","name":"Mock Default"},{"value":"mock/fast","name":"Mock Fast"}]}]}}\n' "$req_id"
+      ;;
+    *session/set_config_option*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"configOptions":[{"id":"model","name":"Model","category":"model","type":"select","currentValue":"mock/fast","options":[{"value":"mock/default","name":"Mock Default"},{"value":"mock/fast","name":"Mock Fast"}]}]}}\n' "$req_id"
       ;;
     *session/prompt*)
-      echo '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"mock-session-42","update":{"text":"all done"}}}'
-      echo '{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}'
+      printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"mock-session-42","update":{"text":"all done"}}}\n'
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "$req_id"
       ;;
     *session/cancel*)
       exit 0
@@ -457,10 +485,21 @@ done
         let init_res = client.initialize().unwrap();
         assert_eq!(init_res.protocol_version, 1);
 
-        let sess_id = client.new_session(dir.path()).unwrap();
-        assert_eq!(sess_id, "mock-session-42");
+        let session = client.new_session_with_config(dir.path()).unwrap();
+        assert_eq!(session.session_id, "mock-session-42");
+        let model = session
+            .config_options
+            .iter()
+            .find(|option| option.category.as_deref() == Some("model"))
+            .unwrap();
+        assert_eq!(model.current_value, Some(serde_json::json!("mock/default")));
+        assert_eq!(model.options.len(), 2);
 
-        let prompt_res = client.prompt(&sess_id, "test prompt").unwrap();
+        client
+            .set_config_option(&session.session_id, "model", serde_json::json!("mock/fast"))
+            .unwrap();
+
+        let prompt_res = client.prompt(&session.session_id, "test prompt").unwrap();
         assert_eq!(prompt_res.stop_reason.as_deref(), Some("end_turn"));
 
         let received = rx.recv_timeout(Duration::from_secs(2)).unwrap();
@@ -469,7 +508,7 @@ done
             Some("session/update")
         );
 
-        client.cancel(&sess_id).unwrap();
+        client.cancel(&session.session_id).unwrap();
 
         thread::sleep(Duration::from_millis(100));
         let log_content = std::fs::read_to_string(&log_path).unwrap_or_default();

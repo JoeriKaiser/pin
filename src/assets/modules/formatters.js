@@ -66,6 +66,11 @@ export function showToast(message, isError) {
   if (!els.toast) return;
   clearTimeout(toastTimer);
   text(els.toast, message);
+  els.toast.hidden = false;
+  if (els.toast.classList) {
+    els.toast.classList.toggle('toast-error', !!isError);
+    els.toast.classList.toggle('toast-success', !isError);
+  }
   toastTimer = setTimeout(function () {
     els.toast.hidden = true;
   }, 3500);

@@ -18,6 +18,7 @@ import {
   openToolInspector, closeToolInspector, copyToolOutput, filterTrajectoryRows,
   appendTrajectoryContextRow, setAgentCallbacks
 } from './agent.js';
+import { bindRunnerUi, closeRunnerDialog } from './runner.js';
 
 var bootCallbacks = {
   refreshData: function () {},
@@ -441,6 +442,10 @@ export function bindGlobalShortcuts() {
       else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) { event.preventDefault(); triggerModalSubmit(); }
       return;
     }
+    if (els.runnerDialog && (els.runnerDialog.open || els.runnerDialog.hasAttribute('open'))) {
+      if (event.key === 'Escape') { event.preventDefault(); closeRunnerDialog(); }
+      return;
+    }
     if (event.key === 'Escape') {
       if (els.quickAddForm && !els.quickAddForm.hidden) { event.preventDefault(); collapseQuickAdd(); return; }
       if (els.worktreeModal && (els.worktreeModal.open || els.worktreeModal.hasAttribute('open'))) { event.preventDefault(); closeWorktreeModal(); return; }
@@ -550,5 +555,6 @@ export function bind(options) {
   bindDetail();
   bindForms();
   bindAgent();
+  bindRunnerUi();
   bindGlobalShortcuts();
 }

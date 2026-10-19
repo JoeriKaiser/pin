@@ -352,7 +352,14 @@ while IFS= read -r line; do
       ;;
     *session/new*)
       req_id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
-      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"mock-session-1"}}\n' "$req_id"
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"mock-session-1","configOptions":[{"id":"model","name":"Model","category":"model","type":"select","currentValue":"mock/default","options":[{"value":"mock/default","name":"Mock Default"},{"value":"mock/fast","name":"Mock Fast","description":"Fast test model"}]}]}}\n' "$req_id"
+      ;;
+    *session/set_config_option*)
+      req_id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+      if [ -n "${PIN_TEST_MODEL_LOG:-}" ]; then
+        printf '%s\n' "$line" >>"$PIN_TEST_MODEL_LOG"
+      fi
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"configOptions":[]}}\n' "$req_id"
       ;;
     *session/prompt*)
       req_id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
@@ -375,7 +382,7 @@ view_id=$(printf '%s' "$view_item" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
 view_out="$TMP/view.log"
 view_err="$TMP/view.err"
 # Launch in background with mock ACP agent
-PIN_VAULT="$TMP/view-vault" "$PIN_BIN" view --no-open --format plain --acp-command "$TMP/mock-agent.sh" >"$view_out" 2>"$view_err" &
+PIN_VAULT="$TMP/view-vault" PIN_TEST_MODEL_LOG="$TMP/model-set.log" "$PIN_BIN" view --no-open --format plain --acp-command "$TMP/mock-agent.sh" >"$view_out" 2>"$view_err" &
 view_pid=$!
 # Wait/poll for stdout readiness
 url=""
@@ -423,23 +430,18 @@ assert_contains "$(cat "$curl_html")" 'id="proposal-more"'
 assert_contains "$(cat "$curl_html")" 'id="btn-new-ticket"'
 assert_contains "$(cat "$curl_html")" 'id="spec-modal"'
 assert_contains "$(cat "$curl_html")" 'id="quick-add-trigger"'
-# Verify all modules in the asset table return 200 with JavaScript content type
-for mod in "app.js" \
-    "modules/config.js" \
-    "modules/state.js" \
-    "modules/dom.js" \
-    "modules/api.js" \
-    "modules/formatters.js" \
-    "modules/markdown.js" \
-    "modules/router.js" \
-    "modules/media.js" \
-    "modules/board.js" \
-    "modules/detail.js" \
-    "modules/forms.js" \
-    "modules/agent.js" \
-    "modules/bind.js" \
-    "modules/boot.js" \
-    "modules/test-hooks.js"; do
+assert_contains "$(cat "$curl_html")" 'id="btn-runner"'
+assert_contains "$(cat "$curl_html")" 'id="runner-dialog"'
+assert_contains "$(cat "$curl_html")" 'id="runner-harness-omp"'
+assert_contains "$(cat "$curl_html")" 'id="runner-harness-opencode"'
+assert_contains "$(cat "$curl_html")" 'id="runner-model-select"'
+assert_contains "$(cat "$curl_html")" 'id="worktree-runner-summary"'
+# Verify every JavaScript asset in the source tree is served with the right type
+for mod_file in "$ROOT"/src/assets/*.js "$ROOT"/src/assets/modules/*.js; do
+    case "$mod_file" in
+        */modules/*) mod="modules/$(basename "$mod_file")" ;;
+        *) mod="$(basename "$mod_file")" ;;
+    esac
     mod_meta=$(curl -s -o /dev/null -w "%{http_code} %{content_type}" "${url}${mod}")
     [ "$mod_meta" = "200 text/javascript; charset=utf-8" ] || fail "asset $mod returned $mod_meta, expected 200 text/javascript; charset=utf-8"
 done
@@ -449,6 +451,35 @@ mutation_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H 'Content-Type:
 mutation=$(curl -s -S -X POST -H "Origin: $origin" -H 'Content-Type: application/json' -H 'X-Pin-Action: true' --data '{"action":"transition","to":"planned","actor":"human:test","expect_revision":1}' "${url}items/${view_id}/action")
 assert_contains "$mutation" '"status":"planned"'
 curl -s -S "${url}data.json" | grep -q '"status":"planned"' || fail "viewer data did not refresh after mutation"
+
+# Runner settings: defaults, model discovery, CSRF, and partial updates
+runner_default=$(curl -s -S "${url}runner")
+assert_contains "$runner_default" '"actor":"agent:omp"'
+assert_contains "$runner_default" "$TMP/mock-agent.sh"
+case "$runner_default" in *'"model"'*) fail "runner default unexpectedly selected a model" ;; esac
+
+runner_models=$(curl -s -S "${url}runner/models")
+assert_contains "$runner_models" '"current":"mock/default"'
+assert_contains "$runner_models" '"value":"mock/fast"'
+assert_contains "$runner_models" '"name":"Mock Fast"'
+assert_contains "$runner_models" '"description":"Fast test model"'
+runner_models_refresh=$(curl -s -S "${url}runner/models?refresh=1")
+assert_contains "$runner_models_refresh" '"value":"mock/fast"'
+
+runner_forbidden=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H 'Content-Type: application/json' --data '{"actor":"agent:nope"}' "${url}runner/settings")
+[ "$runner_forbidden" = "403" ] || fail "runner settings accepted a mutation without same-origin headers"
+
+runner_partial=$(curl -s -S -X POST -H "Origin: $origin" -H 'Content-Type: application/json' -H 'X-Pin-Action: true' --data '{"actor":"agent:test-runner"}' "${url}runner/settings")
+assert_contains "$runner_partial" '"actor":"agent:test-runner"'
+assert_contains "$runner_partial" "$TMP/mock-agent.sh"
+
+cat >"$TMP/runner-payload.json" <<EOF
+{"command":"$TMP/mock-agent.sh","actor":"agent:test-runner","model":"mock/fast"}
+EOF
+runner_updated=$(curl -s -S -X POST -H "Origin: $origin" -H 'Content-Type: application/json' -H 'X-Pin-Action: true' --data @"$TMP/runner-payload.json" "${url}runner/settings")
+assert_contains "$runner_updated" '"actor":"agent:test-runner"'
+assert_contains "$runner_updated" '"model":"mock/fast"'
+curl -s -S "${url}runner" | grep -q '"model":"mock/fast"' || fail "runner settings did not persist in the viewer"
 
 # Action errors must name the real problem, not a parse failure
 unknown_err=$(curl -s -S -X POST -H "Origin: $origin" -H 'Content-Type: application/json' -H 'X-Pin-Action: true' --data '{"action":"bogus"}' "${url}items/${view_id}/action")
@@ -577,11 +608,18 @@ done
 assert_contains "$read_item" 'status: "done"'
 assert_contains "$read_item" 'progress: "Mock agent finished"'
 assert_contains "$read_item" 'verification: "Mock tests passed"'
+assert_contains "$read_item" 'agent:test-runner'
 [ -f "$TMP/view-vault/runs/${view_id}.log" ] || fail "run log file was not created"
 [ -f "$TMP/view-vault/runs/${view_id}.events.jsonl" ] || fail "run events file was not created"
 if printf '%s' "$read_item" | grep -q 'claimed_by:'; then
     fail "a finished run kept its claim attribution"
 fi
+[ -f "$TMP/model-set.log" ] || fail "selected model was not applied to the ACP session"
+grep -q '"configId":"model"' "$TMP/model-set.log" || fail "model setting did not use the model config option"
+grep -q '"value":"mock/fast"' "$TMP/model-set.log" || fail "selected model was not sent to the ACP session"
+
+runner_cleared=$(curl -s -S -X POST -H "Origin: $origin" -H 'Content-Type: application/json' -H 'X-Pin-Action: true' --data '{"model":null}' "${url}runner/settings")
+case "$runner_cleared" in *'"model"'*) fail "runner model was not cleared" ;; esac
 
 # Test commit-pr endpoint on unready item rejects with 400
 bad_commit_pr_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "Origin: $origin" -H 'Content-Type: application/json' -H 'X-Pin-Action: true' "${url}items/${ss_ticket_id}/commit-pr")
@@ -608,6 +646,20 @@ fi
 kill "$view_pid" 2>/dev/null || true
 wait "$view_pid" 2>/dev/null || true
 view_pid=
+
+# CLI flags seed the viewer's runner settings without replacing the defaults
+start_view "$TMP/view-vault" "$TMP/flag-view.log" "$TMP/mock-agent.sh" --acp-actor agent:flag-runner --acp-model mock/default
+flag_runner=$(curl -s -S "${view_url}runner")
+assert_contains "$flag_runner" '"actor":"agent:flag-runner"'
+assert_contains "$flag_runner" '"model":"mock/default"'
+stop_view
+
+# Environment variables seed runner settings when flags are absent
+PIN_ACP_ACTOR=agent:env-runner PIN_ACP_MODEL=mock/default start_view "$TMP/view-vault" "$TMP/env-view.log" "$TMP/mock-agent.sh"
+env_runner=$(curl -s -S "${view_url}runner")
+assert_contains "$env_runner" '"actor":"agent:env-runner"'
+assert_contains "$env_runner" '"model":"mock/default"'
+stop_view
 
 # ── Recorded transcript replay: real agent frames, no live agent ────────
 # viewer-archive-button-run.jsonl was recorded from a real run and is

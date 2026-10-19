@@ -108,10 +108,52 @@ pub struct SessionNewParams {
     pub mcp_servers: Vec<serde_json::Value>,
 }
 
+/// One selectable value for a session config option. Agents advertise model
+/// choices through `session/new`, so pin can list them without knowing any
+/// provider-specific model names.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionConfigChoice {
+    pub value: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+/// A configurable session setting such as the model or thought level.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionConfigOption {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    pub option_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_value: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub options: Vec<SessionConfigChoice>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionNewResult {
     pub session_id: String,
+    #[serde(default)]
+    pub config_options: Vec<SessionConfigOption>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionSetConfigOptionParams {
+    pub session_id: String,
+    pub config_id: String,
+    pub value: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -236,5 +278,64 @@ mod tests {
         let s = serde_json::to_string(&req).unwrap();
         assert!(s.contains("\"sessionId\":\"sess_123\""));
         assert!(s.contains("\"type\":\"text\""));
+    }
+
+    #[test]
+    fn test_session_new_config_options_deserialization() {
+        let json = serde_json::json!({
+            "sessionId": "sess_123",
+            "configOptions": [
+                {
+                    "id": "model",
+                    "name": "Model",
+                    "category": "model",
+                    "type": "select",
+                    "currentValue": "mock/default",
+                    "options": [
+                        { "value": "mock/default", "name": "Mock Default" },
+                        { "value": "mock/fast", "name": "Mock Fast", "description": "Fast model" }
+                    ]
+                },
+                {
+                    "id": "mode",
+                    "category": "mode",
+                    "type": "select",
+                    "currentValue": "default",
+                    "options": [{ "value": "default", "name": "Default" }]
+                }
+            ]
+        });
+
+        let result: SessionNewResult = serde_json::from_value(json).unwrap();
+        assert_eq!(result.session_id, "sess_123");
+        assert_eq!(result.config_options.len(), 2);
+
+        let model = result
+            .config_options
+            .iter()
+            .find(|option| option.category.as_deref() == Some("model"))
+            .unwrap();
+        assert_eq!(model.id, "model");
+        assert_eq!(model.current_value, Some(serde_json::json!("mock/default")));
+        assert_eq!(model.options.len(), 2);
+        assert_eq!(model.options[1].value, serde_json::json!("mock/fast"));
+        assert_eq!(model.options[1].name.as_deref(), Some("Mock Fast"));
+    }
+
+    #[test]
+    fn test_set_config_option_serialization() {
+        let req = JsonRpcRequest::new(
+            3,
+            "session/set_config_option",
+            SessionSetConfigOptionParams {
+                session_id: "sess_123".to_string(),
+                config_id: "model".to_string(),
+                value: serde_json::json!("mock/fast"),
+            },
+        );
+        let s = serde_json::to_string(&req).unwrap();
+        assert!(s.contains("\"method\":\"session/set_config_option\""));
+        assert!(s.contains("\"configId\":\"model\""));
+        assert!(s.contains("\"value\":\"mock/fast\""));
     }
 }

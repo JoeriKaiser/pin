@@ -135,9 +135,11 @@ pin import <directory> [--force] [--format json|plain]
 pin export <directory> [--force] [--format json|plain]
 pin stats [--format json|plain]
 pin view [--project <name>] [--tag <name>] [--kind <kind>] [--type <type>]
-          [--status <status>] [--archived|--all] [--port <n>] [--no-open] [--format json|plain]
+          [--status <status>] [--archived|--all] [--port <n>] [--no-open]
+          [--acp-command <cmd>] [--acp-actor <actor>] [--acp-model <model>] [--format json|plain]
 pin view-project [--tag <name>] [--kind <kind>] [--type <type>] [--status <status>]
-                  [--archived|--all] [--port <n>] [--no-open] [--format json|plain]
+                  [--archived|--all] [--port <n>] [--no-open]
+                  [--acp-command <cmd>] [--acp-actor <actor>] [--acp-model <model>] [--format json|plain]
 pin --help
 pin --version
 ```
@@ -176,7 +178,10 @@ Running `pin view` launches an embedded HTTP server serving a single-page manage
 - Status, type, and priority filtering.
 - Full markdown rendering and activity history timeline.
 - Interactive steering: buttons to move items to planned, claim, mark blocked, complete with evidence, or close.
+- Runner settings: the **Runner** button switches the agent command, the vault actor used for attribution, and the model used for future runs. The OMP and OpenCode presets fill in the command, and the command stays editable for other ACP agents. Model choices come from the ACP agent's session config options. Active runs keep the command, actor, and model they started with.
 - CSRF-protected mutation API (`POST /{token}/items/{id}/action`).
+
+Viewer launches default to `omp acp` and `agent:omp`. Set launch defaults with `--acp-command`, `--acp-actor`, and `--acp-model`, or the `PIN_ACP_COMMAND`, `PIN_ACP_ACTOR`, and `PIN_ACP_MODEL` environment variables. The Runner dialog changes apply in memory to the running viewer session; they are not persisted across viewer restarts.
 
 ## Storage compatibility
 

@@ -12,6 +12,7 @@
   <div class="identity"><strong>pin</strong><span id="scope"></span></div>
   <label class="search"><span class="visually-hidden">Search items</span><input id="search" type="search" placeholder="Search items" autocomplete="off" spellcheck="false"><kbd>/</kbd></label>
   <div class="topbar-actions">
+    <button id="btn-runner" class="control runner-btn" type="button" title="Runner settings">Runner <span id="runner-summary" class="runner-summary">agent:omp</span></button>
     <button id="btn-sync-git" class="control" type="button" title="Sync Git merge status">Sync Git</button>
     <button id="btn-update" class="control action-btn-update" type="button" title="Update pin" hidden>Update to <span id="update-version"></span></button>
     <button id="btn-new-ticket" class="control action-btn-accent" type="button" title="New spec ticket (n)">+ New Task</button>
@@ -250,6 +251,7 @@
               <th>Mode</th>
               <th>Worktree</th>
               <th>Actor</th>
+              <th>Model</th>
               <th>Duration</th>
               <th>Activity</th>
               <th>Actions</th>
@@ -349,6 +351,46 @@
 </dialog>
 
 
+<dialog id="runner-dialog" class="action-dialog runner-dialog">
+  <div class="dialog-content">
+    <div class="dialog-header">
+      <h2>Agent Runner</h2>
+      <button id="btn-runner-close" class="dialog-close" type="button" aria-label="Close">✕</button>
+    </div>
+    <div id="runner-dialog-error" class="dialog-error" hidden></div>
+    <div class="dialog-body">
+      <p class="runner-hint">Changes apply to runs started after saving. Active runs keep the runner they started with.</p>
+      <div class="runner-harness-field">
+        <span class="runner-field-label">Agent harness</span>
+        <div class="view-switch runner-harness-switch" role="group" aria-label="Agent harness presets">
+          <button id="runner-harness-omp" class="control view-btn" type="button" aria-pressed="true">OMP</button>
+          <button id="runner-harness-opencode" class="control view-btn" type="button" aria-pressed="false">OpenCode</button>
+        </div>
+      </div>
+      <label>Agent command
+        <input id="runner-command-input" type="text" autocomplete="off" spellcheck="false" placeholder="omp acp">
+        <span class="runner-field-hint">The presets set this command. Edit it to use another ACP agent.</span>
+      </label>
+      <label>Vault actor
+        <input id="runner-actor-input" type="text" autocomplete="off" spellcheck="false" placeholder="agent:omp">
+      </label>
+      <div class="runner-model-field">
+        <div class="runner-model-header">
+          <label for="runner-model-filter">Model</label>
+          <button id="btn-runner-refresh-models" class="control text-button" type="button">Refresh</button>
+        </div>
+        <input id="runner-model-filter" type="search" placeholder="Filter models…" autocomplete="off" spellcheck="false">
+        <select id="runner-model-select" aria-label="Model"></select>
+        <p id="runner-model-status" class="runner-model-status" aria-live="polite"></p>
+      </div>
+    </div>
+    <div class="dialog-footer">
+      <button id="btn-runner-cancel" class="control text-button" type="button">Cancel</button>
+      <button id="btn-runner-save" class="action-btn primary" type="button">Save Runner</button>
+    </div>
+  </div>
+</dialog>
+
 <dialog id="worktree-modal" class="action-dialog">
   <div class="dialog-content">
     <div class="dialog-header">
@@ -358,6 +400,7 @@
     <div class="dialog-body">
       <p id="worktree-busy-msg">The primary repository is already running task <span id="worktree-busy-id" class="agent-badge-id"></span>. Start this task in an isolated Git worktree under .pin_worktrees/<span id="worktree-target-id" class="agent-badge-id"></span>?</p>
       <p id="worktree-prompt-msg" hidden>Start this task inside an isolated Git worktree based off the up-to-date main branch under .pin_worktrees/<span id="worktree-prompt-target-id" class="agent-badge-id"></span>, or run in the primary checkout?</p>
+      <p id="worktree-runner-summary" class="worktree-runner-summary"></p>
     </div>
     <div class="dialog-footer">
       <button id="btn-worktree-cancel" class="control text-button" type="button">Cancel</button>

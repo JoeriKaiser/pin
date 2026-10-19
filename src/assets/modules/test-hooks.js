@@ -28,6 +28,13 @@ import {
 import { ingest, checkUpdate, connectEvents, refreshData } from './boot.js';
 import { setRoute } from './router.js';
 import { renderAgentsTable, formatDuration, updateAgentDurations } from './agents-view.js';
+import {
+  loadRunnerSettings, loadRunnerModels, openRunnerDialog, closeRunnerDialog,
+  renderRunner, renderRunnerModelList, applyRunnerSettings,
+  saveRunnerSettingsFromDialog, handleRunnerSettingsEvent, runnerModelLabel,
+  runnerSummaryText, bindRunnerUi, onRunnerCommandInput, harnessForCommand,
+  renderRunnerHarness, setRunnerHarness
+} from './runner.js';
 
 if (typeof window !== 'undefined') {
   window._test = {
@@ -84,5 +91,21 @@ if (typeof window !== 'undefined') {
     formatDuration: formatDuration,
     updateAgentDurations: updateAgentDurations,
     scanForPrUrl: scanForPrUrl,
+    loadRunnerSettings: loadRunnerSettings,
+    loadRunnerModels: loadRunnerModels,
+    openRunnerDialog: openRunnerDialog,
+    closeRunnerDialog: closeRunnerDialog,
+    renderRunner: renderRunner,
+    renderRunnerModelList: renderRunnerModelList,
+    applyRunnerSettings: applyRunnerSettings,
+    saveRunnerSettingsFromDialog: saveRunnerSettingsFromDialog,
+    handleRunnerSettingsEvent: handleRunnerSettingsEvent,
+    runnerModelLabel: runnerModelLabel,
+    runnerSummaryText: runnerSummaryText,
+    bindRunnerUi: bindRunnerUi,
+    onRunnerCommandInput: onRunnerCommandInput,
+    harnessForCommand: harnessForCommand,
+    renderRunnerHarness: renderRunnerHarness,
+    setRunnerHarness: setRunnerHarness,
   };
 }

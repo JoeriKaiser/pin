@@ -14,6 +14,25 @@ export function fetchRuns() {
   return fetch(BASE + 'runs');
 }
 
+export function fetchRunner() {
+  return fetch(BASE + 'runner', { cache: 'no-cache' });
+}
+
+export function fetchRunnerModels(refresh) {
+  return fetch(BASE + 'runner/models' + (refresh ? '?refresh=1' : ''), { cache: 'no-cache' });
+}
+
+export function saveRunner(payload) {
+  return fetch(BASE + 'runner/settings', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Pin-Action': 'true'
+    },
+    body: JSON.stringify(payload || {})
+  });
+}
+
 export function fetchItemLog(id) {
   return fetch(BASE + 'items/' + encodeURIComponent(id) + '/log');
 }
