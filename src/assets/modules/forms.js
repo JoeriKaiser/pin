@@ -5,6 +5,7 @@ import { text, clear, node, showToast, showDialogError } from './formatters.js';
 import { PURIFY_CONFIG, markedRenderer, sanitizeHtml } from './markdown.js';
 import { setRoute } from './router.js';
 import { insertSnippetIntoTextarea } from './media.js';
+import { runnerModelLabel } from './runner.js';
 
 export var SPEC_SNIPPETS = {
   ac: '## Acceptance Criteria\n- [ ] ',
@@ -476,6 +477,16 @@ export function openWorktreeModal(item, busyId) {
   text(els.worktreeBusyId, busyId || 'another task');
   text(els.worktreeTargetId, targetId);
   text(els.worktreePromptTargetId, targetId);
+
+  if (els.worktreeRunnerSummary) {
+    var runner = state.runner || {};
+    var model = runner.model
+      ? runnerModelLabel(runner.model)
+      : (runner.modelCurrent
+        ? 'default: ' + runnerModelLabel(runner.modelCurrent)
+        : 'agent default');
+    text(els.worktreeRunnerSummary, 'Runner: ' + (runner.actor || 'agent:omp') + ' · ' + model);
+  }
 
   if (busyId) {
     if (els.worktreeModalTitle) text(els.worktreeModalTitle, 'Primary Working Tree Busy');

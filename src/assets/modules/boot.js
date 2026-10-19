@@ -8,6 +8,7 @@ import { setViewMode, renderBoard } from './board.js';
 import { renderDetail } from './detail.js';
 import { updateActiveRuns } from './agent.js';
 import { bind } from './bind.js';
+import { loadRunnerSettings, handleRunnerSettingsEvent } from './runner.js';
 
 export function setupFilters() {
   fillSelect(els.status, unique(itemStatus), 'Any status', ORDER.status);
@@ -141,6 +142,9 @@ export function connectEvents() {
           updateActiveRuns();
         } else if (msg.type === 'vault_changed' || msg.type === 'git_updated') {
           refreshData(true);
+        } else if (msg.type === 'runner_settings') {
+          handleRunnerSettingsEvent(msg.settings);
+          updateActiveRuns();
         } else if (msg.type === 'run_started' || msg.type === 'run_finished') {
           if (msg.type === 'run_finished' && msg.id && msg.pr_url) {
             var itm = find(msg.id);
@@ -175,6 +179,7 @@ export function boot() {
 
   checkUpdate();
   connectEvents();
+  loadRunnerSettings();
 
   load(true).then(function () {
     setInterval(function () {

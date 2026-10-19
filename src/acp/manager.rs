@@ -19,6 +19,8 @@ pub enum AcpManagerError {
     Client(String),
     Worktree(String),
     Io(String),
+    InvalidSettings(String),
+    ModelDiscovery(String),
 }
 
 impl std::fmt::Display for AcpManagerError {
@@ -34,8 +36,68 @@ impl std::fmt::Display for AcpManagerError {
             AcpManagerError::Client(msg) => write!(f, "ACP client error: {msg}"),
             AcpManagerError::Worktree(msg) => write!(f, "Worktree error: {msg}"),
             AcpManagerError::Io(msg) => write!(f, "IO error: {msg}"),
+            AcpManagerError::InvalidSettings(msg) => write!(f, "Invalid runner settings: {msg}"),
+            AcpManagerError::ModelDiscovery(msg) => write!(f, "Model discovery failed: {msg}"),
         }
     }
+}
+
+/// The agent process, vault attribution, and model used for new runs.
+///
+/// Settings are captured when a run starts, so changing them in the viewer
+/// never rewrites the attribution of a run that is already in flight.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct RunnerSettings {
+    pub command: String,
+    pub actor: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+}
+
+pub const DEFAULT_ACP_COMMAND: &str = "omp acp";
+pub const DEFAULT_ACP_ACTOR: &str = "agent:omp";
+
+fn non_empty(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn env_non_empty(name: &str) -> Option<String> {
+    non_empty(std::env::var(name).ok())
+}
+
+impl RunnerSettings {
+    /// Explicit values win, then environment variables, then the historical
+    /// defaults. This keeps `pin view` behaving exactly as before unless the
+    /// user opts into a different runner.
+    pub fn resolve(command: Option<String>, actor: Option<String>, model: Option<String>) -> Self {
+        Self {
+            command: non_empty(command)
+                .or_else(|| env_non_empty("PIN_ACP_COMMAND"))
+                .unwrap_or_else(|| DEFAULT_ACP_COMMAND.to_string()),
+            actor: non_empty(actor)
+                .or_else(|| env_non_empty("PIN_ACP_ACTOR"))
+                .unwrap_or_else(|| DEFAULT_ACP_ACTOR.to_string()),
+            model: non_empty(model).or_else(|| env_non_empty("PIN_ACP_MODEL")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct RunnerModelOption {
+    pub value: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct RunnerModels {
+    pub command: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current: Option<String>,
+    pub options: Vec<RunnerModelOption>,
 }
 
 impl std::error::Error for AcpManagerError {}
@@ -83,6 +145,7 @@ pub struct ActiveRun {
     pub cancel_requested: Arc<AtomicBool>,
     pub prompt_sender: Option<Sender<String>>,
     pub mode: RunMode,
+    pub runner: RunnerSettings,
 }
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct ActiveRunInfo {
@@ -91,6 +154,9 @@ pub struct ActiveRunInfo {
     pub is_primary_worktree: bool,
     pub worktree_path: Option<String>,
     pub started_at: i64,
+    pub actor: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 #[derive(Clone)]
 pub struct CompletedRun {
@@ -105,7 +171,8 @@ pub struct CompletedRun {
 pub struct AcpManager {
     vault_path: PathBuf,
     repo_path: PathBuf,
-    acp_command: String,
+    runner: Arc<Mutex<RunnerSettings>>,
+    model_cache: Arc<Mutex<HashMap<String, RunnerModels>>>,
     active_runs: Arc<Mutex<HashMap<String, ActiveRun>>>,
     completed_runs: Arc<Mutex<Vec<CompletedRun>>>,
     global_subscribers: Arc<Mutex<Vec<std::sync::mpsc::Sender<serde_json::Value>>>>,
@@ -113,16 +180,19 @@ pub struct AcpManager {
 
 impl AcpManager {
     pub fn new(vault_path: PathBuf, repo_path: PathBuf, acp_command: Option<String>) -> Self {
-        let acp_command = acp_command
-            .filter(|cmd| !cmd.trim().is_empty())
-            .unwrap_or_else(|| {
-                std::env::var("PIN_ACP_COMMAND").unwrap_or_else(|_| "omp acp".to_string())
-            });
+        Self::with_runner(
+            vault_path,
+            repo_path,
+            RunnerSettings::resolve(acp_command, None, None),
+        )
+    }
 
+    pub fn with_runner(vault_path: PathBuf, repo_path: PathBuf, runner: RunnerSettings) -> Self {
         Self {
             vault_path,
             repo_path,
-            acp_command,
+            runner: Arc::new(Mutex::new(runner)),
+            model_cache: Arc::new(Mutex::new(HashMap::new())),
             active_runs: Arc::new(Mutex::new(HashMap::new())),
             completed_runs: Arc::new(Mutex::new(Vec::new())),
             global_subscribers: Arc::new(Mutex::new(Vec::new())),
@@ -143,8 +213,136 @@ impl AcpManager {
         &self.repo_path
     }
 
-    pub fn acp_command(&self) -> &str {
-        &self.acp_command
+    pub fn runner_settings(&self) -> RunnerSettings {
+        self.runner
+            .lock()
+            .map(|runner| runner.clone())
+            .unwrap_or_else(|_| RunnerSettings::resolve(None, None, None))
+    }
+
+    /// Updates runner settings in place. Omitted fields keep their current
+    /// value; `model: null` clears the model and falls back to the agent's
+    /// default for future runs.
+    pub fn update_runner_settings(
+        &self,
+        command: Option<String>,
+        actor: Option<String>,
+        model: Option<Option<String>>,
+    ) -> Result<RunnerSettings, AcpManagerError> {
+        let mut runner = self.runner.lock().map_err(|_| {
+            AcpManagerError::InvalidSettings("Runner settings lock poisoned".to_string())
+        })?;
+
+        if let Some(command) = command {
+            let command = command.trim();
+            if command.is_empty() {
+                return Err(AcpManagerError::InvalidSettings(
+                    "Agent command cannot be empty".to_string(),
+                ));
+            }
+            runner.command = command.to_string();
+        }
+
+        if let Some(actor) = actor {
+            let actor = actor.trim();
+            if actor.is_empty() {
+                return Err(AcpManagerError::InvalidSettings(
+                    "Runner actor cannot be empty".to_string(),
+                ));
+            }
+            runner.actor = actor.to_string();
+        }
+
+        if let Some(model) = model {
+            runner.model = non_empty(model);
+        }
+
+        Ok(runner.clone())
+    }
+
+    /// Lists the model options advertised by the current agent command.
+    ///
+    /// Discovery is a short-lived ACP handshake: initialize, create a session,
+    /// read `configOptions`, then kill the child. No prompt is ever sent.
+    pub fn runner_models(&self, refresh: bool) -> Result<RunnerModels, AcpManagerError> {
+        let settings = self.runner_settings();
+
+        if !refresh {
+            if let Ok(cache) = self.model_cache.lock() {
+                if let Some(cached) = cache.get(&settings.command) {
+                    return Ok(cached.clone());
+                }
+            }
+        }
+
+        let models = self.discover_models(&settings.command)?;
+        if let Ok(mut cache) = self.model_cache.lock() {
+            cache.insert(settings.command.clone(), models.clone());
+        }
+
+        Ok(models)
+    }
+
+    fn discover_models(&self, command: &str) -> Result<RunnerModels, AcpManagerError> {
+        let log_dir = self.vault_path.join("runs");
+        fs::create_dir_all(&log_dir)?;
+        let log_path = log_dir.join("runner-models.log");
+
+        let client = AcpClient::spawn(command, &self.repo_path, &log_path).map_err(|e| {
+            AcpManagerError::ModelDiscovery(format!("Could not start '{command}': {e}"))
+        })?;
+
+        let result: Result<RunnerModels, AcpManagerError> = (|| {
+            client.initialize().map_err(|e| {
+                AcpManagerError::ModelDiscovery(format!("ACP initialize failed: {e}"))
+            })?;
+
+            let session = client
+                .new_session_with_config(&self.repo_path)
+                .map_err(|e| {
+                    AcpManagerError::ModelDiscovery(format!("Could not create ACP session: {e}"))
+                })?;
+
+            let Some(model_option) = session
+                .config_options
+                .iter()
+                .find(|option| option.category.as_deref() == Some("model") || option.id == "model")
+            else {
+                return Ok(RunnerModels {
+                    command: command.to_string(),
+                    current: None,
+                    options: Vec::new(),
+                });
+            };
+
+            let current = model_option
+                .current_value
+                .as_ref()
+                .and_then(|value| value.as_str())
+                .map(str::to_string);
+
+            let options = model_option
+                .options
+                .iter()
+                .filter_map(|choice| {
+                    let value = choice.value.as_str()?.to_string();
+                    Some(RunnerModelOption {
+                        name: choice.name.clone().unwrap_or_else(|| value.clone()),
+                        value,
+                        description: choice.description.clone(),
+                    })
+                })
+                .collect();
+
+            Ok(RunnerModels {
+                command: command.to_string(),
+                current,
+                options,
+            })
+        })();
+
+        let _ = client.kill();
+        result
     }
 
     pub fn is_primary_busy(&self) -> Option<String> {
@@ -201,6 +399,8 @@ impl AcpManager {
                         is_primary_worktree: run.is_primary_worktree,
                         worktree_path: run.worktree_path.as_ref().map(|p| p.display().to_string()),
                         started_at: run.started_at,
+                        actor: run.runner.actor.clone(),
+                        model: run.runner.model.clone(),
                     }
                 })
                 .collect();
@@ -374,6 +574,10 @@ impl AcpManager {
             .unwrap_or(&filename)
             .to_string();
 
+        // Capture the runner once so every attribution and ACP call in this
+        // run uses the same command, actor, and model.
+        let runner = self.runner_settings();
+
         // Determine working directory
         let (work_dir, worktree_path, is_primary) = match mode {
             RunMode::Implement { use_worktree } | RunMode::Idea { use_worktree } => {
@@ -426,14 +630,14 @@ impl AcpManager {
         match mode {
             RunMode::Implement { .. } | RunMode::Idea { .. } => {
                 if let Err(e) =
-                    crate::workflow::begin_agent_run(&self.vault_path, &filename, "agent:omp")
+                    crate::workflow::begin_agent_run(&self.vault_path, &filename, &runner.actor)
                 {
                     return Err(AcpManagerError::Workflow(e.to_string()));
                 }
             }
             RunMode::CommitPr => {
                 if let Err(e) =
-                    crate::workflow::begin_commit_pr_run(&self.vault_path, &filename, "agent:omp")
+                    crate::workflow::begin_commit_pr_run(&self.vault_path, &filename, &runner.actor)
                 {
                     return Err(AcpManagerError::Workflow(e.to_string()));
                 }
@@ -448,7 +652,7 @@ impl AcpManager {
                 let _ = crate::workflow::release_item(
                     &self.vault_path,
                     &filename,
-                    Some("agent:omp"),
+                    Some(&runner.actor),
                     true,
                     None,
                 );
@@ -532,7 +736,7 @@ impl AcpManager {
             let _ = crate::workflow::release_item(
                 &self.vault_path,
                 &filename,
-                Some("agent:omp"),
+                Some(&runner.actor),
                 true,
                 None,
             );
@@ -544,13 +748,13 @@ impl AcpManager {
         let log_path = log_dir.join(format!("{item_id}.log"));
 
         // Spawn ACP client
-        let client = match AcpClient::spawn(&self.acp_command, &work_dir, &log_path) {
+        let client = match AcpClient::spawn(&runner.command, &work_dir, &log_path) {
             Ok(c) => Arc::new(c),
             Err(e) => {
                 let _ = crate::workflow::release_item(
                     &self.vault_path,
                     &filename,
-                    Some("agent:omp"),
+                    Some(&runner.actor),
                     true,
                     None,
                 );
@@ -584,6 +788,7 @@ impl AcpManager {
             cancel_requested: Arc::clone(&cancel_requested),
             prompt_sender,
             mode,
+            runner: runner.clone(),
         };
 
         {
@@ -613,6 +818,7 @@ impl AcpManager {
         let worker_work_dir = work_dir;
         let worker_is_new_worktree = is_new_worktree;
         let worker_prompt_rx = prompt_rx;
+        let worker_runner = runner.clone();
         thread::spawn(move || {
             // Forward client update events (client.subscribe()) to event_buffer and subscribers
             let client_event_rx = worker_client.subscribe();
@@ -643,10 +849,30 @@ impl AcpManager {
                 if worker_cancel.load(Ordering::SeqCst) {
                     return Err("Run cancelled before new_session".to_string());
                 }
-                let session_id = worker_client
-                    .new_session(&worker_work_dir)
+                let session = worker_client
+                    .new_session_with_config(&worker_work_dir)
                     .map_err(|e| format!("New session failed: {e}"))?;
+                let session_id = session.session_id.clone();
                 session_id_opt = Some(session_id.clone());
+
+                // The user picked a model in the viewer: apply it to this
+                // session before the first prompt so every turn uses it.
+                if let Some(model) = worker_runner.model.as_deref() {
+                    if worker_cancel.load(Ordering::SeqCst) {
+                        return Err("Run cancelled before model selection".to_string());
+                    }
+                    let config_id = session
+                        .config_options
+                        .iter()
+                        .find(|option| {
+                            option.category.as_deref() == Some("model") || option.id == "model"
+                        })
+                        .map(|option| option.id.as_str())
+                        .unwrap_or("model");
+                    worker_client
+                        .set_config_option(&session_id, config_id, serde_json::json!(model))
+                        .map_err(|e| format!("Model selection failed for '{model}': {e}"))?;
+                }
 
                 // Prompt
                 if worker_cancel.load(Ordering::SeqCst) {
@@ -777,7 +1003,7 @@ impl AcpManager {
                     let handoff_meta = crate::workflow::handoff_item(
                         &worker_vault_path,
                         &worker_filename,
-                        Some("agent:omp"),
+                        Some(&worker_runner.actor),
                         Some(&summary),
                         None,
                         None,
@@ -794,7 +1020,7 @@ impl AcpManager {
                         let _ = crate::workflow::complete_item_with_pr(
                             &worker_vault_path,
                             &worker_filename,
-                            Some("agent:omp"),
+                            Some(&worker_runner.actor),
                             &evidence,
                             pr_url.clone(),
                             pr_number,
@@ -875,7 +1101,7 @@ impl AcpManager {
                     let _ = crate::workflow::release_item(
                         &worker_vault_path,
                         &worker_filename,
-                        Some("agent:omp"),
+                        Some(&worker_runner.actor),
                         true,
                         None,
                     );
@@ -988,7 +1214,7 @@ impl AcpManager {
                 let _ = crate::workflow::release_item(
                     &self.vault_path,
                     &filename,
-                    Some("agent:omp"),
+                    Some(&run.runner.actor),
                     true,
                     None,
                 );
@@ -1632,6 +1858,11 @@ mod tests {
 
         let log_path = vault_dir.path().join("test.log");
         let client = Arc::new(AcpClient::spawn("cat", repo_dir.path(), &log_path).unwrap());
+        let runner = RunnerSettings {
+            command: "mock acp".to_string(),
+            actor: "agent:test".to_string(),
+            model: Some("mock/fast".to_string()),
+        };
         let run1 = ActiveRun {
             item_id: "item-b".to_string(),
             client: Arc::clone(&client),
@@ -1643,6 +1874,7 @@ mod tests {
             cancel_requested: Arc::new(AtomicBool::new(false)),
             prompt_sender: None,
             mode: RunMode::Idea { use_worktree: true },
+            runner: runner.clone(),
         };
         let run2 = ActiveRun {
             item_id: "item-a".to_string(),
@@ -1655,6 +1887,7 @@ mod tests {
             cancel_requested: Arc::new(AtomicBool::new(false)),
             prompt_sender: None,
             mode: RunMode::CommitPr,
+            runner,
         };
 
         {
@@ -1671,11 +1904,81 @@ mod tests {
         assert!(info[0].is_primary_worktree);
         assert_eq!(info[0].worktree_path, None);
         assert_eq!(info[0].started_at, 100);
+        assert_eq!(info[0].actor, "agent:test");
+        assert_eq!(info[0].model.as_deref(), Some("mock/fast"));
 
         assert_eq!(info[1].item_id, "item-b");
         assert_eq!(info[1].mode, "idea");
         assert!(!info[1].is_primary_worktree);
         assert_eq!(info[1].worktree_path.as_deref(), Some("/tmp/wt-b"));
         assert_eq!(info[1].started_at, 200);
+        assert_eq!(info[1].actor, "agent:test");
+        assert_eq!(info[1].model.as_deref(), Some("mock/fast"));
+    }
+
+    #[test]
+    fn test_runner_settings_resolve_prefers_explicit_values() {
+        let settings = RunnerSettings::resolve(
+            Some(" custom acp ".to_string()),
+            Some(" agent:custom ".to_string()),
+            Some(" model/fast ".to_string()),
+        );
+        assert_eq!(settings.command, "custom acp");
+        assert_eq!(settings.actor, "agent:custom");
+        assert_eq!(settings.model.as_deref(), Some("model/fast"));
+
+        let blank = RunnerSettings::resolve(
+            Some("   ".to_string()),
+            Some("".to_string()),
+            Some("  ".to_string()),
+        );
+        // Blank explicit values fall back to environment/default rather than
+        // producing an unusable empty runner.
+        assert!(!blank.command.trim().is_empty());
+        assert!(!blank.actor.trim().is_empty());
+        let env_model = std::env::var("PIN_ACP_MODEL")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        assert_eq!(blank.model, env_model);
+    }
+
+    #[test]
+    fn test_update_runner_settings_partial_and_clear() {
+        let vault_dir = tempfile::tempdir().unwrap();
+        let repo_dir = tempfile::tempdir().unwrap();
+        let mgr = AcpManager::with_runner(
+            vault_dir.path().to_path_buf(),
+            repo_dir.path().to_path_buf(),
+            RunnerSettings {
+                command: "omp acp".to_string(),
+                actor: "agent:omp".to_string(),
+                model: Some("model/one".to_string()),
+            },
+        );
+
+        let updated = mgr
+            .update_runner_settings(
+                Some("opencode acp".to_string()),
+                Some("agent:opencode".to_string()),
+                Some(Some("model/two".to_string())),
+            )
+            .unwrap();
+        assert_eq!(updated.command, "opencode acp");
+        assert_eq!(updated.actor, "agent:opencode");
+        assert_eq!(updated.model.as_deref(), Some("model/two"));
+
+        let partial = mgr.update_runner_settings(None, None, Some(None)).unwrap();
+        assert_eq!(partial.command, "opencode acp");
+        assert_eq!(partial.actor, "agent:opencode");
+        assert_eq!(partial.model, None);
+        assert_eq!(mgr.runner_settings(), partial);
+
+        assert!(mgr
+            .update_runner_settings(Some("  ".to_string()), None, None)
+            .is_err());
+        assert!(mgr
+            .update_runner_settings(None, Some("".to_string()), None)
+            .is_err());
     }
 }

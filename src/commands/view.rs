@@ -18,6 +18,8 @@ pub fn view(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> 
     let (mut archive_filter, mut port, mut no_open, mut format) =
         (ArchiveFilter::Active, 0, false, None);
     let mut acp_command: Option<String> = None;
+    let mut acp_actor: Option<String> = None;
+    let mut acp_model: Option<String> = None;
     while let Some(arg) = reader.peek()? {
         match arg {
             "--archived" => archive_filter = ArchiveFilter::Archived,
@@ -25,6 +27,12 @@ pub fn view(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> 
             "--no-open" => no_open = true,
             "--acp-command" => {
                 acp_command = Some(reader.next_val("--acp-command")?.to_string());
+            }
+            "--acp-actor" => {
+                acp_actor = Some(reader.next_val("--acp-actor")?.to_string());
+            }
+            "--acp-model" => {
+                acp_model = Some(reader.next_val("--acp-model")?.to_string());
             }
             "--project" => {
                 if project_scoped {
@@ -94,7 +102,15 @@ pub fn view(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> 
     );
     let fmt = format.unwrap_or(OutputFormat::Plain);
 
-    serve_view(snapshot, port, no_open, fmt, acp_command)
-        .map_err(|e| CliError::usage(format!("Failed to serve view: {e}")))?;
+    serve_view(
+        snapshot,
+        port,
+        no_open,
+        fmt,
+        acp_command,
+        acp_actor,
+        acp_model,
+    )
+    .map_err(|e| CliError::usage(format!("Failed to serve view: {e}")))?;
     Ok(())
 }

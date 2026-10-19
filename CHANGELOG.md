@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Added
+- `pin view` runner settings: switch the ACP agent command, vault attribution actor, and model for future runs from the viewer. OMP and OpenCode presets fill in the command, which stays editable for other ACP agents. Models are discovered from the agent's ACP `session/new` config options and applied with `session/set_config_option`; each run captures its runner settings at start. `--acp-actor`/`--acp-model` and `PIN_ACP_ACTOR`/`PIN_ACP_MODEL` provide launch defaults.
+
+### Fixed
+- Serve `modules/agents-view.js` from the embedded viewer. The missing asset entry broke the viewer's JavaScript module graph.
+- Viewer toasts now become visible and use their success or error style.
+
 ## [3.5.0]
 
 ### Added

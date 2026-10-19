@@ -609,6 +609,19 @@ a:hover {
   white-space: nowrap;
 }
 
+.runner-btn {
+  max-width: 22rem;
+}
+
+.runner-summary {
+  max-width: 9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-weight: var(--weight-regular);
+}
+
 .view-switch {
   display: inline-flex;
   padding: 2px;
@@ -891,6 +904,18 @@ a:hover {
 .agent-actor {
   font-size: var(--text-xs);
   color: var(--muted);
+}
+
+.agent-model {
+  display: inline-block;
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
 }
 
 .agent-activity {
@@ -2949,6 +2974,83 @@ a:hover {
   resize: vertical;
 }
 
+.runner-dialog {
+  max-width: min(92vw, 40rem);
+}
+
+.runner-dialog .dialog-content {
+  max-height: 92vh;
+}
+
+.runner-dialog .dialog-body {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.runner-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
+.runner-harness-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1-5);
+}
+
+.runner-field-label {
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  color: var(--muted);
+}
+
+.runner-harness-switch {
+  align-self: flex-start;
+}
+
+.runner-field-hint {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-regular);
+}
+
+.runner-model-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1-5);
+}
+
+.runner-model-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.runner-model-header label {
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  color: var(--muted);
+}
+
+.runner-model-status {
+  margin: 0;
+  min-height: 1.2em;
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
+.runner-model-status.error {
+  color: var(--danger-ink);
+}
+
+.worktree-runner-summary {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
 .dialog-footer {
   display: flex;
   justify-content: flex-end;
@@ -3259,6 +3361,12 @@ footer {
 /* --------------------------------------------------------------------------
    17. Responsive Layout & Accessibility
    -------------------------------------------------------------------------- */
+@media (max-width: 1439.98px) {
+  .runner-summary {
+    display: none;
+  }
+}
+
 @media (max-width: 799.98px) {
   :root {
     --top: auto;

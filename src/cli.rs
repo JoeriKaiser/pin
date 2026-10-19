@@ -77,9 +77,11 @@ pub fn print_usage() {
          export <directory> [--force] [--format json|plain]\n  \
          stats [--project <name>] [--format json|plain]\n  \
          view [--project <name>] [--tag <name>] [--kind <kind>] [--type <type>]\n       \
-         [--status <status>] [--archived|--all] [--port <n>] [--no-open] [--acp-command <cmd>] [--format json|plain]\n  \
+         [--status <status>] [--archived|--all] [--port <n>] [--no-open]\n       \
+         [--acp-command <cmd>] [--acp-actor <actor>] [--acp-model <model>] [--format json|plain]\n  \
          view-project [--tag <name>] [--kind <kind>] [--type <type>] [--status <status>]\n               \
-         [--archived|--all] [--port <n>] [--no-open] [--acp-command <cmd>] [--format json|plain]\n  \
+         [--archived|--all] [--port <n>] [--no-open]\n               \
+         [--acp-command <cmd>] [--acp-actor <actor>] [--acp-model <model>] [--format json|plain]\n  \
          update [--check] [--force] [--format json|plain]\n  \
          sync [id|prefix|filename] [--project <name>] [--dry-run] [--force] [--format json|plain]\n  \
          --help\n  \

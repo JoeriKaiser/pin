@@ -81,7 +81,9 @@ export function renderAgentsTable() {
         mode: 'implement',
         is_primary_worktree: true,
         worktree_path: null,
-        started_at: (state.activeRunsTimings && state.activeRunsTimings[id]) || 0
+        started_at: (state.activeRunsTimings && state.activeRunsTimings[id]) || 0,
+        actor: (state.runner && state.runner.actor) || 'agent:omp',
+        model: (state.runner && state.runner.model) || null
       };
     });
   }
@@ -152,11 +154,20 @@ export function renderAgentsTable() {
 
     // 4. Actor
     var actorCell = node('td', 'agent-col-actor');
-    var actorName = (itm && itm.claimed_by) ? itm.claimed_by : '@agent:omp';
+    var actorName = run.actor || (itm && itm.claimed_by) ||
+      (state.runner && state.runner.actor) || 'agent:omp';
     actorCell.appendChild(node('span', 'agent-actor', actorName));
     row.appendChild(actorCell);
 
-    // 5. Duration Ticker
+    // 5. Model captured when the run started
+    var modelCell = node('td', 'agent-col-model');
+    var modelName = run.model || 'Agent default';
+    var modelSpan = node('span', 'agent-model', modelName);
+    modelSpan.title = run.model || 'Uses the agent default model';
+    modelCell.appendChild(modelSpan);
+    row.appendChild(modelCell);
+
+    // 6. Duration Ticker
     var durCell = node('td', 'agent-col-duration');
     var ticker = node('span', 'agent-duration-ticker', formatDuration(run.started_at));
     ticker.dataset.startedAt = String(run.started_at || 0);
