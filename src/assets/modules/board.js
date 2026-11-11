@@ -337,4 +337,11 @@ export function renderBoard() {
   text(els.countBlocked, counts.blocked);
   text(els.countDone, counts.done);
   text(els.countClosed, counts.closed);
+
+  var totalItems = (state.items || []).length;
+  var shownItems = (state.shown || []).length;
+  var countText = shownItems === totalItems
+    ? totalItems + (totalItems === 1 ? ' item' : ' items')
+    : shownItems + ' of ' + totalItems;
+  text(els.count, countText);
 }
