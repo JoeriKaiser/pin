@@ -535,7 +535,21 @@ pub fn rm(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> {
         }
     }
 
-    fs::remove_file(&path).map_err(|e| CliError::usage(format!("Failed to delete idea: {e}")))?;
+    fs::remove_file(&path).map_err(|e| CliError::usage(format!("Failed to delete item: {e}")))?;
+
+    let cleanup_candidates = [
+        format!(".{filename}.lock"),
+        format!(".{removed_id}.md.lock"),
+        format!("{filename}.lock"),
+        format!(".{removed_id}.edit-recovery.tmp"),
+        format!(".{filename}.edit-recovery.tmp"),
+    ];
+    for candidate in cleanup_candidates {
+        let candidate_path = vault_path.join(candidate);
+        if candidate_path.is_file() {
+            let _ = fs::remove_file(candidate_path);
+        }
+    }
 
     let fmt = format.unwrap_or_else(|| default_format(OutputFormat::Plain));
     if fmt == OutputFormat::Json {

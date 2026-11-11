@@ -96,6 +96,14 @@ HOME="$TMP/home" PIN_ACTOR=agent:test "$PIN_BIN" complete "$wf_id" --evidence 'D
 HOME="$TMP/home" PIN_ACTOR=agent:test "$PIN_BIN" close "$wf_id" --format json | grep -q '"status":"closed"'
 HOME="$TMP/home" "$PIN_BIN" rm "$wf_id" --format json >/dev/null
 
+rm_cleanup_item=$(HOME="$TMP/home" "$PIN_BIN" add '# Cleanup test' --kind technical --type task --format json)
+rm_cleanup_id=$(printf '%s' "$rm_cleanup_item" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+touch "$TMP/repo/.pin_vault/.$rm_cleanup_id.md.lock"
+touch "$TMP/repo/.pin_vault/.$rm_cleanup_id.edit-recovery.tmp"
+HOME="$TMP/home" "$PIN_BIN" rm "$rm_cleanup_id" --format json >/dev/null
+[ ! -f "$TMP/repo/.pin_vault/.$rm_cleanup_id.md.lock" ] || fail "rm left behind an orphaned lock file"
+[ ! -f "$TMP/repo/.pin_vault/.$rm_cleanup_id.edit-recovery.tmp" ] || fail "rm left behind an orphaned recovery file"
+
 # A run that ends after the user moved the item must not reset the status
 preserve_item=$(HOME="$TMP/home" "$PIN_BIN" add '# Status preservation' --kind technical --type task --format json)
 preserve_id=$(printf '%s' "$preserve_item" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
