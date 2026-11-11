@@ -511,6 +511,7 @@ export function bindGlobalShortcuts() {
     if (input || event.metaKey || event.ctrlKey || event.altKey) return;
     if (event.key === 'n' || event.key === 'c') { event.preventDefault(); openSpecModal(); return; }
     if (event.key === '?' || (event.key === '/' && event.shiftKey)) { event.preventDefault(); openShortcutsModal(); return; }
+    if (event.key === 't') { event.preventDefault(); toggleTheme(); return; }
     if (event.key !== 'j' && event.key !== 'k' && event.key !== 'Enter') return;
     var idx = state.shown.findIndex(function (item) { return item.id === state.selected; });
     if (event.key === 'j' || event.key === 'k') {

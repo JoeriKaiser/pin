@@ -236,9 +236,9 @@ function getOrCreateBySelector(sel) {
 
 const documentMock = {
   readyState: 'loading',
-  documentElement: {
+  documentElement: Object.assign(createMockElement('html', 'html'), {
     dataset: { base: '' }
-  },
+  }),
   body: createMockElement('body', 'body'),
   getElementById(id) {
     return getOrCreateElement(id);
@@ -860,7 +860,38 @@ async function runHarness() {
   assert.strictEqual(leftPrevented, true, 'ArrowLeft calls preventDefault');
   assert.strictEqual(focusedCard, 'cardA', 'ArrowLeft moves focus back to previous column');
 
-  console.log('PASS: Board card drop transition and arrow navigation verified');
+  // Test 't' keyboard shortcut toggles theme
+  let themePrevented = false;
+  document.dispatchEvent({
+    type: 'keydown',
+    key: 't',
+    target: documentMock.body,
+    preventDefault() { themePrevented = true; }
+  });
+  assert.strictEqual(themePrevented, true, 't keydown calls preventDefault');
+  assert.ok(documentMock.documentElement.getAttribute('data-theme') === 'dark' || documentMock.documentElement.getAttribute('data-theme') === 'light', 'theme toggled on documentElement');
+
+  // Test renderDetail populates context ID badge and copy ID button
+  const renderDetail = testExports.renderDetail || win.renderDetail;
+  testExports.state.items = testExports.state.items || [];
+  testExports.state.items.push({
+    id: 'detailtest123',
+    title: 'Detail Copy Test',
+    type: 'task',
+    kind: 'technical',
+    status: 'created',
+    timestamp: 1700000000
+  });
+  testExports.state.selected = 'detailtest123';
+  renderDetail();
+  const proposalCtx = documentMock.getElementById('proposal-context');
+  const copyBtn = proposalCtx.querySelector('.btn-copy-id');
+  const idBadge = proposalCtx.querySelector('.context-id-badge');
+  assert.ok(copyBtn, 'Copy ID button rendered in proposal context');
+  assert.ok(idBadge, 'ID badge rendered in proposal context');
+  assert.strictEqual(idBadge.textContent, 'detailte');
+
+  console.log('PASS: Board card drop transition, arrow navigation, and theme/detail ergonomics verified');
 
   console.log('\n--- 8. Testing Unified Run Dispatcher (sendRunItem) ---');
   const sendRunItem = testExports.sendRunItem || win.sendRunItem;

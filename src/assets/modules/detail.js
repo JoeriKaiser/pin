@@ -448,7 +448,36 @@ export function renderDetail() {
   if (item.project) context.push(item.project);
   context.push(itemType(item).toUpperCase());
   context.push(kind(item));
-  text(els.context, context.join(' · '));
+  if (els.context) {
+    clear(els.context);
+    var ctxText = context.join(' · ');
+    if (ctxText) {
+      els.context.appendChild(node('span', 'context-meta', ctxText));
+      els.context.appendChild(document.createTextNode(' · '));
+    }
+    var idBadge = node('code', 'context-id-badge', item.id.slice(0, 8));
+    idBadge.title = item.id;
+    els.context.appendChild(idBadge);
+
+    var copyBtn = node('button', 'btn-copy-id', 'Copy ID');
+    copyBtn.type = 'button';
+    copyBtn.title = 'Copy item ID to clipboard (' + item.id + ')';
+    copyBtn.setAttribute('aria-label', 'Copy ID ' + item.id);
+    copyBtn.addEventListener('click', function (e) {
+      if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+      try {
+        if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(item.id).then(function () {
+            text(copyBtn, 'Copied!');
+            setTimeout(function () { text(copyBtn, 'Copy ID'); }, 1500);
+          }).catch(function () {
+            showToast('Failed to copy ID', true);
+          });
+        }
+      } catch (_) {}
+    });
+    els.context.appendChild(copyBtn);
+  }
   text(els.title, item.title || '(untitled)');
 
   clear(els.summary);
