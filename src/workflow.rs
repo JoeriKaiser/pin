@@ -89,6 +89,7 @@ impl From<io::Error> for WorkflowError {
     }
 }
 
+#[derive(Debug)]
 pub struct FileLock {
     path: PathBuf,
 }
@@ -98,7 +99,11 @@ impl FileLock {
         let lock_filename = format!(".{filename}.lock");
         let lock_path = vault_path.join(lock_filename);
         let start = Instant::now();
-        let timeout = Duration::from_secs(3);
+        let timeout = std::env::var("PIN_LOCK_TIMEOUT_MS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .map(Duration::from_millis)
+            .unwrap_or_else(|| Duration::from_secs(3));
 
         while start.elapsed() < timeout {
             match fs::OpenOptions::new()
@@ -130,8 +135,14 @@ impl FileLock {
             }
         }
 
+        let duration_desc = if timeout.as_secs() > 0 && timeout.subsec_millis() == 0 {
+            format!("{} seconds", timeout.as_secs())
+        } else {
+            format!("{} ms", timeout.as_millis())
+        };
+
         Err(WorkflowError::LockConflict(format!(
-            "Could not acquire lock on {filename} within 3 seconds"
+            "Could not acquire lock on {filename} within {duration_desc}"
         )))
     }
 }
@@ -1558,5 +1569,27 @@ mod tests {
         assert!(transformed.body.contains("## Problem & Context"));
         assert_eq!(transformed.current_revision(), 2);
         assert_eq!(transformed.activity.last().unwrap().action, "transform");
+    }
+
+    #[test]
+    fn test_lock_timeout_configurable_via_env() {
+        let dir = tempdir().unwrap();
+        let lock_path = dir.path().join(".test_timeout.md.lock");
+        fs::write(&lock_path, "1234:999999").unwrap();
+
+        std::env::set_var("PIN_LOCK_TIMEOUT_MS", "60");
+        let start = Instant::now();
+        let result = FileLock::acquire(dir.path(), "test_timeout.md");
+        let elapsed = start.elapsed();
+        std::env::remove_var("PIN_LOCK_TIMEOUT_MS");
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            WorkflowError::LockConflict(msg) => {
+                assert!(msg.contains("within 60 ms"));
+            }
+            other => panic!("Expected LockConflict, got {other:?}"),
+        }
+        assert!(elapsed < Duration::from_secs(1));
     }
 }
