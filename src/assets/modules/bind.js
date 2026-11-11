@@ -471,10 +471,29 @@ export function bindGlobalShortcuts() {
       if (event.key === 'Enter') {
         if (event.target === card || !/^(BUTTON|A|INPUT)$/.test(event.target.tagName)) { event.preventDefault(); card.click(); return; }
       }
-      var colCards = card.closest('.board-col-cards') ? Array.from(card.closest('.board-col-cards').querySelectorAll('.board-card')) : [];
+      var currentColContainer = card.closest('.board-col-cards');
+      var colCards = currentColContainer ? Array.from(currentColContainer.querySelectorAll('.board-card')) : [];
       var cIdx = colCards.indexOf(card);
       if (event.key === 'ArrowDown' && cIdx >= 0 && cIdx < colCards.length - 1) { event.preventDefault(); colCards[cIdx + 1].focus(); return; }
       if (event.key === 'ArrowUp' && cIdx > 0) { event.preventDefault(); colCards[cIdx - 1].focus(); return; }
+      if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+        var currentCol = card.closest('.board-col');
+        var step = event.key === 'ArrowRight' ? 'nextElementSibling' : 'previousElementSibling';
+        var nextCol = currentCol ? currentCol[step] : null;
+        while (nextCol) {
+          var isCol = (nextCol.classList && nextCol.classList.contains('board-col')) || (nextCol.className && nextCol.className.indexOf('board-col') !== -1);
+          if (isCol) {
+            var targetCards = Array.from(nextCol.querySelectorAll('.board-card'));
+            if (targetCards.length > 0) {
+              event.preventDefault();
+              var targetCard = targetCards[Math.min(cIdx >= 0 ? cIdx : 0, targetCards.length - 1)];
+              if (targetCard && targetCard.focus) targetCard.focus();
+              return;
+            }
+          }
+          nextCol = nextCol[step];
+        }
+      }
     }
     if (input || event.metaKey || event.ctrlKey || event.altKey) return;
     if (event.key === 'n' || event.key === 'c') { event.preventDefault(); openSpecModal(); return; }
