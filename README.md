@@ -105,9 +105,9 @@ pin context [--project <name>] [--kind <kind>] [--type <type>]
              [--group kind] [--archived|--all] [--format json|plain]
 pin next [--project <name>] [--limit <n>] [--format json|plain]
 pin transition <id|prefix|filename> --to <status> [--actor <name>]
-             [--note <text>] [--expect-revision <n>] [--format json|plain]
+             [--note <text>] [--expect-revision <n>] [--worktree] [--format json|plain]
 pin claim <id|prefix|filename> [--actor <name>] [--lease <seconds>]
-             [--expect-revision <n>] [--format json|plain]
+             [--expect-revision <n>] [--worktree] [--format json|plain]
 pin release <id|prefix|filename> [--actor <name>] [--force]
              [--expect-revision <n>] [--format json|plain]
 pin handoff <id|prefix|filename> [--actor <name>] [--progress <text>]
@@ -135,7 +135,7 @@ pin edit <id|prefix|filename> [--format json|plain]
 pin rm <id|prefix|filename> [--format json|plain]
 pin import <directory> [--force] [--format json|plain]
 pin export <directory> [--force] [--format json|plain]
-pin stats [--format json|plain]
+pin stats [--project <name>] [--format json|plain]
 pin sync [id|prefix|filename] [--project <name>] [--dry-run] [--force] [--format json|plain]
 pin update [--check] [--force] [--format json|plain]
 pin view [--project <name>] [--tag <name>] [--kind <kind>] [--type <type>]
@@ -165,6 +165,10 @@ Records move through explicit lifecycle states:
 ### Dependency gating
 
 `pin depend <item> <dependency>` records directed dependencies. `pin next` evaluates dependency readiness: an item is only returned when all of its dependencies are `done` or `closed`. Cycles are rejected during dependency declaration.
+
+### Worktrees
+
+`pin claim --worktree` and `pin transition --worktree` provision a git worktree for the item after the status change succeeds and print its path. Run the work there so the main checkout stays clean.
 
 ### Concurrency and locking
 

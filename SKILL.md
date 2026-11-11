@@ -218,8 +218,8 @@ Duplicate titles are rejected by default. Use `--allow-duplicate` only when the 
 - `pin search <query> [--project <name>] [--tag <name>] [--kind <kind>] [--type <type>] [--status <status>] [--claimed-by <actor>] [--limit <n>] [--archived|--all] [--format json|table|plain]`
 - `pin context [--project <name>] [--kind <kind>] [--type <type>] [--status <status>] [--limit <n>] [--group kind] [--archived|--all] [--format json|plain]`
 - `pin next [--project <name>] [--limit <n>] [--format json|plain]`
-- `pin transition <id|id-prefix|filename> --to <status> [--actor <name>] [--note <text>] [--expect-revision <n>] [--format json|plain]`
-- `pin claim <id|id-prefix|filename> [--actor <name>] [--lease <seconds>] [--expect-revision <n>] [--format json|plain]`
+- `pin transition <id|id-prefix|filename> --to <status> [--actor <name>] [--note <text>] [--expect-revision <n>] [--worktree] [--format json|plain]`
+- `pin claim <id|id-prefix|filename> [--actor <name>] [--lease <seconds>] [--expect-revision <n>] [--worktree] [--format json|plain]`
 - `pin release <id|id-prefix|filename> [--actor <name>] [--force] [--expect-revision <n>] [--format json|plain]`
 - `pin handoff <id|id-prefix|filename> [--actor <name>] [--progress <text>] [--next <text>] [--blocker <text>] [--verification <text>] [--expect-revision <n>] [--format json|plain]`
 - `pin complete <id|id-prefix|filename> --evidence <text> [--actor <name>] [--expect-revision <n>] [--format json|plain]`
@@ -232,7 +232,7 @@ Duplicate titles are rejected by default. Use `--allow-duplicate` only when the 
 - `pin archive <id|prefix|filename> [--resolution implemented|rejected|superseded|stale] [--note <text>]`
 - `pin unarchive <id|prefix|filename>`
 - `pin read|edit|rm <id|prefix|filename>`
-- `pin stats [--format json|plain]`
+- `pin stats [--project <name>] [--format json|plain]`
 - `pin sync [id|prefix|filename] [--project <name>] [--dry-run] [--force] [--format json|plain]`
 - `pin update [--check] [--force] [--format json|plain]`
 - `pin init --local [--project <name>]`
