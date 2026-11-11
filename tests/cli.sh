@@ -84,6 +84,9 @@ if HOME="$TMP/home" PIN_ACTOR=agent:other "$PIN_BIN" claim "$wf_id" --format jso
     fail "claim was stolen from another active actor"
 fi
 HOME="$TMP/home" PIN_ACTOR=agent:test "$PIN_BIN" handoff "$wf_id" --progress 'Started work' --next 'Finish tests' --format json | grep -q '"action":"handoff_updated"'
+if HOME="$TMP/home" PIN_ACTOR=agent:test "$PIN_BIN" handoff "$wf_id" --format json >/dev/null 2>&1; then
+    fail "handoff accepted a call with no progress, next, blocker, or verification"
+fi
 HOME="$TMP/home" PIN_ACTOR=agent:test "$PIN_BIN" release "$wf_id" --format json | grep -q '"status":"planned"'
 if HOME="$TMP/home" "$PIN_BIN" transition "$wf_id" --to done --expect-revision 0 >/dev/null 2>&1; then
     fail "stale revision was accepted"
@@ -191,6 +194,19 @@ assert_contains "$stats" '"active":3'
 assert_contains "$stats" '"archived":0'
 if HOME="$TMP/home" "$PIN_BIN" stats unexpected >/dev/null 2>&1; then
     fail "stats accepted an unexpected argument"
+fi
+
+if [ "$(id -u)" -ne 0 ]; then
+    unreadable_vault="$TMP/unreadable-vault"
+    mkdir -p "$unreadable_vault"
+    chmod 000 "$unreadable_vault"
+    for unreadable_cmd in list next context; do
+        if PIN_VAULT="$unreadable_vault" "$PIN_BIN" "$unreadable_cmd" --format plain >/dev/null 2>&1; then
+            chmod 755 "$unreadable_vault"
+            fail "$unreadable_cmd reported success for an unreadable vault"
+        fi
+    done
+    chmod 755 "$unreadable_vault"
 fi
 
 health=$(HOME="$TMP/home" "$PIN_BIN" doctor --format json)
@@ -1158,7 +1174,7 @@ assert_contains "$forced_sync_out" '"worktree_removed":true'
 
 # 4c. Reject dangling dependency
 bad_dep_out=$(PIN_VAULT="$sync_vault" "$PIN_BIN" depend "$reg_id" "nonexistent999" 2>&1 || true)
-assert_contains "$bad_dep_out" "No idea matches 'nonexistent999'"
+assert_contains "$bad_dep_out" "No item matches 'nonexistent999'"
 # 5. Subsequent sync
 none_out=$(cd "$sync_repo" && PIN_VAULT="$sync_vault" "$PIN_BIN" sync --format plain)
 assert_contains "$none_out" "No merged tickets to sync."

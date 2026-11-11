@@ -89,7 +89,12 @@ pub fn view(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> 
         ..Default::default()
     };
 
-    let ideas = collect_ideas_with_filter(&vault_path, &filter).unwrap_or_default();
+    let ideas = collect_ideas_with_filter(&vault_path, &filter).map_err(|e| {
+        CliError::usage(format!(
+            "Could not read vault {}: {e}",
+            vault_path.display()
+        ))
+    })?;
     let snapshot = create_snapshot(
         &ideas,
         vault_path.to_path_buf(),

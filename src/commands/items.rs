@@ -236,7 +236,12 @@ pub fn list(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> 
         archive_filter,
     };
 
-    let ideas = collect_ideas_with_filter(&vault_path, &filter).unwrap_or_default();
+    let ideas = collect_ideas_with_filter(&vault_path, &filter).map_err(|e| {
+        CliError::usage(format!(
+            "Could not read vault {}: {e}",
+            vault_path.display()
+        ))
+    })?;
     let fmt = format.unwrap_or_else(|| default_format(OutputFormat::Table));
     emit_ideas(&ideas, fmt);
     Ok(())
@@ -320,7 +325,12 @@ pub fn search(args: &[String], command: &str, vault_path: &Path) -> CliResult<()
         archive_filter,
     };
 
-    let mut ideas = collect_ideas_with_filter(&vault_path, &filter).unwrap_or_default();
+    let mut ideas = collect_ideas_with_filter(&vault_path, &filter).map_err(|e| {
+        CliError::usage(format!(
+            "Could not read vault {}: {e}",
+            vault_path.display()
+        ))
+    })?;
     sort_search_results(&mut ideas);
     if let Some(lim) = limit {
         ideas.truncate(lim);

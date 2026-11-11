@@ -23,6 +23,7 @@ pub struct VaultStats {
     pub blocked: usize,
     pub done: usize,
     pub closed: usize,
+    pub cancelled: usize,
 }
 
 pub fn calculate_stats(vault_path: &Path, project: Option<&str>) -> VaultStats {
@@ -78,7 +79,7 @@ pub fn calculate_stats(vault_path: &Path, project: Option<&str>) -> VaultStats {
             Status::Blocked => stats.blocked += 1,
             Status::Done => stats.done += 1,
             Status::Closed => stats.closed += 1,
-            Status::Cancelled => {}
+            Status::Cancelled => stats.cancelled += 1,
         }
     }
 
@@ -104,6 +105,7 @@ pub fn emit_stats(stats: &VaultStats, format: OutputFormat) {
             println!("Blocked:     {}", stats.blocked);
             println!("Done:        {}", stats.done);
             println!("Closed:      {}", stats.closed);
+            println!("Cancelled:   {}", stats.cancelled);
             println!("Technical:   {}", stats.technical);
             println!("Product:     {}", stats.product);
             println!("Business:    {}", stats.business);
@@ -166,15 +168,30 @@ mod tests {
         );
         fs::write(dir.path().join("item03.md"), render_full_document(&item3)).unwrap();
 
+        let item4 = IdeaMeta::new_work_item(
+            "item04".to_string(),
+            "projB".to_string(),
+            "Dropped".to_string(),
+            "Body".to_string(),
+            Kind::Technical,
+            WorkType::Task,
+            Status::Cancelled,
+            None,
+            None,
+            Some("agent:test".to_string()),
+        );
+        fs::write(dir.path().join("item04.md"), render_full_document(&item4)).unwrap();
+
         let all_stats = calculate_stats(dir.path(), None);
-        assert_eq!(all_stats.ideas, 3);
-        assert_eq!(all_stats.tasks, 1);
+        assert_eq!(all_stats.ideas, 4);
+        assert_eq!(all_stats.cancelled, 1);
+        assert_eq!(all_stats.tasks, 2);
         assert_eq!(all_stats.bugs, 1);
         assert_eq!(all_stats.decisions, 1);
         assert_eq!(all_stats.planned, 1);
         assert_eq!(all_stats.created, 1);
         assert_eq!(all_stats.done, 1);
-        assert_eq!(all_stats.technical, 1);
+        assert_eq!(all_stats.technical, 2);
         assert_eq!(all_stats.product, 1);
         assert_eq!(all_stats.business, 1);
 

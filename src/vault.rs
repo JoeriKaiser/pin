@@ -26,7 +26,7 @@ impl fmt::Display for VaultError {
             VaultError::AmbiguousSelector(s) => {
                 write!(f, "Selector '{s}' is ambiguous. Use more ID characters.")
             }
-            VaultError::SelectorNotFound(s) => write!(f, "No idea matches '{s}'."),
+            VaultError::SelectorNotFound(s) => write!(f, "No item matches '{s}'."),
             VaultError::InvalidSelector(s) => write!(f, "Invalid selector '{s}'."),
             VaultError::Io(e) => write!(f, "IO error: {e}"),
         }

@@ -26,7 +26,7 @@ Claim an item before changing the repository. Set `PIN_ACTOR` or pass `--actor` 
 pin claim <id> --actor agent:name
 ```
 
-Record progress with `handoff`. Use `transition --to blocked` with a reason when work cannot continue. Finish with `complete --evidence`: **`done` is the single end status**, and completing sets it explicitly. Do not leave finished work in `in_progress`, and do not invent another end state. `close` is separate — use it only when a human or a later agent accepts the result, which moves the item to `closed`. Claims have a one-hour lease by default and can be renewed with `claim`.
+Record progress with `handoff`. Use `transition --to blocked` with a reason when work cannot continue. Finish with `complete --evidence`: **`done` is the single end status**, and completing sets it explicitly. Do not leave finished work in `in_progress`, and do not invent another end state. `close` is separate — use it only when a human or a later agent accepts the result, which moves the item to `closed`. Claims have a one-hour lease by default and can be renewed with `claim`. When a lease lapses, `pin next` offers the item again.
 
 Merging a pull request does not change status; the item is already `done`. `pin sync` reconciles merge state onto it.
 
@@ -218,8 +218,8 @@ Duplicate titles are rejected by default. Use `--allow-duplicate` only when the 
 - `pin search <query> [--project <name>] [--tag <name>] [--kind <kind>] [--type <type>] [--status <status>] [--claimed-by <actor>] [--limit <n>] [--archived|--all] [--format json|table|plain]`
 - `pin context [--project <name>] [--kind <kind>] [--type <type>] [--status <status>] [--limit <n>] [--group kind] [--archived|--all] [--format json|plain]`
 - `pin next [--project <name>] [--limit <n>] [--format json|plain]`
-- `pin transition <id|id-prefix|filename> --to <status> [--actor <name>] [--note <text>] [--expect-revision <n>] [--format json|plain]`
-- `pin claim <id|id-prefix|filename> [--actor <name>] [--lease <seconds>] [--expect-revision <n>] [--format json|plain]`
+- `pin transition <id|id-prefix|filename> --to <status> [--actor <name>] [--note <text>] [--expect-revision <n>] [--worktree] [--format json|plain]`
+- `pin claim <id|id-prefix|filename> [--actor <name>] [--lease <seconds>] [--expect-revision <n>] [--worktree] [--format json|plain]`
 - `pin release <id|id-prefix|filename> [--actor <name>] [--force] [--expect-revision <n>] [--format json|plain]`
 - `pin handoff <id|id-prefix|filename> [--actor <name>] [--progress <text>] [--next <text>] [--blocker <text>] [--verification <text>] [--expect-revision <n>] [--format json|plain]`
 - `pin complete <id|id-prefix|filename> --evidence <text> [--actor <name>] [--expect-revision <n>] [--format json|plain]`
@@ -232,7 +232,7 @@ Duplicate titles are rejected by default. Use `--allow-duplicate` only when the 
 - `pin archive <id|prefix|filename> [--resolution implemented|rejected|superseded|stale] [--note <text>]`
 - `pin unarchive <id|prefix|filename>`
 - `pin read|edit|rm <id|prefix|filename>`
-- `pin stats [--format json|plain]`
+- `pin stats [--project <name>] [--format json|plain]`
 - `pin sync [id|prefix|filename] [--project <name>] [--dry-run] [--force] [--format json|plain]`
 - `pin update [--check] [--force] [--format json|plain]`
 - `pin init --local [--project <name>]`
