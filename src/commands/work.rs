@@ -433,10 +433,12 @@ pub fn depend(args: &[String], command: &str, vault_path: &Path) -> CliResult<()
         Ok(meta) => {
             let fmt = format.unwrap_or_else(|| default_format(OutputFormat::Plain));
             if fmt == OutputFormat::Json {
-                println!(
-                    "{{\"id\":\"{}\",\"action\":\"dependency_added\",\"depends_on\":{:?}}}",
-                    meta.id, meta.depends_on
-                );
+                let out = serde_json::json!({
+                    "id": meta.id,
+                    "action": "dependency_added",
+                    "depends_on": meta.depends_on,
+                });
+                println!("{}", serde_json::to_string(&out).unwrap_or_default());
             } else {
                 println!("Added dependency on {} to {}", dep_meta.id, meta.id);
             }
@@ -575,7 +577,11 @@ pub fn relate(args: &[String], command: &str, vault_path: &Path) -> CliResult<()
         Ok(meta) => {
             let fmt = format.unwrap_or_else(|| default_format(OutputFormat::Plain));
             if fmt == OutputFormat::Json {
-                println!("{{\"id\":\"{}\",\"related\":{:?}}}", meta.id, meta.related);
+                let out = serde_json::json!({
+                    "id": meta.id,
+                    "related": meta.related,
+                });
+                println!("{}", serde_json::to_string(&out).unwrap_or_default());
             } else {
                 println!("Related {} to {}", meta.id, rel_meta.id);
             }
