@@ -24,7 +24,8 @@ import {
   buildBoardCard, handleCardDrop, setViewMode, renderBoard, computeRenderKey
 } from './board.js';
 import {
-  bind, sendRunItem, sendCommitPrItem, handleUpdateInstall, handleGitSync, sendAgentChatMessage
+  bind, sendRunItem, sendCommitPrItem, handleUpdateInstall, handleGitSync, sendAgentChatMessage,
+  initTheme, toggleTheme
 } from './bind.js';
 import { ingest, checkUpdate, connectEvents, refreshData } from './boot.js';
 import { setRoute } from './router.js';
@@ -70,6 +71,8 @@ if (typeof window !== 'undefined') {
     closeWorktreeModal: closeWorktreeModal,
     openShortcutsModal: openShortcutsModal,
     closeShortcutsModal: closeShortcutsModal,
+    initTheme: initTheme,
+    toggleTheme: toggleTheme,
     sendCommitPrItem: sendCommitPrItem,
     sendRunItem: sendRunItem,
     buildBoardCard: buildBoardCard,
