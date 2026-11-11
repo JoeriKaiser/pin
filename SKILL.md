@@ -227,11 +227,14 @@ Duplicate titles are rejected by default. Use `--allow-duplicate` only when the 
 - `pin depend <id|id-prefix|filename> <dependency-id> [--actor <name>] [--expect-revision <n>] [--format json|plain]`
 - `pin parent <id|id-prefix|filename> <parent-id> [--actor <name>] [--expect-revision <n>] [--format json|plain]`
 - `pin relate <id|id-prefix|filename> <related-id> [--actor <name>] [--expect-revision <n>] [--format json|plain]`
+- `pin to-spec <id|prefix|filename> [--title <text>] [--body <text>] [--actor <name>] [--expect-revision <n>] [--format json|plain]`
 - `pin doctor [--repair] [--upgrade] [--strict] [--format json|plain]`
 - `pin archive <id|prefix|filename> [--resolution implemented|rejected|superseded|stale] [--note <text>]`
 - `pin unarchive <id|prefix|filename>`
 - `pin read|edit|rm <id|prefix|filename>`
 - `pin stats [--format json|plain]`
+- `pin sync [id|prefix|filename] [--project <name>] [--dry-run] [--force] [--format json|plain]`
+- `pin update [--check] [--force] [--format json|plain]`
 - `pin init --local [--project <name>]`
 - `pin import|export <directory> [--force]`
 - `pin view [--project <name>] [--tag <name>] [--kind <kind>] [--type <type>] [--status <status>] [--archived|--all] [--port <n>] [--no-open] [--format json|plain]`
