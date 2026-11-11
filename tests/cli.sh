@@ -106,6 +106,14 @@ HOME="$TMP/home" "$PIN_BIN" rm "$rm_cleanup_id" --format json >/dev/null
 [ ! -f "$TMP/repo/.pin_vault/.$rm_cleanup_id.md.lock" ] || fail "rm left behind an orphaned lock file"
 [ ! -f "$TMP/repo/.pin_vault/.$rm_cleanup_id.edit-recovery.tmp" ] || fail "rm left behind an orphaned recovery file"
 
+multi_a=$(HOME="$TMP/home" "$PIN_BIN" add '# Multi A' --kind technical --type task --format json | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+multi_b=$(HOME="$TMP/home" "$PIN_BIN" add '# Multi B' --kind technical --type task --format json | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+multi_rm_res=$(HOME="$TMP/home" "$PIN_BIN" rm "$multi_a" "$multi_b" --format json)
+echo "$multi_rm_res" | grep -q "$multi_a" || fail "multi rm did not report multi_a deletion"
+echo "$multi_rm_res" | grep -q "$multi_b" || fail "multi rm did not report multi_b deletion"
+[ ! -f "$TMP/repo/.pin_vault/$multi_a.md" ] || fail "multi_a was not removed"
+[ ! -f "$TMP/repo/.pin_vault/$multi_b.md" ] || fail "multi_b was not removed"
+
 # A run that ends after the user moved the item must not reset the status
 preserve_item=$(HOME="$TMP/home" "$PIN_BIN" add '# Status preservation' --kind technical --type task --format json)
 preserve_id=$(printf '%s' "$preserve_item" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')

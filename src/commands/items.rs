@@ -519,58 +519,88 @@ pub fn edit(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> 
 
 pub fn rm(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> {
     let mut reader = ArgReader::new(args, command);
-    let selector = reader.parse_selector()?;
+    let mut selectors = Vec::new();
     let mut format = None;
 
     while let Some(arg) = reader.peek()? {
         match arg {
             "--format" => format = Some(reader.parse_format(false)?),
-            _ => return Err(CliError::usage(format!("Unexpected argument '{arg}'"))),
+            flag if flag.starts_with("--") => {
+                return Err(CliError::usage(format!("Unknown flag '{flag}'")));
+            }
+            _ => selectors.push(arg.to_string()),
         }
         reader.idx += 1;
     }
 
-    let filename =
-        resolve_selector(&vault_path, selector).map_err(|e| CliError::usage(e.to_string()))?;
-    let path = vault_path.join(&filename);
-    let mut removed_id = filename.clone();
-    if let Ok(c) = fs::read_to_string(&path) {
-        let mut issues = Vec::new();
-        if let Some(meta) = parse_front_matter_detailed(&filename, &c, &mut issues) {
-            removed_id = meta.id;
+    if selectors.is_empty() {
+        return Err(CliError::usage(
+            "'rm' requires an item selector or prefix",
+        ));
+    }
+
+    let mut to_remove = Vec::new();
+    for selector in &selectors {
+        let filename = resolve_selector(vault_path, selector)
+            .map_err(|e| CliError::usage(e.to_string()))?;
+        let path = vault_path.join(&filename);
+        let mut removed_id = filename.clone();
+        if let Ok(c) = fs::read_to_string(&path) {
+            let mut issues = Vec::new();
+            if let Some(meta) = parse_front_matter_detailed(&filename, &c, &mut issues) {
+                removed_id = meta.id;
+            }
+        }
+        to_remove.push((filename, path, removed_id));
+    }
+
+    for (filename, path, removed_id) in &to_remove {
+        fs::remove_file(path)
+            .map_err(|e| CliError::usage(format!("Failed to delete item: {e}")))?;
+
+        let cleanup_candidates = [
+            format!(".{filename}.lock"),
+            format!(".{removed_id}.md.lock"),
+            format!("{filename}.lock"),
+            format!(".{removed_id}.edit-recovery.tmp"),
+            format!(".{filename}.edit-recovery.tmp"),
+        ];
+        for candidate in cleanup_candidates {
+            let candidate_path = vault_path.join(candidate);
+            if candidate_path.is_file() {
+                let _ = fs::remove_file(candidate_path);
+            }
         }
     }
 
-    fs::remove_file(&path).map_err(|e| CliError::usage(format!("Failed to delete item: {e}")))?;
-
-    let cleanup_candidates = [
-        format!(".{filename}.lock"),
-        format!(".{removed_id}.md.lock"),
-        format!("{filename}.lock"),
-        format!(".{removed_id}.edit-recovery.tmp"),
-        format!(".{filename}.edit-recovery.tmp"),
-    ];
-    for candidate in cleanup_candidates {
-        let candidate_path = vault_path.join(candidate);
-        if candidate_path.is_file() {
-            let _ = fs::remove_file(candidate_path);
-        }
+    #[derive(serde::Serialize)]
+    struct RmJson<'a> {
+        removed: &'a str,
+        filename: &'a str,
     }
 
     let fmt = format.unwrap_or_else(|| default_format(OutputFormat::Plain));
     if fmt == OutputFormat::Json {
-        #[derive(serde::Serialize)]
-        struct RmJson<'a> {
-            removed: &'a str,
-            filename: &'a str,
+        if to_remove.len() == 1 {
+            let res = RmJson {
+                removed: &to_remove[0].2,
+                filename: &to_remove[0].0,
+            };
+            println!("{}", serde_json::to_string(&res).unwrap_or_default());
+        } else {
+            let res: Vec<RmJson> = to_remove
+                .iter()
+                .map(|(f, _, id)| RmJson {
+                    removed: id,
+                    filename: f,
+                })
+                .collect();
+            println!("{}", serde_json::to_string(&res).unwrap_or_default());
         }
-        let res = RmJson {
-            removed: &removed_id,
-            filename: &filename,
-        };
-        println!("{}", serde_json::to_string(&res).unwrap_or_default());
     } else {
-        println!("Removed {removed_id}  {filename}");
+        for (filename, _, removed_id) in &to_remove {
+            println!("Removed {removed_id}  {filename}");
+        }
     }
     Ok(())
 }

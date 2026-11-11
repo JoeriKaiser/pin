@@ -73,7 +73,7 @@ pub fn print_usage() {
          unarchive <id|prefix|filename> [--format json|plain]\n  \
          read <id|prefix|filename> [--format json|plain]\n  \
          edit <id|prefix|filename> [--format json|plain]\n  \
-         rm <id|prefix|filename> [--format json|plain]\n  \
+         rm <id|prefix|filename>... [--format json|plain]\n  \
          import <directory> [--force] [--format json|plain]\n  \
          export <directory> [--force] [--format json|plain]\n  \
          stats [--project <name>] [--format json|plain]\n  \

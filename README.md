@@ -132,7 +132,7 @@ pin archive <id|prefix|filename>
 pin unarchive <id|prefix|filename> [--format json|plain]
 pin read <id|prefix|filename> [--format json|plain]
 pin edit <id|prefix|filename> [--format json|plain]
-pin rm <id|prefix|filename> [--format json|plain]
+pin rm <id|prefix|filename>... [--format json|plain]
 pin import <directory> [--force] [--format json|plain]
 pin export <directory> [--force] [--format json|plain]
 pin stats [--project <name>] [--format json|plain]
