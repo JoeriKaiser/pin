@@ -19,7 +19,7 @@ import {
   openAgentDrawer, closeAgentDrawer, handleAgentStreamEvent,
   formatToolCallInline, renderSwimlaneSvg, openToolInspector,
   closeToolInspector, appendTrajectoryContextRow, filterTrajectoryRows,
-  updateActiveRuns, scanForPrUrl
+  updateActiveRuns, scanForPrUrl, scrollTrajectoryStreamToBottom
 } from './agent.js';
 import {
   buildBoardCard, handleCardDrop, setViewMode, renderBoard, computeRenderKey
@@ -52,6 +52,7 @@ if (typeof window !== 'undefined') {
     openAgentDrawer: openAgentDrawer,
     closeAgentDrawer: closeAgentDrawer,
     appendTrajectoryContextRow: appendTrajectoryContextRow,
+    scrollTrajectoryStreamToBottom: scrollTrajectoryStreamToBottom,
     filterTrajectoryRows: filterTrajectoryRows,
     cleanThoughtText: cleanThoughtText,
     stripAnsi: stripAnsi,

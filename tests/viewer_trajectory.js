@@ -563,6 +563,23 @@ async function runHarness() {
     searchInput.dispatchEvent({ type: 'input', target: searchInput });
     assert.strictEqual(assistantRows[0].hidden, false, 'Rows unhidden on clear search');
   }
+
+  // Trajectory auto-scroll pause test
+  const scrollTrajectoryStreamToBottom = testExports.scrollTrajectoryStreamToBottom || win.scrollTrajectoryStreamToBottom;
+  if (typeof scrollTrajectoryStreamToBottom === 'function') {
+    streamEl.scrollHeight = 1000;
+    streamEl.clientHeight = 400;
+    streamEl.scrollTop = 590;
+    scrollTrajectoryStreamToBottom();
+    assert.strictEqual(streamEl.scrollTop, 1000, 'Auto-scroll pins to bottom when within threshold');
+
+    streamEl.scrollTop = 200;
+    scrollTrajectoryStreamToBottom();
+    assert.strictEqual(streamEl.scrollTop, 200, 'Auto-scroll paused when user scrolls up');
+
+    scrollTrajectoryStreamToBottom(true);
+    assert.strictEqual(streamEl.scrollTop, 1000, 'Forced scroll brings stream to bottom even when scrolled up');
+  }
   if (typeof closeAgentDrawer === 'function') closeAgentDrawer();
   console.log('PASS: Trajectory stream, inspector, swimlane, and search verified');
 
