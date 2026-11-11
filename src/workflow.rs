@@ -804,6 +804,11 @@ pub fn parent_item(
     expect_revision: Option<u64>,
 ) -> Result<IdeaMeta, WorkflowError> {
     let (mut meta, _lock) = load_and_lock(vault_path, filename, expect_revision)?;
+    if meta.id == parent_id {
+        return Err(WorkflowError::DependencyCycle(
+            "An item cannot be its own parent".to_string(),
+        ));
+    }
     meta.parent_id = Some(parent_id.to_string());
     let now = chrono::Utc::now().timestamp();
     let actor_str = actor.unwrap_or("agent:default").to_string();
@@ -1255,6 +1260,15 @@ mod tests {
 
         let res = depend_item(dir.path(), &f1, "nonexistent99", None, None);
         assert!(matches!(res, Err(WorkflowError::DependencyNotFound(id)) if id == "nonexistent99"));
+    }
+
+    #[test]
+    fn test_parent_item_rejects_self_parent() {
+        let dir = tempdir().unwrap();
+        let f1 = setup_test_item(dir.path(), "012345678901", Status::Planned, None);
+
+        let res = parent_item(dir.path(), &f1, "012345678901", None, None);
+        assert!(matches!(res, Err(WorkflowError::DependencyCycle(_))));
     }
 
     #[test]
