@@ -174,6 +174,7 @@ pub struct FilterOptions<'a> {
     pub item_type: Option<WorkType>,
     pub status: Option<Status>,
     pub claimed_by: Option<&'a str>,
+    pub parent_id: Option<&'a str>,
     pub ready: bool,
     pub query: Option<&'a str>,
     pub archive_filter: ArchiveFilter,
@@ -230,6 +231,14 @@ pub fn collect_ideas_with_filter(
                     }
                     if let Some(cb) = filter.claimed_by {
                         if meta.claimed_by.as_deref() != Some(cb) {
+                            continue;
+                        }
+                    }
+                    if let Some(parent) = filter.parent_id {
+                        let matches_parent = meta.parent_id.as_deref().is_some_and(|p| {
+                            p == parent || p.starts_with(parent)
+                        });
+                        if !matches_parent {
                             continue;
                         }
                     }

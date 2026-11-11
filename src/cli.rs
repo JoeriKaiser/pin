@@ -34,13 +34,13 @@ pub fn print_usage() {
          [--title <title>] [--tags <csv>] [--priority low|medium|high]\n                 \
          [--allow-duplicate] [--format json|plain]\n  \
          list [--project <name>] [--tag <name>] [--kind <kind>] [--type <type>]\n       \
-         [--status <status>] [--claimed-by <actor>] [--ready]\n       \
+         [--status <status>] [--claimed-by <actor>] [--parent <id>] [--ready]\n       \
          [--archived|--all] [--format json|table|plain]\n  \
          list-project [--tag <name>] [--kind <kind>] [--type <type>]\n               \
-         [--status <status>] [--claimed-by <actor>] [--ready] [--archived|--all]\n               \
+         [--status <status>] [--claimed-by <actor>] [--parent <id>] [--ready] [--archived|--all]\n               \
          [--format json|table|plain]\n  \
          search <query> [--project <name>] [--tag <name>] [--kind <kind>]\n                 \
-         [--type <type>] [--status <status>] [--claimed-by <actor>]\n                 \
+         [--type <type>] [--status <status>] [--claimed-by <actor>] [--parent <id>]\n                 \
          [--limit <n>] [--archived|--all] [--format json|table|plain]\n  \
          context [--project <name>] [--kind <kind>] [--type <type>] [--status <status>]\n          \
          [--limit <n>] [--group kind] [--archived|--all] [--format json|plain]\n  \

@@ -179,7 +179,8 @@ pub fn list(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> 
         mut filter_type,
         mut filter_status,
         mut filter_claimed_by,
-    ) = (None, None, None, None, None);
+        mut filter_parent,
+    ) = (None, None, None, None, None, None);
     let (mut filter_ready, mut archive_filter, mut format) = (false, ArchiveFilter::Active, None);
 
     while let Some(arg) = reader.peek()? {
@@ -218,6 +219,7 @@ pub fn list(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> 
             "--claimed-by" => {
                 filter_claimed_by = Some(reader.next_val("--claimed-by")?.to_string())
             }
+            "--parent" => filter_parent = Some(reader.next_val("--parent")?.to_string()),
             "--format" => format = Some(reader.parse_format(true)?),
             _ => return Err(CliError::usage(format!("Unknown flag '{arg}'"))),
         }
@@ -231,6 +233,7 @@ pub fn list(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> 
         item_type: filter_type,
         status: filter_status,
         claimed_by: filter_claimed_by.as_deref(),
+        parent_id: filter_parent.as_deref(),
         ready: filter_ready,
         query: None,
         archive_filter,
@@ -267,7 +270,8 @@ pub fn search(args: &[String], command: &str, vault_path: &Path) -> CliResult<()
         mut filter_type,
         mut filter_status,
         mut filter_claimed_by,
-    ) = (None, None, None, None, None, None);
+        mut filter_parent,
+    ) = (None, None, None, None, None, None, None);
     let (mut archive_filter, mut limit, mut format) = (ArchiveFilter::Active, None, None);
 
     while let Some(arg) = reader.peek()? {
@@ -300,6 +304,7 @@ pub fn search(args: &[String], command: &str, vault_path: &Path) -> CliResult<()
             "--claimed-by" => {
                 filter_claimed_by = Some(reader.next_val("--claimed-by")?.to_string())
             }
+            "--parent" => filter_parent = Some(reader.next_val("--parent")?.to_string()),
             "--limit" => {
                 let val = reader.next_val("--limit")?;
                 limit = Some(
@@ -320,6 +325,7 @@ pub fn search(args: &[String], command: &str, vault_path: &Path) -> CliResult<()
         item_type: filter_type,
         status: filter_status,
         claimed_by: filter_claimed_by.as_deref(),
+        parent_id: filter_parent.as_deref(),
         ready: false,
         query: Some(query),
         archive_filter,

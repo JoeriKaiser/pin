@@ -267,6 +267,11 @@ dependent=$(PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN
 dependent_id=$(printf '%s' "$dependent" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
 PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" depend "$dependent_id" "$dependency_id" --format json | grep -q '"action":"dependency_added"'
 PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" parent "$dependent_id" "$dependency_id" --format json | grep -q '"parent_id":"'
+parent_filtered=$(PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" list-project --parent "$dependency_id" --format json)
+assert_contains "$parent_filtered" "$dependent_id"
+if printf '%s' "$parent_filtered" | grep -q '"id":"'"$dependency_id"'"'; then
+    fail "parent filter returned the parent item instead of only child items"
+fi
 PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" relate "$dependent_id" "$dependency_id" --format json | grep -q '"related":\['
 PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" transition "$dependency_id" --to planned --format json >/dev/null
 PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" transition "$dependent_id" --to planned --format json >/dev/null
