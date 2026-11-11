@@ -49,7 +49,7 @@ pub fn print_usage() {
          [--note <text>] [--expect-revision <n>] [--worktree] [--format json|plain]\n  \
          claim <id|prefix|filename> [--actor <name>] [--lease <seconds>]\n        \
          [--expect-revision <n>] [--worktree] [--format json|plain]\n  \
-         release <id|prefix|filename> [--actor <name>] [--force]\n          \
+         release|unclaim <id|prefix|filename> [--actor <name>] [--force]\n          \
          [--expect-revision <n>] [--format json|plain]\n  \
          handoff <id|prefix|filename> [--actor <name>] [--progress <text>]\n          \
          [--next <text>] [--blocker <text>] [--verification <text>]\n          \

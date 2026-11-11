@@ -88,6 +88,8 @@ if HOME="$TMP/home" PIN_ACTOR=agent:test "$PIN_BIN" handoff "$wf_id" --format js
     fail "handoff accepted a call with no progress, next, blocker, or verification"
 fi
 HOME="$TMP/home" PIN_ACTOR=agent:test "$PIN_BIN" release "$wf_id" --format json | grep -q '"status":"planned"'
+HOME="$TMP/home" PIN_ACTOR=agent:test "$PIN_BIN" claim "$wf_id" --format json >/dev/null
+HOME="$TMP/home" PIN_ACTOR=agent:test "$PIN_BIN" unclaim "$wf_id" --format json | grep -q '"status":"planned"'
 if HOME="$TMP/home" "$PIN_BIN" transition "$wf_id" --to done --expect-revision 0 >/dev/null 2>&1; then
     fail "stale revision was accepted"
 fi
