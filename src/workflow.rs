@@ -845,6 +845,11 @@ pub fn relate_item(
     expect_revision: Option<u64>,
 ) -> Result<IdeaMeta, WorkflowError> {
     let (mut meta, _lock) = load_and_lock(vault_path, filename, expect_revision)?;
+    if related_id == meta.id {
+        return Err(WorkflowError::DependencyCycle(
+            "An item cannot relate to itself".to_string(),
+        ));
+    }
     if !meta.related.iter().any(|r| r == related_id) {
         meta.related.push(related_id.to_string());
     }
@@ -1279,6 +1284,15 @@ mod tests {
         let f1 = setup_test_item(dir.path(), "012345678901", Status::Planned, None);
 
         let res = parent_item(dir.path(), &f1, "012345678901", None, None);
+        assert!(matches!(res, Err(WorkflowError::DependencyCycle(_))));
+    }
+
+    #[test]
+    fn test_relate_item_rejects_self_relate() {
+        let dir = tempdir().unwrap();
+        let f1 = setup_test_item(dir.path(), "012345678901", Status::Planned, None);
+
+        let res = relate_item(dir.path(), &f1, "012345678901", None, None);
         assert!(matches!(res, Err(WorkflowError::DependencyCycle(_))));
     }
 
