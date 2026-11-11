@@ -390,6 +390,13 @@ pub fn upgrade_vault(vault_path: &Path) -> usize {
     upgraded_count
 }
 
+pub fn is_repairable_code(code: &str) -> bool {
+    code == "missing_schema"
+        || code == "missing_id"
+        || code == "invalid_schema"
+        || code == "invalid_id"
+}
+
 pub fn emit_doctor_report(
     vault_path: &Path,
     scan: &VaultScan,
@@ -414,9 +421,7 @@ pub fn emit_doctor_report(
     let repairable_count = scan
         .issues
         .iter()
-        .filter(|i| {
-            i.code == "missing_schema" || i.code == "missing_id" || i.code == "invalid_schema"
-        })
+        .filter(|i| is_repairable_code(&i.code))
         .count();
 
     match format {
@@ -425,9 +430,7 @@ pub fn emit_doctor_report(
                 .issues
                 .iter()
                 .map(|i| {
-                    let is_repairable = i.code == "missing_schema"
-                        || i.code == "missing_id"
-                        || i.code == "invalid_schema";
+                    let is_repairable = is_repairable_code(&i.code);
                     JsonDoctorIssue {
                         code: &i.code,
                         severity: match i.severity {
@@ -472,7 +475,7 @@ pub fn emit_doctor_report(
                     Severity::Warning => "warning",
                     Severity::Info => "info",
                 };
-                let rep_str = if issue.code == "missing_schema" || issue.code == "missing_id" {
+                let rep_str = if is_repairable_code(&issue.code) {
                     " (repairable)"
                 } else {
                     ""
@@ -732,5 +735,16 @@ Body content.
                 .and_then(|v| v.as_str()),
             Some("preserved")
         );
+    }
+
+    #[test]
+    fn test_repairable_code_classification() {
+        assert!(is_repairable_code("missing_schema"));
+        assert!(is_repairable_code("missing_id"));
+        assert!(is_repairable_code("invalid_schema"));
+        assert!(is_repairable_code("invalid_id"));
+        assert!(!is_repairable_code("dangling_parent"));
+        assert!(!is_repairable_code("self_parent"));
+        assert!(!is_repairable_code("dangling_dependency"));
     }
 }
