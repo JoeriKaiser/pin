@@ -640,6 +640,49 @@ async function runHarness() {
 
   closeSpecModal();
   assert.ok(!specModal.open && !specModal.hasAttribute('open'));
+
+  // Test submitQuickAdd success parses JSON and sets route
+  const submitQuickAdd = testExports.submitQuickAdd || win.submitQuickAdd;
+  const quickAddInput = documentMock.getElementById('quick-add-input');
+  quickAddInput.value = 'New Quick Task';
+  const prevFetchQuick = fetchStub;
+  testExports.state.selected = null;
+
+  fetchStub = function (url) {
+    if (url.includes('items')) {
+      return Promise.resolve({
+        ok: true,
+        status: 201,
+        headers: { get: () => null },
+        json: () => Promise.resolve({ id: 'created123456', title: 'New Quick Task', type: 'task' })
+      });
+    }
+    return Promise.resolve({ ok: true, status: 200, headers: { get: () => null }, json: () => Promise.resolve([]) });
+  };
+
+  submitQuickAdd();
+  await new Promise(r => setTimeout(r, 20));
+  assert.strictEqual(testExports.state.selected, 'created123456', 'submitQuickAdd routes to created item id');
+
+  // Test submitQuickAdd failure does not route and displays error toast
+  testExports.state.selected = null;
+  quickAddInput.value = 'Failed Task';
+  fetchStub = function () {
+    return Promise.resolve({
+      ok: false,
+      status: 400,
+      headers: { get: () => null },
+      json: () => Promise.resolve({ error: 'Title duplicate' })
+    });
+  };
+  submitQuickAdd();
+  await new Promise(r => setTimeout(r, 20));
+  assert.strictEqual(testExports.state.selected, null, 'submitQuickAdd does not route on failure');
+  const toastNode = documentMock.getElementById('toast');
+  assert.ok(toastNode.textContent.includes('Title duplicate'), 'toast displays error message');
+
+  fetchStub = prevFetchQuick;
+
   console.log('PASS: Spec editor and quick-add toggle verified');
 
   console.log('\n--- 5. Testing Screenshot Pasting Logic ---');

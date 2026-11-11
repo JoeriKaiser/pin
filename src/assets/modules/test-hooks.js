@@ -7,6 +7,7 @@ import {
 import {
   openSpecModal, closeSpecModal, setSpecModalTab, SPEC_SNIPPETS,
   expandQuickAdd, collapseQuickAdd, triggerModalSubmit,
+  submitQuickAdd, submitSpecModal,
   openWorktreeModal, closeWorktreeModal,
   openShortcutsModal, closeShortcutsModal
 } from './forms.js';
@@ -56,6 +57,8 @@ if (typeof window !== 'undefined') {
     stripAnsi: stripAnsi,
     bind: bind,
     submitActionDialog: triggerModalSubmit,
+    submitQuickAdd: submitQuickAdd,
+    submitSpecModal: submitSpecModal,
     escapeHtml: escapeHtml,
     openSpecModal: openSpecModal,
     closeSpecModal: closeSpecModal,

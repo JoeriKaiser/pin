@@ -391,7 +391,12 @@ export function bindAgent() {
     els.btnCancelAgent.addEventListener('click', function () {
       var id = state.currentStreamingId || (els.agentItemId && (els.agentItemId.dataset.fullId || els.agentItemId.textContent.trim()));
       if (id) {
-        sendCancel(id).then(function () {
+        sendCancel(id).then(function (res) {
+          if (res && typeof res.ok === 'boolean' && !res.ok) {
+            return res.json().catch(function () { return {}; }).then(function (d) {
+              throw new Error((d && d.error) || 'Failed to cancel');
+            });
+          }
           showToast('Agent cancelled', false);
           updateActiveRuns();
         }).catch(function (err) {
