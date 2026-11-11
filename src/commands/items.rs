@@ -534,15 +534,13 @@ pub fn rm(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> {
     }
 
     if selectors.is_empty() {
-        return Err(CliError::usage(
-            "'rm' requires an item selector or prefix",
-        ));
+        return Err(CliError::usage("'rm' requires an item selector or prefix"));
     }
 
     let mut to_remove = Vec::new();
     for selector in &selectors {
-        let filename = resolve_selector(vault_path, selector)
-            .map_err(|e| CliError::usage(e.to_string()))?;
+        let filename =
+            resolve_selector(vault_path, selector).map_err(|e| CliError::usage(e.to_string()))?;
         let path = vault_path.join(&filename);
         let mut removed_id = filename.clone();
         if let Ok(c) = fs::read_to_string(&path) {

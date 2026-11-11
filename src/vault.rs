@@ -235,9 +235,10 @@ pub fn collect_ideas_with_filter(
                         }
                     }
                     if let Some(parent) = filter.parent_id {
-                        let matches_parent = meta.parent_id.as_deref().is_some_and(|p| {
-                            p == parent || p.starts_with(parent)
-                        });
+                        let matches_parent = meta
+                            .parent_id
+                            .as_deref()
+                            .is_some_and(|p| p == parent || p.starts_with(parent));
                         if !matches_parent {
                             continue;
                         }
