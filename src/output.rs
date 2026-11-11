@@ -135,6 +135,16 @@ pub fn emit_ideas(ideas: &[IdeaMeta], format: OutputFormat) {
     }
 }
 
+/// Marks claims whose lease already ran out, so a stalled run is visible in a list.
+fn lease_suffix(meta: &IdeaMeta) -> &'static str {
+    let now = chrono::Utc::now().timestamp();
+    if meta.claimed_by.is_some() && !meta.has_active_claim(now) {
+        " (lease expired)"
+    } else {
+        ""
+    }
+}
+
 pub fn emit_idea_plain(meta: &IdeaMeta) {
     let mut line = format!(
         "{}  {:<8}  {:<11}  {:<11}  {}",
@@ -153,7 +163,7 @@ pub fn emit_idea_plain(meta: &IdeaMeta) {
         line.push_str(&format!("  ({})", priority.as_str()));
     }
     if let Some(claimer) = &meta.claimed_by {
-        line.push_str(&format!("  @{claimer}"));
+        line.push_str(&format!("  @{claimer}{}", lease_suffix(meta)));
     }
     println!("{line}");
 }
@@ -278,7 +288,7 @@ pub fn emit_context(
                         }
                         if let Some(claimed_by) = &idea.claimed_by {
                             if !claimed_by.trim().is_empty() {
-                                line.push_str(&format!(" @{claimed_by}"));
+                                line.push_str(&format!(" @{claimed_by}{}", lease_suffix(idea)));
                             }
                         }
                         println!("{line}");
@@ -304,7 +314,7 @@ pub fn emit_context(
                     }
                     if let Some(claimed_by) = &idea.claimed_by {
                         if !claimed_by.trim().is_empty() {
-                            line.push_str(&format!(" @{claimed_by}"));
+                            line.push_str(&format!(" @{claimed_by}{}", lease_suffix(idea)));
                         }
                     }
                     println!("{line}");
