@@ -341,6 +341,9 @@ first_title=$(printf '%s' "$ranked" | sed -n 's/^\[{[^}]*"title":"\([^"]*\)".*/\
 assert_contains "$ranked" '"score":'
 limited=$(PIN_VAULT="$TMP/search-vault" PIN_PROJECT=search "$PIN_BIN" search 'ranked results' --limit 1 --format json)
 [ "$(printf '%s' "$limited" | grep -o '"id"' | wc -l | tr -d ' ')" -eq 1 ] || fail "search did not honor --limit"
+PIN_VAULT="$TMP/search-vault" PIN_PROJECT=search "$PIN_BIN" add '# Tagged Item' --kind technical --tags 'reliability,staging' --format json >/dev/null
+tag_search=$(PIN_VAULT="$TMP/search-vault" PIN_PROJECT=search "$PIN_BIN" search '#staging' --format json)
+assert_contains "$tag_search" '"title":"Tagged Item"'
 
 mkdir -p "$TMP/broken-vault"
 printf '%s\n' 'not a pin' >"$TMP/broken-vault/broken.md"

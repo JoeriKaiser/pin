@@ -22,10 +22,13 @@ pub fn calculate_search_score(meta: &IdeaMeta, query: &str) -> Option<usize> {
         let clean_term = term
             .trim_start_matches('#')
             .trim_matches(|c| c == '[' || c == ']');
+        let has_clean = !clean_term.is_empty();
         let in_id = contains_word_ignore_case(&meta.id, term)
-            || (!clean_term.is_empty() && contains_word_ignore_case(&meta.id, clean_term));
-        let in_title = contains_word_ignore_case(&meta.title, term);
-        let in_tags = contains_word_ignore_case(tags_str, term);
+            || (has_clean && contains_word_ignore_case(&meta.id, clean_term));
+        let in_title = contains_word_ignore_case(&meta.title, term)
+            || (has_clean && contains_word_ignore_case(&meta.title, clean_term));
+        let in_tags = contains_word_ignore_case(tags_str, term)
+            || (has_clean && contains_word_ignore_case(tags_str, clean_term));
         let in_body = contains_word_ignore_case(&meta.body, term);
 
         if in_id {
@@ -173,6 +176,8 @@ mod tests {
         assert_eq!(calculate_search_score(&idea, "#6849"), Some(100));
         assert_eq!(calculate_search_score(&idea, "[6849b2e4e781]"), Some(100));
         assert_eq!(calculate_search_score(&idea, "6849 Fastlane"), Some(200));
+        assert_eq!(calculate_search_score(&idea, "#ci"), Some(50));
+        assert_eq!(calculate_search_score(&idea, "[Fastlane]"), Some(100));
         assert!(calculate_search_score(&idea, "9999").is_none());
     }
 }
