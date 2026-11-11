@@ -196,6 +196,19 @@ if HOME="$TMP/home" "$PIN_BIN" stats unexpected >/dev/null 2>&1; then
     fail "stats accepted an unexpected argument"
 fi
 
+if [ "$(id -u)" -ne 0 ]; then
+    unreadable_vault="$TMP/unreadable-vault"
+    mkdir -p "$unreadable_vault"
+    chmod 000 "$unreadable_vault"
+    for unreadable_cmd in list next context; do
+        if PIN_VAULT="$unreadable_vault" "$PIN_BIN" "$unreadable_cmd" --format plain >/dev/null 2>&1; then
+            chmod 755 "$unreadable_vault"
+            fail "$unreadable_cmd reported success for an unreadable vault"
+        fi
+    done
+    chmod 755 "$unreadable_vault"
+fi
+
 health=$(HOME="$TMP/home" "$PIN_BIN" doctor --format json)
 assert_contains "$health" '"errors":0'
 assert_contains "$health" '"missing_id"'

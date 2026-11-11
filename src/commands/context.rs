@@ -68,7 +68,12 @@ pub fn context(args: &[String], command: &str, vault_path: &Path) -> CliResult<(
         ..Default::default()
     };
 
-    let mut ideas = collect_ideas_with_filter(&vault_path, &filter).unwrap_or_default();
+    let mut ideas = collect_ideas_with_filter(&vault_path, &filter).map_err(|e| {
+        CliError::usage(format!(
+            "Could not read vault {}: {e}",
+            vault_path.display()
+        ))
+    })?;
     ideas.sort_by(|a, b| {
         let p_cmp = b.priority_rank().cmp(&a.priority_rank());
         if p_cmp != std::cmp::Ordering::Equal {
@@ -106,7 +111,12 @@ pub fn next(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> 
     }
 
     let proj = resolve_project(filter_project.as_deref());
-    let all_items = collect_ideas(&vault_path).unwrap_or_default();
+    let all_items = collect_ideas(&vault_path).map_err(|e| {
+        CliError::usage(format!(
+            "Could not read vault {}: {e}",
+            vault_path.display()
+        ))
+    })?;
     let ready = workflow::next_ready_items(&all_items, Some(&proj), limit.unwrap_or(1));
 
     let fmt = format.unwrap_or_else(|| default_format(OutputFormat::Plain));
