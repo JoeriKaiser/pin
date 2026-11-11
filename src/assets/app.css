@@ -1091,6 +1091,18 @@ a:hover {
   background: var(--soft);
 }
 
+.board-col-empty {
+  padding: var(--space-4) var(--space-3);
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-md);
+  color: var(--muted);
+  font-size: var(--text-xs);
+  text-align: center;
+  pointer-events: none;
+  user-select: none;
+  background: var(--surface);
+}
+
 /* --------------------------------------------------------------------------
    7. Cards & Status Indicators
    -------------------------------------------------------------------------- */

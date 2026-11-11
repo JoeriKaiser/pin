@@ -331,6 +331,33 @@ export function renderBoard() {
     }
   });
 
+  var emptyMessages = {
+    created: 'No backlog items',
+    planned: 'No planned items',
+    in_progress: 'No active items',
+    blocked: 'No blocked items',
+    done: 'No completed items',
+    closed: 'No closed items'
+  };
+
+  Object.keys(cols).forEach(function (k) {
+    var col = cols[k];
+    if (!col) return;
+    var emptyEl = col.querySelector ? col.querySelector('.board-col-empty') : null;
+    if (counts[k] === 0) {
+      if (!emptyEl) {
+        var el = node('div', 'board-col-empty', emptyMessages[k] || 'No items');
+        col.appendChild(el);
+      }
+    } else if (emptyEl) {
+      if (typeof emptyEl.remove === 'function') {
+        emptyEl.remove();
+      } else if (emptyEl.parentNode && typeof emptyEl.parentNode.removeChild === 'function') {
+        emptyEl.parentNode.removeChild(emptyEl);
+      }
+    }
+  });
+
   text(els.countCreated, counts.created);
   text(els.countPlanned, counts.planned);
   text(els.countInProgress, counts.in_progress);

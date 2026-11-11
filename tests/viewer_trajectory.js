@@ -1051,6 +1051,8 @@ async function runHarness() {
   const inProgressColAfter = documentMock.querySelector('.board-col-cards[data-drop-status="in_progress"]');
   assert.strictEqual(createdColAfter.querySelector('.board-card[data-id="backlog-item-1"]'), null, 'Ticket no longer in created/backlog column');
   assert.ok(inProgressColAfter.querySelector('.board-card[data-id="backlog-item-1"]'), 'Ticket visually moved to in_progress column');
+  assert.ok(createdColAfter.querySelector('.board-col-empty'), 'Empty created column shows empty indicator');
+  assert.strictEqual(inProgressColAfter.querySelector('.board-col-empty'), null, 'Non-empty in_progress column has no empty indicator');
   console.log('PASS: moving ticket from backlog to in_progress updates board visually without refresh');
 
   console.log('\n--- 9. Testing Handoff Card Layout and Priority ---');
