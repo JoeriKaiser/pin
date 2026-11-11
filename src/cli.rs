@@ -42,9 +42,10 @@ pub fn print_usage() {
          search <query> [--project <name>] [--tag <name>] [--kind <kind>]\n                 \
          [--type <type>] [--status <status>] [--claimed-by <actor>] [--parent <id>]\n                 \
          [--limit <n>] [--archived|--all] [--format json|table|plain]\n  \
-         context [--project <name>] [--kind <kind>] [--type <type>] [--status <status>]\n          \
-         [--limit <n>] [--group kind] [--archived|--all] [--format json|plain]\n  \
-         next [--project <name>] [--limit <n>] [--format json|plain]\n  \
+         context [--project <name>] [--tag <name>] [--kind <kind>] [--type <type>]\n          \
+         [--status <status>] [--limit <n>] [--group kind] [--archived|--all] [--format json|plain]\n  \
+         next [--project <name>] [--tag <name>] [--kind <kind>] [--type <type>]\n        \
+         [--limit <n>] [--format json|plain]\n  \
          transition <id|prefix|filename> --to <status> [--actor <name>]\n              \
          [--note <text>] [--expect-revision <n>] [--worktree] [--format json|plain]\n  \
          claim <id|prefix|filename> [--actor <name>] [--lease <seconds>]\n        \
@@ -58,11 +59,11 @@ pub fn print_usage() {
          [--expect-revision <n>] [--format json|plain]\n  \
          close <id|prefix|filename> [--actor <name>] [--note <text>]\n        \
          [--expect-revision <n>] [--format json|plain]\n  \
-         depend <id|prefix|filename> <dependency-id> [--actor <name>]\n         \
+         depend|undepend <id|prefix|filename> <dependency-id> [--remove] [--actor <name>]\n         \
          [--expect-revision <n>] [--format json|plain]\n  \
-         parent <id|prefix|filename> <parent-id> [--actor <name>]\n         \
+         parent|unparent <id|prefix|filename> [<parent-id>] [--unset] [--actor <name>]\n         \
          [--expect-revision <n>] [--format json|plain]\n  \
-         relate <id|prefix|filename> <related-id> [--actor <name>]\n         \
+         relate|unrelate <id|prefix|filename> <related-id> [--remove] [--actor <name>]\n         \
          [--expect-revision <n>] [--format json|plain]\n  \
          to-spec <id|prefix|filename> [--title <text>] [--body <text>] [--actor <name>]\n          \
          [--expect-revision <n>] [--format json|plain]\n  \

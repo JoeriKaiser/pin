@@ -7,8 +7,14 @@ use std::path::Path;
 
 pub fn context(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> {
     let mut reader = ArgReader::new(args, command);
-    let (mut filter_project, mut filter_kind, mut filter_type, mut filter_status, mut limit) =
-        (None, None, None, None, None);
+    let (
+        mut filter_project,
+        mut filter_kind,
+        mut filter_type,
+        mut filter_status,
+        mut filter_tag,
+        mut limit,
+    ) = (None, None, None, None, None, None);
     let (mut archive_filter, mut group_kind, mut format) = (ArchiveFilter::Active, false, None);
 
     while let Some(arg) = reader.peek()? {
@@ -16,6 +22,7 @@ pub fn context(args: &[String], command: &str, vault_path: &Path) -> CliResult<(
             "--archived" => archive_filter = ArchiveFilter::Archived,
             "--all" => archive_filter = ArchiveFilter::All,
             "--project" => filter_project = Some(reader.next_val("--project")?.to_string()),
+            "--tag" => filter_tag = Some(reader.next_val("--tag")?.to_string()),
             "--kind" => {
                 let val = reader.next_val("--kind")?;
                 filter_kind = Some(
@@ -61,6 +68,7 @@ pub fn context(args: &[String], command: &str, vault_path: &Path) -> CliResult<(
     let project = resolve_project(filter_project.as_deref());
     let filter = FilterOptions {
         project: Some(&project),
+        tag: filter_tag.as_deref(),
         kind: filter_kind,
         item_type: filter_type,
         status: filter_status,
@@ -91,12 +99,30 @@ pub fn context(args: &[String], command: &str, vault_path: &Path) -> CliResult<(
 pub fn next(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> {
     let mut reader = ArgReader::new(args, command);
     let mut filter_project = None;
+    let mut filter_tag = None;
+    let mut filter_kind = None;
+    let mut filter_type = None;
     let mut limit = Some(1);
     let mut format = None;
 
     while let Some(arg) = reader.peek()? {
         match arg {
             "--project" => filter_project = Some(reader.next_val("--project")?.to_string()),
+            "--tag" => filter_tag = Some(reader.next_val("--tag")?.to_string()),
+            "--kind" => {
+                let val = reader.next_val("--kind")?;
+                filter_kind = Some(
+                    val.parse::<Kind>()
+                        .map_err(|_| CliError::usage(format!("Unknown kind '{val}'")))?,
+                );
+            }
+            "--type" => {
+                let val = reader.next_val("--type")?;
+                filter_type = Some(
+                    val.parse::<WorkType>()
+                        .map_err(|e| CliError::usage(e.to_string()))?,
+                );
+            }
             "--limit" => {
                 let val = reader.next_val("--limit")?;
                 limit = Some(
@@ -117,7 +143,14 @@ pub fn next(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> 
             vault_path.display()
         ))
     })?;
-    let ready = workflow::next_ready_items(&all_items, Some(&proj), limit.unwrap_or(1));
+    let ready = workflow::next_ready_items_filtered(
+        &all_items,
+        Some(&proj),
+        filter_kind,
+        filter_type,
+        filter_tag.as_deref(),
+        limit.unwrap_or(1),
+    );
 
     let fmt = format.unwrap_or_else(|| default_format(OutputFormat::Plain));
     emit_ideas(&ready, fmt);

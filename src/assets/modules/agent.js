@@ -75,7 +75,7 @@ export function appendTrajectoryUserRow(content) {
   body.appendChild(node('div', 'trajectory-user-text', content));
   row.appendChild(body);
   els.trajectoryStream.appendChild(row);
-  scrollTrajectoryStreamToBottom();
+  scrollTrajectoryStreamToBottom(true);
 }
 
 export function appendTrajectoryContextRow(textOrNode) {
@@ -90,8 +90,16 @@ export function appendTrajectoryContextRow(textOrNode) {
   scrollTrajectoryStreamToBottom();
 }
 
-function scrollTrajectoryStreamToBottom() {
-  if (els.trajectoryStream) els.trajectoryStream.scrollTop = els.trajectoryStream.scrollHeight;
+export function scrollTrajectoryStreamToBottom(force) {
+  if (!els.trajectoryStream) return;
+  var stream = els.trajectoryStream;
+  var clientHeight = stream.clientHeight || 0;
+  var scrollHeight = stream.scrollHeight || 0;
+  var scrollTop = stream.scrollTop || 0;
+  var isNearBottom = (scrollHeight - scrollTop - clientHeight) <= 40;
+  if (force || isNearBottom) {
+    stream.scrollTop = scrollHeight;
+  }
 }
 
 export function updateDurationDisplay() {
@@ -184,7 +192,10 @@ export function openAgentDrawer(itemId) {
     if (els.metricCalls) text(els.metricCalls, cached.callsText || 'Calls: ' + state.trajectory.calls);
     if (els.agentStatusPill) { text(els.agentStatusPill, cached.statusText || 'Completed'); els.agentStatusPill.className = cached.statusClass || 'agent-status-pill status-completed'; }
     if (els.btnCancelAgent) els.btnCancelAgent.disabled = true;
-    if (els.trajectoryStream) els.trajectoryStream.innerHTML = cached.streamHtml || '';
+    if (els.trajectoryStream) {
+      els.trajectoryStream.innerHTML = cached.streamHtml || '';
+      scrollTrajectoryStreamToBottom(true);
+    }
     renderSwimlaneSvg();
     return;
   }

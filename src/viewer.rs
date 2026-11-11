@@ -341,6 +341,13 @@ fn send_not_modified(stream: &mut TcpStream, etag: &str) {
     let _ = stream.write_all(header_str.as_bytes());
 }
 
+fn send_redirect(stream: &mut TcpStream, location: &str) {
+    let header_str = format!(
+        "HTTP/1.1 307 Temporary Redirect\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+    );
+    let _ = stream.write_all(header_str.as_bytes());
+}
+
 fn send_response(
     stream: &mut TcpStream,
     status_code: u16,
@@ -543,6 +550,10 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
 
     let expected_prefix = format!("/{}/", snapshot.token);
     if !raw_path.starts_with(&expected_prefix) {
+        if raw_path == format!("/{}", snapshot.token) {
+            send_redirect(&mut stream, &expected_prefix);
+            return;
+        }
         send_response(
             &mut stream,
             404,
@@ -2665,5 +2676,41 @@ mod tests {
 
         assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
         assert!(response.contains("{\"status\":\"ok\"}"));
+    }
+
+    #[test]
+    fn test_viewer_token_redirect() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let port = addr.port();
+        let snapshot = Arc::new(create_snapshot(
+            &[],
+            PathBuf::from("/tmp/pin-vault"),
+            "all",
+            ArchiveFilter::All,
+            None,
+            None,
+            None,
+            None,
+        ));
+
+        let snap_clone = Arc::clone(&snapshot);
+        let token = snapshot.token.clone();
+        let handle = std::thread::spawn(move || {
+            if let Ok((stream, _)) = listener.accept() {
+                handle_client(stream, &snap_clone, port);
+            }
+        });
+
+        let mut client = std::net::TcpStream::connect(addr).unwrap();
+        use std::io::{Read, Write};
+        let req = format!("GET /{token} HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        client.write_all(req.as_bytes()).unwrap();
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        handle.join().unwrap();
+
+        assert!(response.starts_with("HTTP/1.1 307 Temporary Redirect\r\n"));
+        assert!(response.contains(&format!("Location: /{token}/\r\n")));
     }
 }

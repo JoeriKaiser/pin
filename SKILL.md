@@ -211,27 +211,27 @@ Duplicate titles are rejected by default. Use `--allow-duplicate` only when the 
 
 ## Commands
 
-- `pin context [--project <name>] [--kind <kind>] [--limit <n>] [--group kind] [--archived|--all] [--format json|plain]`
+- `pin context [--project <name>] [--tag <name>] [--kind <kind>] [--type <type>] [--status <status>] [--limit <n>] [--group kind] [--archived|--all] [--format json|plain]`
 - `pin add <markdown> --kind technical|product|business|project [--stdin] [--project <name>] [--title <title>] [--tags <csv>] [--priority low|medium|high] [--type idea|task|bug|decision] [--format json|plain]`
-- `pin list [--project <name>] [--tag <name>] [--kind <kind>] [--type <type>] [--status <status>] [--claimed-by <actor>] [--ready] [--archived|--all] [--format json|table|plain]`
-- `pin list-project [--tag <name>] [--kind <kind>] [--type <type>] [--status <status>] [--claimed-by <actor>] [--ready] [--archived|--all] [--format json|table|plain]`
-- `pin search <query> [--project <name>] [--tag <name>] [--kind <kind>] [--type <type>] [--status <status>] [--claimed-by <actor>] [--limit <n>] [--archived|--all] [--format json|table|plain]`
-- `pin context [--project <name>] [--kind <kind>] [--type <type>] [--status <status>] [--limit <n>] [--group kind] [--archived|--all] [--format json|plain]`
-- `pin next [--project <name>] [--limit <n>] [--format json|plain]`
+- `pin list [--project <name>] [--tag <name>] [--kind <kind>] [--type <type>] [--status <status>] [--claimed-by <actor>] [--parent <id>] [--ready] [--archived|--all] [--format json|table|plain]`
+- `pin list-project [--tag <name>] [--kind <kind>] [--type <type>] [--status <status>] [--claimed-by <actor>] [--parent <id>] [--ready] [--archived|--all] [--format json|table|plain]`
+- `pin search <query> [--project <name>] [--tag <name>] [--kind <kind>] [--type <type>] [--status <status>] [--claimed-by <actor>] [--parent <id>] [--limit <n>] [--archived|--all] [--format json|table|plain]`
+- `pin next [--project <name>] [--tag <name>] [--kind <kind>] [--type <type>] [--limit <n>] [--format json|plain]`
 - `pin transition <id|id-prefix|filename> --to <status> [--actor <name>] [--note <text>] [--expect-revision <n>] [--worktree] [--format json|plain]`
 - `pin claim <id|id-prefix|filename> [--actor <name>] [--lease <seconds>] [--expect-revision <n>] [--worktree] [--format json|plain]`
-- `pin release <id|id-prefix|filename> [--actor <name>] [--force] [--expect-revision <n>] [--format json|plain]`
+- `pin release|unclaim <id|id-prefix|filename> [--actor <name>] [--force] [--expect-revision <n>] [--format json|plain]`
 - `pin handoff <id|id-prefix|filename> [--actor <name>] [--progress <text>] [--next <text>] [--blocker <text>] [--verification <text>] [--expect-revision <n>] [--format json|plain]`
 - `pin complete <id|id-prefix|filename> --evidence <text> [--actor <name>] [--expect-revision <n>] [--format json|plain]`
 - `pin close <id|id-prefix|filename> [--actor <name>] [--note <text>] [--expect-revision <n>] [--format json|plain]`
-- `pin depend <id|id-prefix|filename> <dependency-id> [--actor <name>] [--expect-revision <n>] [--format json|plain]`
-- `pin parent <id|id-prefix|filename> <parent-id> [--actor <name>] [--expect-revision <n>] [--format json|plain]`
-- `pin relate <id|id-prefix|filename> <related-id> [--actor <name>] [--expect-revision <n>] [--format json|plain]`
+- `pin depend|undepend <id|id-prefix|filename> <dependency-id> [--remove] [--actor <name>] [--expect-revision <n>] [--format json|plain]`
+- `pin parent|unparent <id|id-prefix|filename> [<parent-id>] [--unset] [--actor <name>] [--expect-revision <n>] [--format json|plain]`
+- `pin relate|unrelate <id|id-prefix|filename> <related-id> [--remove] [--actor <name>] [--expect-revision <n>] [--format json|plain]`
 - `pin to-spec <id|prefix|filename> [--title <text>] [--body <text>] [--actor <name>] [--expect-revision <n>] [--format json|plain]`
 - `pin doctor [--repair] [--upgrade] [--strict] [--format json|plain]`
 - `pin archive <id|prefix|filename> [--resolution implemented|rejected|superseded|stale] [--note <text>]`
 - `pin unarchive <id|prefix|filename>`
-- `pin read|edit|rm <id|prefix|filename>`
+- `pin read|edit <id|prefix|filename> [--format json|plain]`
+- `pin rm <id|prefix|filename>... [--format json|plain]`
 - `pin stats [--project <name>] [--format json|plain]`
 - `pin sync [id|prefix|filename] [--project <name>] [--dry-run] [--force] [--format json|plain]`
 - `pin update [--check] [--force] [--format json|plain]`

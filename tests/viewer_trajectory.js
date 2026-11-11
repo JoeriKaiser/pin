@@ -236,9 +236,9 @@ function getOrCreateBySelector(sel) {
 
 const documentMock = {
   readyState: 'loading',
-  documentElement: {
+  documentElement: Object.assign(createMockElement('html', 'html'), {
     dataset: { base: '' }
-  },
+  }),
   body: createMockElement('body', 'body'),
   getElementById(id) {
     return getOrCreateElement(id);
@@ -563,6 +563,23 @@ async function runHarness() {
     searchInput.dispatchEvent({ type: 'input', target: searchInput });
     assert.strictEqual(assistantRows[0].hidden, false, 'Rows unhidden on clear search');
   }
+
+  // Trajectory auto-scroll pause test
+  const scrollTrajectoryStreamToBottom = testExports.scrollTrajectoryStreamToBottom || win.scrollTrajectoryStreamToBottom;
+  if (typeof scrollTrajectoryStreamToBottom === 'function') {
+    streamEl.scrollHeight = 1000;
+    streamEl.clientHeight = 400;
+    streamEl.scrollTop = 590;
+    scrollTrajectoryStreamToBottom();
+    assert.strictEqual(streamEl.scrollTop, 1000, 'Auto-scroll pins to bottom when within threshold');
+
+    streamEl.scrollTop = 200;
+    scrollTrajectoryStreamToBottom();
+    assert.strictEqual(streamEl.scrollTop, 200, 'Auto-scroll paused when user scrolls up');
+
+    scrollTrajectoryStreamToBottom(true);
+    assert.strictEqual(streamEl.scrollTop, 1000, 'Forced scroll brings stream to bottom even when scrolled up');
+  }
   if (typeof closeAgentDrawer === 'function') closeAgentDrawer();
   console.log('PASS: Trajectory stream, inspector, swimlane, and search verified');
 
@@ -640,6 +657,49 @@ async function runHarness() {
 
   closeSpecModal();
   assert.ok(!specModal.open && !specModal.hasAttribute('open'));
+
+  // Test submitQuickAdd success parses JSON and sets route
+  const submitQuickAdd = testExports.submitQuickAdd || win.submitQuickAdd;
+  const quickAddInput = documentMock.getElementById('quick-add-input');
+  quickAddInput.value = 'New Quick Task';
+  const prevFetchQuick = fetchStub;
+  testExports.state.selected = null;
+
+  fetchStub = function (url) {
+    if (url.includes('items')) {
+      return Promise.resolve({
+        ok: true,
+        status: 201,
+        headers: { get: () => null },
+        json: () => Promise.resolve({ id: 'created123456', title: 'New Quick Task', type: 'task' })
+      });
+    }
+    return Promise.resolve({ ok: true, status: 200, headers: { get: () => null }, json: () => Promise.resolve([]) });
+  };
+
+  submitQuickAdd();
+  await new Promise(r => setTimeout(r, 20));
+  assert.strictEqual(testExports.state.selected, 'created123456', 'submitQuickAdd routes to created item id');
+
+  // Test submitQuickAdd failure does not route and displays error toast
+  testExports.state.selected = null;
+  quickAddInput.value = 'Failed Task';
+  fetchStub = function () {
+    return Promise.resolve({
+      ok: false,
+      status: 400,
+      headers: { get: () => null },
+      json: () => Promise.resolve({ error: 'Title duplicate' })
+    });
+  };
+  submitQuickAdd();
+  await new Promise(r => setTimeout(r, 20));
+  assert.strictEqual(testExports.state.selected, null, 'submitQuickAdd does not route on failure');
+  const toastNode = documentMock.getElementById('toast');
+  assert.ok(toastNode.textContent.includes('Title duplicate'), 'toast displays error message');
+
+  fetchStub = prevFetchQuick;
+
   console.log('PASS: Spec editor and quick-add toggle verified');
 
   console.log('\n--- 5. Testing Screenshot Pasting Logic ---');
@@ -817,7 +877,38 @@ async function runHarness() {
   assert.strictEqual(leftPrevented, true, 'ArrowLeft calls preventDefault');
   assert.strictEqual(focusedCard, 'cardA', 'ArrowLeft moves focus back to previous column');
 
-  console.log('PASS: Board card drop transition and arrow navigation verified');
+  // Test 't' keyboard shortcut toggles theme
+  let themePrevented = false;
+  document.dispatchEvent({
+    type: 'keydown',
+    key: 't',
+    target: documentMock.body,
+    preventDefault() { themePrevented = true; }
+  });
+  assert.strictEqual(themePrevented, true, 't keydown calls preventDefault');
+  assert.ok(documentMock.documentElement.getAttribute('data-theme') === 'dark' || documentMock.documentElement.getAttribute('data-theme') === 'light', 'theme toggled on documentElement');
+
+  // Test renderDetail populates context ID badge and copy ID button
+  const renderDetail = testExports.renderDetail || win.renderDetail;
+  testExports.state.items = testExports.state.items || [];
+  testExports.state.items.push({
+    id: 'detailtest123',
+    title: 'Detail Copy Test',
+    type: 'task',
+    kind: 'technical',
+    status: 'created',
+    timestamp: 1700000000
+  });
+  testExports.state.selected = 'detailtest123';
+  renderDetail();
+  const proposalCtx = documentMock.getElementById('proposal-context');
+  const copyBtn = proposalCtx.querySelector('.btn-copy-id');
+  const idBadge = proposalCtx.querySelector('.context-id-badge');
+  assert.ok(copyBtn, 'Copy ID button rendered in proposal context');
+  assert.ok(idBadge, 'ID badge rendered in proposal context');
+  assert.strictEqual(idBadge.textContent, 'detailte');
+
+  console.log('PASS: Board card drop transition, arrow navigation, and theme/detail ergonomics verified');
 
   console.log('\n--- 8. Testing Unified Run Dispatcher (sendRunItem) ---');
   const sendRunItem = testExports.sendRunItem || win.sendRunItem;
@@ -977,6 +1068,8 @@ async function runHarness() {
   const inProgressColAfter = documentMock.querySelector('.board-col-cards[data-drop-status="in_progress"]');
   assert.strictEqual(createdColAfter.querySelector('.board-card[data-id="backlog-item-1"]'), null, 'Ticket no longer in created/backlog column');
   assert.ok(inProgressColAfter.querySelector('.board-card[data-id="backlog-item-1"]'), 'Ticket visually moved to in_progress column');
+  assert.ok(createdColAfter.querySelector('.board-col-empty'), 'Empty created column shows empty indicator');
+  assert.strictEqual(inProgressColAfter.querySelector('.board-col-empty'), null, 'Non-empty in_progress column has no empty indicator');
   console.log('PASS: moving ticket from backlog to in_progress updates board visually without refresh');
 
   console.log('\n--- 9. Testing Handoff Card Layout and Priority ---');

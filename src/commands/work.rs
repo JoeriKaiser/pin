@@ -376,217 +376,392 @@ pub fn close(args: &[String], command: &str, vault_path: &Path) -> CliResult<()>
 }
 
 pub fn depend(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> {
-    let mut reader = ArgReader::new(args, command);
-    if args.len() >= 3 && (args[2] == "--help" || args[2] == "-h") {
+    if args.iter().any(|a| a == "--help" || a == "-h") {
         return Err(CliError::Help);
     }
-    if args.len() < 4 {
-        return Err(CliError::usage(
-            "'depend' requires an item selector and a dependency selector",
-        ));
-    }
-    if args[3] == "--help" || args[3] == "-h" {
-        return Err(CliError::Help);
-    }
-    let selector = &args[2];
-    let dep_selector = &args[3];
-    reader.idx = 4;
 
+    let mut is_remove = command == "undepend";
     let mut actor = None;
     let mut expect_revision = None;
     let mut format = None;
+    let mut positionals = Vec::new();
 
-    while let Some(arg) = reader.peek()? {
-        match arg {
-            "--actor" => actor = Some(reader.next_val("--actor")?),
+    let mut idx = 2;
+    while idx < args.len() {
+        let arg = &args[idx];
+        match arg.as_str() {
+            "--remove" | "--rm" => is_remove = true,
+            "--actor" => {
+                if idx + 1 >= args.len() {
+                    return Err(CliError::usage("--actor requires a value"));
+                }
+                idx += 1;
+                actor = Some(args[idx].as_str());
+            }
             "--expect-revision" => {
-                let val = reader.next_val("--expect-revision")?;
+                if idx + 1 >= args.len() {
+                    return Err(CliError::usage("--expect-revision requires an integer"));
+                }
+                idx += 1;
                 expect_revision = Some(
-                    val.parse::<u64>()
+                    args[idx]
+                        .parse::<u64>()
                         .map_err(|_| CliError::usage("--expect-revision requires an integer"))?,
                 );
             }
-            "--format" => format = Some(reader.parse_format(false)?),
-            _ => return Err(CliError::usage(format!("Unknown flag '{arg}'"))),
+            "--format" => {
+                if idx + 1 >= args.len() {
+                    return Err(CliError::usage("--format requires a value"));
+                }
+                idx += 1;
+                match args[idx].parse::<OutputFormat>() {
+                    Ok(fmt) if fmt != OutputFormat::Table => format = Some(fmt),
+                    _ => {
+                        return Err(CliError::usage(format!(
+                            "--format must be json or plain for '{command}'"
+                        )))
+                    }
+                }
+            }
+            s if s.starts_with('-') => return Err(CliError::usage(format!("Unknown flag '{s}'"))),
+            _ => positionals.push(arg.as_str()),
         }
-        reader.idx += 1;
+        idx += 1;
     }
 
-    let filename =
-        resolve_selector(&vault_path, selector).map_err(|e| CliError::usage(e.to_string()))?;
-    let dep_filename =
-        resolve_selector(&vault_path, dep_selector).map_err(|e| CliError::usage(e.to_string()))?;
-    let dep_content = fs::read_to_string(vault_path.join(&dep_filename))
-        .map_err(|e| CliError::usage(format!("Could not read dependency file: {e}")))?;
-    let mut issues = Vec::new();
-    let dep_meta = parse_front_matter_detailed(&dep_filename, &dep_content, &mut issues)
-        .ok_or_else(|| CliError::usage("Invalid front matter in dependency file"))?;
+    if positionals.len() < 2 {
+        return Err(CliError::usage(format!(
+            "'{command}' requires an item selector and a dependency selector"
+        )));
+    }
 
-    let resolved_actor = resolve_actor(actor);
-    match workflow::depend_item(
-        &vault_path,
-        &filename,
-        &dep_meta.id,
-        Some(&resolved_actor),
-        expect_revision,
-    ) {
-        Ok(meta) => {
-            let fmt = format.unwrap_or_else(|| default_format(OutputFormat::Plain));
-            if fmt == OutputFormat::Json {
-                let out = serde_json::json!({
-                    "id": meta.id,
-                    "action": "dependency_added",
-                    "depends_on": meta.depends_on,
-                });
-                println!("{}", serde_json::to_string(&out).unwrap_or_default());
+    let selector = positionals[0];
+    let dep_selector = positionals[1];
+
+    let filename =
+        resolve_selector(vault_path, selector).map_err(|e| CliError::usage(e.to_string()))?;
+
+    let dep_id = match resolve_selector(vault_path, dep_selector) {
+        Ok(dep_filename) => {
+            let dep_content = fs::read_to_string(vault_path.join(&dep_filename))
+                .map_err(|e| CliError::usage(format!("Could not read dependency file: {e}")))?;
+            let mut issues = Vec::new();
+            let dep_meta = parse_front_matter_detailed(&dep_filename, &dep_content, &mut issues)
+                .ok_or_else(|| CliError::usage("Invalid front matter in dependency file"))?;
+            dep_meta.id
+        }
+        Err(e) => {
+            if is_remove {
+                dep_selector.to_string()
             } else {
-                println!("Added dependency on {} to {}", dep_meta.id, meta.id);
+                return Err(CliError::usage(e.to_string()));
             }
         }
-        Err(e) => return Err(CliError::usage(e.to_string())),
+    };
+
+    let resolved_actor = resolve_actor(actor);
+    let fmt = format.unwrap_or_else(|| default_format(OutputFormat::Plain));
+
+    if is_remove {
+        match workflow::undepend_item(
+            vault_path,
+            &filename,
+            &dep_id,
+            Some(&resolved_actor),
+            expect_revision,
+        ) {
+            Ok(meta) => {
+                if fmt == OutputFormat::Json {
+                    let out = serde_json::json!({
+                        "id": meta.id,
+                        "action": "dependency_removed",
+                        "depends_on": meta.depends_on,
+                    });
+                    println!("{}", serde_json::to_string(&out).unwrap_or_default());
+                } else {
+                    println!("Removed dependency on {} from {}", dep_id, meta.id);
+                }
+            }
+            Err(e) => return Err(CliError::usage(e.to_string())),
+        }
+    } else {
+        match workflow::depend_item(
+            vault_path,
+            &filename,
+            &dep_id,
+            Some(&resolved_actor),
+            expect_revision,
+        ) {
+            Ok(meta) => {
+                if fmt == OutputFormat::Json {
+                    let out = serde_json::json!({
+                        "id": meta.id,
+                        "action": "dependency_added",
+                        "depends_on": meta.depends_on,
+                    });
+                    println!("{}", serde_json::to_string(&out).unwrap_or_default());
+                } else {
+                    println!("Added dependency on {} to {}", dep_id, meta.id);
+                }
+            }
+            Err(e) => return Err(CliError::usage(e.to_string())),
+        }
     }
     Ok(())
 }
 
 pub fn parent(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> {
-    let mut reader = ArgReader::new(args, command);
-    if args.len() >= 3 && (args[2] == "--help" || args[2] == "-h") {
+    if args.iter().any(|a| a == "--help" || a == "-h") {
         return Err(CliError::Help);
     }
-    if args.len() < 4 {
+
+    let mut is_unset = command == "unparent";
+    let mut actor = None;
+    let mut expect_revision = None;
+    let mut format = None;
+    let mut positionals = Vec::new();
+
+    let mut idx = 2;
+    while idx < args.len() {
+        let arg = &args[idx];
+        match arg.as_str() {
+            "--unset" | "--remove" | "--rm" | "--clear" => is_unset = true,
+            "--actor" => {
+                if idx + 1 >= args.len() {
+                    return Err(CliError::usage("--actor requires a value"));
+                }
+                idx += 1;
+                actor = Some(args[idx].as_str());
+            }
+            "--expect-revision" => {
+                if idx + 1 >= args.len() {
+                    return Err(CliError::usage("--expect-revision requires an integer"));
+                }
+                idx += 1;
+                expect_revision = Some(
+                    args[idx]
+                        .parse::<u64>()
+                        .map_err(|_| CliError::usage("--expect-revision requires an integer"))?,
+                );
+            }
+            "--format" => {
+                if idx + 1 >= args.len() {
+                    return Err(CliError::usage("--format requires a value"));
+                }
+                idx += 1;
+                match args[idx].parse::<OutputFormat>() {
+                    Ok(fmt) if fmt != OutputFormat::Table => format = Some(fmt),
+                    _ => {
+                        return Err(CliError::usage(format!(
+                            "--format must be json or plain for '{command}'"
+                        )))
+                    }
+                }
+            }
+            s if s.starts_with('-') => return Err(CliError::usage(format!("Unknown flag '{s}'"))),
+            _ => positionals.push(arg.as_str()),
+        }
+        idx += 1;
+    }
+
+    if positionals.is_empty() {
+        return Err(CliError::usage(format!(
+            "'{command}' requires an item selector"
+        )));
+    }
+
+    if !is_unset && positionals.len() < 2 {
         return Err(CliError::usage(
             "'parent' requires an item selector and a parent selector",
         ));
     }
-    if args[3] == "--help" || args[3] == "-h" {
-        return Err(CliError::Help);
-    }
-    let selector = &args[2];
-    let parent_selector = &args[3];
-    reader.idx = 4;
 
-    let mut actor = None;
-    let mut expect_revision = None;
-    let mut format = None;
-
-    while let Some(arg) = reader.peek()? {
-        match arg {
-            "--actor" => actor = Some(reader.next_val("--actor")?),
-            "--expect-revision" => {
-                let val = reader.next_val("--expect-revision")?;
-                expect_revision = Some(
-                    val.parse::<u64>()
-                        .map_err(|_| CliError::usage("--expect-revision requires an integer"))?,
-                );
-            }
-            "--format" => format = Some(reader.parse_format(false)?),
-            _ => return Err(CliError::usage(format!("Unknown flag '{arg}'"))),
-        }
-        reader.idx += 1;
-    }
-
+    let selector = positionals[0];
     let filename =
-        resolve_selector(&vault_path, selector).map_err(|e| CliError::usage(e.to_string()))?;
-    let parent_filename = resolve_selector(&vault_path, parent_selector)
-        .map_err(|e| CliError::usage(e.to_string()))?;
-    let parent_content = fs::read_to_string(vault_path.join(&parent_filename))
-        .map_err(|e| CliError::usage(format!("Could not read parent file: {e}")))?;
-    let mut issues = Vec::new();
-    let parent_meta = parse_front_matter_detailed(&parent_filename, &parent_content, &mut issues)
-        .ok_or_else(|| CliError::usage("Invalid front matter in parent file"))?;
-
+        resolve_selector(vault_path, selector).map_err(|e| CliError::usage(e.to_string()))?;
     let resolved_actor = resolve_actor(actor);
-    match workflow::parent_item(
-        &vault_path,
-        &filename,
-        &parent_meta.id,
-        Some(&resolved_actor),
-        expect_revision,
-    ) {
-        Ok(meta) => {
-            let fmt = format.unwrap_or_else(|| default_format(OutputFormat::Plain));
-            if fmt == OutputFormat::Json {
-                println!(
-                    "{{\"id\":\"{}\",\"parent_id\":\"{}\"}}",
-                    meta.id, parent_meta.id
-                );
-            } else {
-                println!("Set parent of {} to {}", meta.id, parent_meta.id);
+    let fmt = format.unwrap_or_else(|| default_format(OutputFormat::Plain));
+
+    if is_unset {
+        match workflow::unparent_item(
+            vault_path,
+            &filename,
+            Some(&resolved_actor),
+            expect_revision,
+        ) {
+            Ok(meta) => {
+                if fmt == OutputFormat::Json {
+                    println!("{{\"id\":\"{}\",\"parent_id\":null}}", meta.id);
+                } else {
+                    println!("Removed parent from {}", meta.id);
+                }
             }
+            Err(e) => return Err(CliError::usage(e.to_string())),
         }
-        Err(e) => return Err(CliError::usage(e.to_string())),
+    } else {
+        let parent_selector = positionals[1];
+        let parent_filename = resolve_selector(vault_path, parent_selector)
+            .map_err(|e| CliError::usage(e.to_string()))?;
+        let parent_content = fs::read_to_string(vault_path.join(&parent_filename))
+            .map_err(|e| CliError::usage(format!("Could not read parent file: {e}")))?;
+        let mut issues = Vec::new();
+        let parent_meta =
+            parse_front_matter_detailed(&parent_filename, &parent_content, &mut issues)
+                .ok_or_else(|| CliError::usage("Invalid front matter in parent file"))?;
+
+        match workflow::parent_item(
+            vault_path,
+            &filename,
+            &parent_meta.id,
+            Some(&resolved_actor),
+            expect_revision,
+        ) {
+            Ok(meta) => {
+                if fmt == OutputFormat::Json {
+                    println!(
+                        "{{\"id\":\"{}\",\"parent_id\":\"{}\"}}",
+                        meta.id, parent_meta.id
+                    );
+                } else {
+                    println!("Set parent of {} to {}", meta.id, parent_meta.id);
+                }
+            }
+            Err(e) => return Err(CliError::usage(e.to_string())),
+        }
     }
     Ok(())
 }
 
 pub fn relate(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> {
-    let mut reader = ArgReader::new(args, command);
-    if args.len() >= 3 && (args[2] == "--help" || args[2] == "-h") {
+    if args.iter().any(|a| a == "--help" || a == "-h") {
         return Err(CliError::Help);
     }
-    if args.len() < 4 {
-        return Err(CliError::usage(
-            "'relate' requires an item selector and a related selector",
-        ));
-    }
-    if args[3] == "--help" || args[3] == "-h" {
-        return Err(CliError::Help);
-    }
-    let selector = &args[2];
-    let rel_selector = &args[3];
-    reader.idx = 4;
 
+    let mut is_remove = command == "unrelate";
     let mut actor = None;
     let mut expect_revision = None;
     let mut format = None;
+    let mut positionals = Vec::new();
 
-    while let Some(arg) = reader.peek()? {
-        match arg {
-            "--actor" => actor = Some(reader.next_val("--actor")?),
+    let mut idx = 2;
+    while idx < args.len() {
+        let arg = &args[idx];
+        match arg.as_str() {
+            "--remove" | "--rm" => is_remove = true,
+            "--actor" => {
+                if idx + 1 >= args.len() {
+                    return Err(CliError::usage("--actor requires a value"));
+                }
+                idx += 1;
+                actor = Some(args[idx].as_str());
+            }
             "--expect-revision" => {
-                let val = reader.next_val("--expect-revision")?;
+                if idx + 1 >= args.len() {
+                    return Err(CliError::usage("--expect-revision requires an integer"));
+                }
+                idx += 1;
                 expect_revision = Some(
-                    val.parse::<u64>()
+                    args[idx]
+                        .parse::<u64>()
                         .map_err(|_| CliError::usage("--expect-revision requires an integer"))?,
                 );
             }
-            "--format" => format = Some(reader.parse_format(false)?),
-            _ => return Err(CliError::usage(format!("Unknown flag '{arg}'"))),
+            "--format" => {
+                if idx + 1 >= args.len() {
+                    return Err(CliError::usage("--format requires a value"));
+                }
+                idx += 1;
+                match args[idx].parse::<OutputFormat>() {
+                    Ok(fmt) if fmt != OutputFormat::Table => format = Some(fmt),
+                    _ => {
+                        return Err(CliError::usage(format!(
+                            "--format must be json or plain for '{command}'"
+                        )))
+                    }
+                }
+            }
+            s if s.starts_with('-') => return Err(CliError::usage(format!("Unknown flag '{s}'"))),
+            _ => positionals.push(arg.as_str()),
         }
-        reader.idx += 1;
+        idx += 1;
     }
 
-    let filename =
-        resolve_selector(&vault_path, selector).map_err(|e| CliError::usage(e.to_string()))?;
-    let rel_filename =
-        resolve_selector(&vault_path, rel_selector).map_err(|e| CliError::usage(e.to_string()))?;
-    let rel_content = fs::read_to_string(vault_path.join(&rel_filename))
-        .map_err(|e| CliError::usage(format!("Could not read related file: {e}")))?;
-    let mut issues = Vec::new();
-    let rel_meta = parse_front_matter_detailed(&rel_filename, &rel_content, &mut issues)
-        .ok_or_else(|| CliError::usage("Invalid front matter in related file"))?;
+    if positionals.len() < 2 {
+        return Err(CliError::usage(format!(
+            "'{command}' requires an item selector and a related selector"
+        )));
+    }
 
-    let resolved_actor = resolve_actor(actor);
-    match workflow::relate_item(
-        &vault_path,
-        &filename,
-        &rel_meta.id,
-        Some(&resolved_actor),
-        expect_revision,
-    ) {
-        Ok(meta) => {
-            let fmt = format.unwrap_or_else(|| default_format(OutputFormat::Plain));
-            if fmt == OutputFormat::Json {
-                let out = serde_json::json!({
-                    "id": meta.id,
-                    "related": meta.related,
-                });
-                println!("{}", serde_json::to_string(&out).unwrap_or_default());
+    let selector = positionals[0];
+    let rel_selector = positionals[1];
+
+    let filename =
+        resolve_selector(vault_path, selector).map_err(|e| CliError::usage(e.to_string()))?;
+
+    let rel_id = match resolve_selector(vault_path, rel_selector) {
+        Ok(rel_filename) => {
+            let rel_content = fs::read_to_string(vault_path.join(&rel_filename))
+                .map_err(|e| CliError::usage(format!("Could not read related file: {e}")))?;
+            let mut issues = Vec::new();
+            let rel_meta = parse_front_matter_detailed(&rel_filename, &rel_content, &mut issues)
+                .ok_or_else(|| CliError::usage("Invalid front matter in related file"))?;
+            rel_meta.id
+        }
+        Err(e) => {
+            if is_remove {
+                rel_selector.to_string()
             } else {
-                println!("Related {} to {}", meta.id, rel_meta.id);
+                return Err(CliError::usage(e.to_string()));
             }
         }
-        Err(e) => return Err(CliError::usage(e.to_string())),
+    };
+
+    let resolved_actor = resolve_actor(actor);
+    let fmt = format.unwrap_or_else(|| default_format(OutputFormat::Plain));
+
+    if is_remove {
+        match workflow::unrelate_item(
+            vault_path,
+            &filename,
+            &rel_id,
+            Some(&resolved_actor),
+            expect_revision,
+        ) {
+            Ok(meta) => {
+                if fmt == OutputFormat::Json {
+                    let out = serde_json::json!({
+                        "id": meta.id,
+                        "action": "relation_removed",
+                        "related": meta.related,
+                    });
+                    println!("{}", serde_json::to_string(&out).unwrap_or_default());
+                } else {
+                    println!("Removed relation between {} and {}", meta.id, rel_id);
+                }
+            }
+            Err(e) => return Err(CliError::usage(e.to_string())),
+        }
+    } else {
+        match workflow::relate_item(
+            vault_path,
+            &filename,
+            &rel_id,
+            Some(&resolved_actor),
+            expect_revision,
+        ) {
+            Ok(meta) => {
+                if fmt == OutputFormat::Json {
+                    let out = serde_json::json!({
+                        "id": meta.id,
+                        "related": meta.related,
+                    });
+                    println!("{}", serde_json::to_string(&out).unwrap_or_default());
+                } else {
+                    println!("Related {} to {}", meta.id, rel_id);
+                }
+            }
+            Err(e) => return Err(CliError::usage(e.to_string())),
+        }
     }
     Ok(())
 }

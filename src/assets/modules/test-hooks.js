@@ -2,11 +2,12 @@ import { els } from './dom.js';
 import { state, updateShown } from './state.js';
 import { stripAnsi, cleanThoughtText, escapeHtml } from './formatters.js';
 import {
-  setReaderTab, renderActions, renderHandoff, renderList
+  setReaderTab, renderActions, renderHandoff, renderList, renderDetail
 } from './detail.js';
 import {
   openSpecModal, closeSpecModal, setSpecModalTab, SPEC_SNIPPETS,
   expandQuickAdd, collapseQuickAdd, triggerModalSubmit,
+  submitQuickAdd, submitSpecModal,
   openWorktreeModal, closeWorktreeModal,
   openShortcutsModal, closeShortcutsModal
 } from './forms.js';
@@ -18,7 +19,7 @@ import {
   openAgentDrawer, closeAgentDrawer, handleAgentStreamEvent,
   formatToolCallInline, renderSwimlaneSvg, openToolInspector,
   closeToolInspector, appendTrajectoryContextRow, filterTrajectoryRows,
-  updateActiveRuns, scanForPrUrl
+  updateActiveRuns, scanForPrUrl, scrollTrajectoryStreamToBottom
 } from './agent.js';
 import {
   buildBoardCard, handleCardDrop, setViewMode, renderBoard, computeRenderKey
@@ -51,11 +52,14 @@ if (typeof window !== 'undefined') {
     openAgentDrawer: openAgentDrawer,
     closeAgentDrawer: closeAgentDrawer,
     appendTrajectoryContextRow: appendTrajectoryContextRow,
+    scrollTrajectoryStreamToBottom: scrollTrajectoryStreamToBottom,
     filterTrajectoryRows: filterTrajectoryRows,
     cleanThoughtText: cleanThoughtText,
     stripAnsi: stripAnsi,
     bind: bind,
     submitActionDialog: triggerModalSubmit,
+    submitQuickAdd: submitQuickAdd,
+    submitSpecModal: submitSpecModal,
     escapeHtml: escapeHtml,
     openSpecModal: openSpecModal,
     closeSpecModal: closeSpecModal,
@@ -77,6 +81,7 @@ if (typeof window !== 'undefined') {
     sendRunItem: sendRunItem,
     buildBoardCard: buildBoardCard,
     renderActions: renderActions,
+    renderDetail: renderDetail,
     renderList: renderList,
     renderHandoff: renderHandoff,
     handleCardDrop: handleCardDrop,

@@ -120,10 +120,18 @@ export function submitQuickAdd() {
     status: 'created',
     project: fields.project
   })
+  .then(function (res) {
+    if (res && typeof res.ok === 'boolean' && !res.ok) {
+      return res.json().catch(function () { return {}; }).then(function (d) {
+        throw new Error((d && d.error) || ('Failed to create task (' + res.status + ')'));
+      });
+    }
+    return res && typeof res.json === 'function' ? res.json() : res;
+  })
   .then(function (newItem) {
     resetQuickAdd();
     setQuickAddDisabled(false);
-    showToast('Created ' + (newItem.type || 'task') + ': ' + (newItem.title || fields.title), false);
+    showToast('Created ' + (newItem && newItem.type ? newItem.type : 'task') + ': ' + ((newItem && newItem.title) || fields.title), false);
     callbacks.refreshData();
     if (newItem && newItem.id) {
       setRoute(newItem.id);
@@ -253,10 +261,18 @@ export function submitSpecModal() {
     status: 'created',
     project: fields.project
   })
+  .then(function (res) {
+    if (res && typeof res.ok === 'boolean' && !res.ok) {
+      return res.json().catch(function () { return {}; }).then(function (d) {
+        throw new Error((d && d.error) || ('Failed to create task (' + res.status + ')'));
+      });
+    }
+    return res && typeof res.json === 'function' ? res.json() : res;
+  })
   .then(function (newItem) {
     setSpecModalDisabled(false);
     closeSpecModal();
-    showToast('Created ' + (newItem.type || 'task') + ': ' + (newItem.title || fields.title), false);
+    showToast('Created ' + (newItem && newItem.type ? newItem.type : 'task') + ': ' + ((newItem && newItem.title) || fields.title), false);
     callbacks.refreshData();
     if (newItem && newItem.id) {
       setRoute(newItem.id);
@@ -321,7 +337,15 @@ export function triggerModalSubmit() {
       text(els.dialogSubmitBtn, 'Submitting…');
     }
     maybePromise
-      .then(function () {
+      .then(function (res) {
+        if (res && typeof res.ok === 'boolean' && !res.ok) {
+          return res.json().catch(function () { return {}; }).then(function (data) {
+            var err = new Error((data && data.error) || ('Action failed (' + res.status + ')'));
+            err.status = res.status;
+            err.data = data;
+            throw err;
+          });
+        }
         closeActionModal();
         showToast('Action applied successfully', false);
         callbacks.refreshData();

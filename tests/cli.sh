@@ -296,6 +296,26 @@ assert_contains "$ready_after" "$dependent_id"
 if PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" depend "$dependency_id" "$dependent_id" --format json >/dev/null 2>&1; then
     fail "dependency cycle was accepted"
 fi
+PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" depend "$dependent_id" "$dependency_id" --remove --format json | grep -q '"action":"dependency_removed"'
+dep_after_rm=$(PIN_VAULT="$TMP/dependency-vault" "$PIN_BIN" read "$dependent_id")
+case "$dep_after_rm" in *"depends_on:"*) fail "depend --remove did not remove dependency: $dep_after_rm" ;; esac
+
+PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" depend "$dependent_id" "$dependency_id" --format json >/dev/null
+PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" undepend "$dependent_id" "$dependency_id" --format json | grep -q '"action":"dependency_removed"'
+
+PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" parent "$dependent_id" --unset --format json | grep -q '"parent_id":null'
+parent_after_unset=$(PIN_VAULT="$TMP/dependency-vault" "$PIN_BIN" read "$dependent_id")
+case "$parent_after_unset" in *"parent_id:"*) fail "parent --unset did not clear parent: $parent_after_unset" ;; esac
+
+PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" parent "$dependent_id" "$dependency_id" --format json >/dev/null
+PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" unparent "$dependent_id" --format json | grep -q '"parent_id":null'
+
+PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" relate "$dependent_id" "$dependency_id" --remove --format json | grep -q '"action":"relation_removed"'
+rel_after_rm=$(PIN_VAULT="$TMP/dependency-vault" "$PIN_BIN" read "$dependent_id")
+case "$rel_after_rm" in *"related:"*) fail "relate --remove did not remove relation: $rel_after_rm" ;; esac
+
+PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" relate "$dependent_id" "$dependency_id" --format json >/dev/null
+PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" unrelate "$dependent_id" "$dependency_id" --format json | grep -q '"action":"relation_removed"'
 cat >"$TMP/dep-remove-editor" <<'EOF'
 #!/bin/sh
 [ "$1" = "--wait" ] || exit 2
@@ -1201,6 +1221,23 @@ assert_contains "$forced_sync_out" '"worktree_removed":true'
 # 4c. Reject dangling dependency
 bad_dep_out=$(PIN_VAULT="$sync_vault" "$PIN_BIN" depend "$reg_id" "nonexistent999" 2>&1 || true)
 assert_contains "$bad_dep_out" "No item matches 'nonexistent999'"
+
+# 4d. Test pin next with --type and --tag filters
+next_vault="$TMP/next-vault"
+mkdir -p "$next_vault"
+PIN_VAULT="$next_vault" "$PIN_BIN" init --local >/dev/null
+task_item=$(PIN_VAULT="$next_vault" "$PIN_BIN" add '# Next Task' --kind technical --type task --tags 'alpha' --format json | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+bug_item=$(PIN_VAULT="$next_vault" "$PIN_BIN" add '# Next Bug' --kind technical --type bug --tags 'beta' --format json | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+
+next_bug_out=$(PIN_VAULT="$next_vault" "$PIN_BIN" next --type bug --format json)
+assert_contains "$next_bug_out" "\"id\":\"$bug_item\""
+
+next_tag_out=$(PIN_VAULT="$next_vault" "$PIN_BIN" next --tag alpha --format json)
+assert_contains "$next_tag_out" "\"id\":\"$task_item\""
+
+ctx_tag_out=$(PIN_VAULT="$next_vault" "$PIN_BIN" context --tag beta --format json)
+assert_contains "$ctx_tag_out" "\"id\":\"$bug_item\""
+
 # 5. Subsequent sync
 none_out=$(cd "$sync_repo" && PIN_VAULT="$sync_vault" "$PIN_BIN" sync --format plain)
 assert_contains "$none_out" "No merged tickets to sync."
