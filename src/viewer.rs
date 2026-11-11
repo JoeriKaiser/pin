@@ -527,6 +527,20 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
         headers.push(line);
     }
 
+    if method == "GET" && (raw_path == "/healthz" || raw_path == "/health") {
+        send_response(
+            &mut stream,
+            200,
+            "OK",
+            "application/json; charset=utf-8",
+            b"{\"status\":\"ok\"}",
+            false,
+            true,
+            None,
+        );
+        return;
+    }
+
     let expected_prefix = format!("/{}/", snapshot.token);
     if !raw_path.starts_with(&expected_prefix) {
         send_response(
@@ -2615,5 +2629,41 @@ mod tests {
         assert_eq!(selected.command.as_deref(), Some("opencode acp"));
         assert_eq!(selected.actor.as_deref(), Some("agent:opencode"));
         assert_eq!(selected.model, Some(Some("opencode/free".to_string())));
+    }
+
+    #[test]
+    fn test_viewer_healthz_endpoint() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let port = addr.port();
+        let snapshot = Arc::new(create_snapshot(
+            &[],
+            PathBuf::from("/tmp/pin-vault"),
+            "all",
+            ArchiveFilter::All,
+            None,
+            None,
+            None,
+            None,
+        ));
+
+        let snap_clone = Arc::clone(&snapshot);
+        let handle = std::thread::spawn(move || {
+            if let Ok((stream, _)) = listener.accept() {
+                handle_client(stream, &snap_clone, port);
+            }
+        });
+
+        let mut client = std::net::TcpStream::connect(addr).unwrap();
+        use std::io::{Read, Write};
+        client
+            .write_all(b"GET /healthz HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .unwrap();
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        handle.join().unwrap();
+
+        assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
+        assert!(response.contains("{\"status\":\"ok\"}"));
     }
 }
