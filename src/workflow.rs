@@ -1,5 +1,5 @@
 use crate::frontmatter::{parse_front_matter_detailed, render_full_document};
-use crate::model::{ActivityEvent, IdeaMeta, Resolution, Status, WorkType};
+use crate::model::{ActivityEvent, IdeaMeta, Kind, Resolution, Status, WorkType};
 use crate::vault::{atomic_write, collect_ideas};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -903,9 +903,12 @@ pub fn is_item_ready(
     true
 }
 
-pub fn next_ready_items(
+pub fn next_ready_items_filtered(
     all_items: &[IdeaMeta],
     project: Option<&str>,
+    kind: Option<Kind>,
+    item_type: Option<WorkType>,
+    tag: Option<&str>,
     limit: usize,
 ) -> Vec<IdeaMeta> {
     let now = chrono::Utc::now().timestamp();
@@ -919,6 +922,26 @@ pub fn next_ready_items(
         .filter(|item| {
             if let Some(p) = project {
                 if !item.project.eq_ignore_ascii_case(p.trim()) {
+                    return false;
+                }
+            }
+            if let Some(k) = kind {
+                if item.kind != k {
+                    return false;
+                }
+            }
+            if let Some(t) = item_type {
+                if item.work_type() != t {
+                    return false;
+                }
+            }
+            if let Some(tag_str) = tag {
+                let tag_norm = tag_str.trim().to_ascii_lowercase();
+                let has_tag = item
+                    .tags_list()
+                    .iter()
+                    .any(|t| t.to_ascii_lowercase() == tag_norm);
+                if !has_tag {
                     return false;
                 }
             }
@@ -937,6 +960,15 @@ pub fn next_ready_items(
         ready.truncate(limit);
     }
     ready
+}
+
+#[allow(dead_code)]
+pub fn next_ready_items(
+    all_items: &[IdeaMeta],
+    project: Option<&str>,
+    limit: usize,
+) -> Vec<IdeaMeta> {
+    next_ready_items_filtered(all_items, project, None, None, None, limit)
 }
 
 #[cfg(test)]
@@ -1495,6 +1527,17 @@ mod tests {
         assert!(ready_ids.contains(&"task01"));
         assert!(ready_ids.contains(&"bug01"));
         assert!(!ready_ids.contains(&"idea01"));
+
+        // Test filtered by type
+        let bugs =
+            next_ready_items_filtered(&items, Some("test"), None, Some(WorkType::Bug), None, 10);
+        assert_eq!(bugs.len(), 1);
+        assert_eq!(bugs[0].id, "bug01");
+
+        let tasks =
+            next_ready_items_filtered(&items, Some("test"), None, Some(WorkType::Task), None, 10);
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].id, "task01");
     }
 
     #[test]
