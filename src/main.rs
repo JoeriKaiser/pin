@@ -21,6 +21,62 @@ use vault::resolve_vault_path;
 
 const VERSION: &str = env!("PIN_VERSION");
 
+const COMMANDS: &[&str] = &[
+    "init",
+    "add",
+    "list",
+    "list-project",
+    "search",
+    "read",
+    "edit",
+    "rm",
+    "context",
+    "next",
+    "transition",
+    "claim",
+    "release",
+    "handoff",
+    "complete",
+    "close",
+    "depend",
+    "parent",
+    "relate",
+    "to-spec",
+    "doctor",
+    "archive",
+    "unarchive",
+    "import",
+    "export",
+    "stats",
+    "view",
+    "view-project",
+    "update",
+    "sync",
+];
+
+fn edit_distance(a: &str, b: &str) -> usize {
+    let b: Vec<char> = b.chars().collect();
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.chars().enumerate() {
+        let mut cur = vec![i + 1];
+        for (j, cb) in b.iter().enumerate() {
+            let cost = usize::from(ca != *cb);
+            cur.push((prev[j] + cost).min(prev[j + 1] + 1).min(cur[j] + 1));
+        }
+        prev = cur;
+    }
+    prev[b.len()]
+}
+
+fn closest_command(input: &str) -> Option<&'static str> {
+    COMMANDS
+        .iter()
+        .map(|c| (edit_distance(input, c), *c))
+        .filter(|(d, _)| *d <= 2)
+        .min_by_key(|(d, _)| *d)
+        .map(|(_, c)| c)
+}
+
 fn run() -> CliResult<()> {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
@@ -69,9 +125,12 @@ fn run() -> CliResult<()> {
         "update" | "upgrade" => commands::update::update(&args, cmd, &vault_path)?,
         "sync" => commands::sync::sync(&args, cmd, &vault_path)?,
         unknown => {
+            let hint = closest_command(unknown)
+                .map(|c| format!(" Did you mean '{c}'?"))
+                .unwrap_or_default();
             return Err(CliError::UsageWithHelp(format!(
-                "Unknown command '{unknown}'"
-            )))
+                "Unknown command '{unknown}'.{hint}"
+            )));
         }
     }
 
@@ -95,5 +154,17 @@ fn main() {
             process::exit(1);
         }
         Err(CliError::Exit(code)) => process::exit(code),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::closest_command;
+
+    #[test]
+    fn suggests_near_misses_only() {
+        assert_eq!(closest_command("lst"), Some("list"));
+        assert_eq!(closest_command("cliam"), Some("claim"));
+        assert_eq!(closest_command("frobnicate"), None);
     }
 }
