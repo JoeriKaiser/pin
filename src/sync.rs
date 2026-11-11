@@ -536,7 +536,12 @@ pub fn reconcile_and_sync(
 
     for meta in candidates {
         let git_info = resolver.resolve_item(&meta.id);
-        if git_info.status != GitItemStatus::Merged {
+        let is_merged = git_info.status == GitItemStatus::Merged;
+        let is_archived_or_closed = meta.archived_at.is_some()
+            || meta.current_status() == Status::Closed
+            || meta.current_status() == Status::Cancelled;
+
+        if !is_merged && !is_archived_or_closed {
             continue;
         }
 
@@ -545,8 +550,15 @@ pub fn reconcile_and_sync(
         } else if let Some(oid) = &git_info.commit_oid {
             let short = if oid.len() >= 12 { &oid[..12] } else { oid };
             format!("Merged in commit {short}")
-        } else {
+        } else if is_merged {
             "Merged into main".to_string()
+        } else {
+            meta.resolution_note.clone().unwrap_or_else(|| {
+                format!(
+                    "Archived ({})",
+                    meta.resolution.map(|r| r.as_str()).unwrap_or("closed")
+                )
+            })
         };
         let wt_path = repo_path.join(".pin_worktrees").join(&meta.id);
         let branch_name = format!("pin/{}", meta.id);
@@ -565,13 +577,23 @@ pub fn reconcile_and_sync(
             results.push(SyncResult {
                 id: meta.id.clone(),
                 title: meta.title.clone(),
-                status: "merged".to_string(),
+                status: if is_merged {
+                    "merged".to_string()
+                } else {
+                    "archived".to_string()
+                },
                 action: if dry_run {
                     "dry_run".to_string()
                 } else {
                     "skipped_dirty".to_string()
                 },
-                resolution: "implemented".to_string(),
+                resolution: if is_merged {
+                    "implemented".to_string()
+                } else {
+                    meta.resolution
+                        .map(|r| r.as_str().to_string())
+                        .unwrap_or_else(|| "closed".to_string())
+                },
                 resolution_note,
                 worktree_removed: false,
                 branch_deleted: false,
@@ -630,10 +652,24 @@ pub fn reconcile_and_sync(
             results.push(SyncResult {
                 id: meta.id.clone(),
                 title: meta.title.clone(),
-                status: "merged".to_string(),
-                action: "archived".to_string(),
-                resolution: "implemented".to_string(),
-                resolution_note,
+                status: if is_merged {
+                    "merged".to_string()
+                } else {
+                    "archived".to_string()
+                },
+                action: if meta.archived_at.is_some() {
+                    "synced".to_string()
+                } else {
+                    "archived".to_string()
+                },
+                resolution: if is_merged {
+                    "implemented".to_string()
+                } else {
+                    meta.resolution
+                        .map(|r| r.as_str().to_string())
+                        .unwrap_or_else(|| "closed".to_string())
+                },
+                resolution_note: resolution_note.clone(),
                 worktree_removed,
                 branch_deleted,
                 pr_number: git_info.pr_number,
@@ -645,9 +681,19 @@ pub fn reconcile_and_sync(
             results.push(SyncResult {
                 id: meta.id.clone(),
                 title: meta.title.clone(),
-                status: "merged".to_string(),
+                status: if is_merged {
+                    "merged".to_string()
+                } else {
+                    "archived".to_string()
+                },
                 action: "dry_run".to_string(),
-                resolution: "implemented".to_string(),
+                resolution: if is_merged {
+                    "implemented".to_string()
+                } else {
+                    meta.resolution
+                        .map(|r| r.as_str().to_string())
+                        .unwrap_or_else(|| "closed".to_string())
+                },
                 resolution_note,
                 worktree_removed: should_remove_worktree,
                 branch_deleted: had_branch && !worktree_preserved_dirty,
@@ -1191,6 +1237,52 @@ mod tests {
         let res = reconcile_and_sync(&vault, &repo, None, None, false, false, Some("agent:sync"))
             .unwrap();
         assert_eq!(res.len(), 1);
+        assert!(res[0].worktree_removed);
+        assert!(res[0].branch_deleted);
+        assert!(!wt.exists());
+        assert!(!branch_exists(&repo, &format!("pin/{item_id}")));
+    }
+
+    #[test]
+    fn test_reconcile_and_sync_cleans_up_rejected_archived_worktree() {
+        let dir = tempdir().unwrap();
+        let repo = dir.path().join("repo");
+        let vault = dir.path().join("vault");
+        fs::create_dir_all(&repo).unwrap();
+        fs::create_dir_all(&vault).unwrap();
+        setup_git_repo(&repo);
+
+        let item_id = "rejectedwt12";
+        let file_path = vault.join(format!("{item_id}.md"));
+        let mut meta = IdeaMeta::new_work_item(
+            item_id.to_string(),
+            "test-proj".to_string(),
+            "Rejected WT Test".to_string(),
+            "Body".to_string(),
+            crate::model::Kind::Technical,
+            crate::model::WorkType::Task,
+            Status::Closed,
+            None,
+            None,
+            Some("human:tester".to_string()),
+        );
+        meta.archived_at = Some(1780000000);
+        meta.resolution = Some(Resolution::Rejected);
+        meta.resolution_note = Some("Abandoning approach".to_string());
+        let rendered = crate::frontmatter::render_full_document(&meta);
+        fs::write(&file_path, rendered).unwrap();
+
+        // Provision worktree and branch without any merge commit on main
+        let wt = WorktreeManager::provision_worktree(&repo, item_id).unwrap();
+        assert!(wt.exists());
+        assert!(branch_exists(&repo, &format!("pin/{item_id}")));
+
+        // Sync must clean up the unmerged worktree and branch because the item is archived/closed
+        let res = reconcile_and_sync(&vault, &repo, None, None, false, false, Some("agent:sync"))
+            .unwrap();
+        assert_eq!(res.len(), 1);
+        assert_eq!(res[0].status, "archived");
+        assert_eq!(res[0].resolution, "rejected");
         assert!(res[0].worktree_removed);
         assert!(res[0].branch_deleted);
         assert!(!wt.exists());
