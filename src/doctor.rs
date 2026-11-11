@@ -4,7 +4,7 @@ use crate::frontmatter::{
 use crate::model::{IdeaMeta, OutputFormat, Status};
 use crate::vault::atomic_write;
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 
@@ -156,6 +156,62 @@ pub fn scan_vault(vault_path: &Path) -> VaultScan {
         }
     }
     scan.issues.extend(unresolved);
+
+    // Detect self-dependencies and transitive dependency cycles that leave
+    // items permanently unready in `pin next`.
+    let mut dep_map: HashMap<&str, Vec<&str>> = HashMap::new();
+    for meta in &scan.metas {
+        let deps: Vec<&str> = meta.depends_on.iter().map(|s| s.as_str()).collect();
+        dep_map.insert(meta.id.as_str(), deps);
+    }
+
+    let mut cycle_issues = Vec::new();
+    for meta in &scan.metas {
+        for dep_id in &meta.depends_on {
+            if dep_id == &meta.id {
+                cycle_issues.push(Issue {
+                    severity: Severity::Warning,
+                    code: "self_dependency".to_string(),
+                    filename: meta.filename.clone(),
+                    message: format!(
+                        "Depends on itself ('{dep_id}'), which can never be satisfied"
+                    ),
+                    field: Some("depends_on".to_string()),
+                });
+                continue;
+            }
+
+            let mut visited = HashSet::new();
+            let mut queue = vec![dep_id.as_str()];
+            let mut found_cycle = false;
+            while let Some(curr) = queue.pop() {
+                if curr == meta.id.as_str() {
+                    found_cycle = true;
+                    break;
+                }
+                if visited.insert(curr) {
+                    if let Some(neighbors) = dep_map.get(curr) {
+                        for next in neighbors {
+                            queue.push(*next);
+                        }
+                    }
+                }
+            }
+            if found_cycle {
+                cycle_issues.push(Issue {
+                    severity: Severity::Warning,
+                    code: "dependency_cycle".to_string(),
+                    filename: meta.filename.clone(),
+                    message: format!(
+                        "Dependency cycle detected: '{dep_id}' leads back to '{}'",
+                        meta.id
+                    ),
+                    field: Some("depends_on".to_string()),
+                });
+            }
+        }
+    }
+    scan.issues.extend(cycle_issues);
 
     scan
 }
@@ -448,6 +504,42 @@ mod tests {
         assert!(
             !scan.issues.iter().any(|i| i.filename == "0123456789dd.md"),
             "a completed dependency must not be reported"
+        );
+    }
+
+    #[test]
+    fn test_self_and_cycle_dependencies_are_reported() {
+        let dir = tempdir().unwrap();
+        // Self dependency: xx -> xx
+        write_item(
+            dir.path(),
+            "0123456789xx",
+            Status::Planned,
+            vec!["0123456789xx"],
+        );
+        // Cycle: yy -> zz -> yy
+        write_item(
+            dir.path(),
+            "0123456789yy",
+            Status::Planned,
+            vec!["0123456789zz"],
+        );
+        write_item(
+            dir.path(),
+            "0123456789zz",
+            Status::Planned,
+            vec!["0123456789yy"],
+        );
+
+        let scan = scan_vault(dir.path());
+        let codes: Vec<&str> = scan.issues.iter().map(|i| i.code.as_str()).collect();
+        assert!(
+            codes.contains(&"self_dependency"),
+            "self dependency must be reported: {codes:?}"
+        );
+        assert!(
+            codes.contains(&"dependency_cycle"),
+            "dependency cycle must be reported: {codes:?}"
         );
     }
 
