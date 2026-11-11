@@ -7,7 +7,8 @@ import {
 import {
   openSpecModal, closeSpecModal, setSpecModalTab, SPEC_SNIPPETS,
   expandQuickAdd, collapseQuickAdd, triggerModalSubmit,
-  openWorktreeModal, closeWorktreeModal
+  openWorktreeModal, closeWorktreeModal,
+  openShortcutsModal, closeShortcutsModal
 } from './forms.js';
 import {
   getClipboardImages, uploadScreenshot, handleScreenshotPaste
@@ -23,7 +24,8 @@ import {
   buildBoardCard, handleCardDrop, setViewMode, renderBoard, computeRenderKey
 } from './board.js';
 import {
-  bind, sendRunItem, sendCommitPrItem, handleUpdateInstall, handleGitSync, sendAgentChatMessage
+  bind, sendRunItem, sendCommitPrItem, handleUpdateInstall, handleGitSync, sendAgentChatMessage,
+  initTheme, toggleTheme
 } from './bind.js';
 import { ingest, checkUpdate, connectEvents, refreshData } from './boot.js';
 import { setRoute } from './router.js';
@@ -67,6 +69,10 @@ if (typeof window !== 'undefined') {
     handleScreenshotPaste: handleScreenshotPaste,
     openWorktreeModal: openWorktreeModal,
     closeWorktreeModal: closeWorktreeModal,
+    openShortcutsModal: openShortcutsModal,
+    closeShortcutsModal: closeShortcutsModal,
+    initTheme: initTheme,
+    toggleTheme: toggleTheme,
     sendCommitPrItem: sendCommitPrItem,
     sendRunItem: sendRunItem,
     buildBoardCard: buildBoardCard,

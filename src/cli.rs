@@ -34,13 +34,13 @@ pub fn print_usage() {
          [--title <title>] [--tags <csv>] [--priority low|medium|high]\n                 \
          [--allow-duplicate] [--format json|plain]\n  \
          list [--project <name>] [--tag <name>] [--kind <kind>] [--type <type>]\n       \
-         [--status <status>] [--claimed-by <actor>] [--ready]\n       \
+         [--status <status>] [--claimed-by <actor>] [--parent <id>] [--ready]\n       \
          [--archived|--all] [--format json|table|plain]\n  \
          list-project [--tag <name>] [--kind <kind>] [--type <type>]\n               \
-         [--status <status>] [--claimed-by <actor>] [--ready] [--archived|--all]\n               \
+         [--status <status>] [--claimed-by <actor>] [--parent <id>] [--ready] [--archived|--all]\n               \
          [--format json|table|plain]\n  \
          search <query> [--project <name>] [--tag <name>] [--kind <kind>]\n                 \
-         [--type <type>] [--status <status>] [--claimed-by <actor>]\n                 \
+         [--type <type>] [--status <status>] [--claimed-by <actor>] [--parent <id>]\n                 \
          [--limit <n>] [--archived|--all] [--format json|table|plain]\n  \
          context [--project <name>] [--kind <kind>] [--type <type>] [--status <status>]\n          \
          [--limit <n>] [--group kind] [--archived|--all] [--format json|plain]\n  \
@@ -49,7 +49,7 @@ pub fn print_usage() {
          [--note <text>] [--expect-revision <n>] [--worktree] [--format json|plain]\n  \
          claim <id|prefix|filename> [--actor <name>] [--lease <seconds>]\n        \
          [--expect-revision <n>] [--worktree] [--format json|plain]\n  \
-         release <id|prefix|filename> [--actor <name>] [--force]\n          \
+         release|unclaim <id|prefix|filename> [--actor <name>] [--force]\n          \
          [--expect-revision <n>] [--format json|plain]\n  \
          handoff <id|prefix|filename> [--actor <name>] [--progress <text>]\n          \
          [--next <text>] [--blocker <text>] [--verification <text>]\n          \
@@ -73,7 +73,7 @@ pub fn print_usage() {
          unarchive <id|prefix|filename> [--format json|plain]\n  \
          read <id|prefix|filename> [--format json|plain]\n  \
          edit <id|prefix|filename> [--format json|plain]\n  \
-         rm <id|prefix|filename> [--format json|plain]\n  \
+         rm <id|prefix|filename>... [--format json|plain]\n  \
          import <directory> [--force] [--format json|plain]\n  \
          export <directory> [--force] [--format json|plain]\n  \
          stats [--project <name>] [--format json|plain]\n  \

@@ -88,6 +88,8 @@ if HOME="$TMP/home" PIN_ACTOR=agent:test "$PIN_BIN" handoff "$wf_id" --format js
     fail "handoff accepted a call with no progress, next, blocker, or verification"
 fi
 HOME="$TMP/home" PIN_ACTOR=agent:test "$PIN_BIN" release "$wf_id" --format json | grep -q '"status":"planned"'
+HOME="$TMP/home" PIN_ACTOR=agent:test "$PIN_BIN" claim "$wf_id" --format json >/dev/null
+HOME="$TMP/home" PIN_ACTOR=agent:test "$PIN_BIN" unclaim "$wf_id" --format json | grep -q '"status":"planned"'
 if HOME="$TMP/home" "$PIN_BIN" transition "$wf_id" --to done --expect-revision 0 >/dev/null 2>&1; then
     fail "stale revision was accepted"
 fi
@@ -95,6 +97,22 @@ HOME="$TMP/home" PIN_ACTOR=agent:test "$PIN_BIN" claim "$wf_id" --format json >/
 HOME="$TMP/home" PIN_ACTOR=agent:test "$PIN_BIN" complete "$wf_id" --evidence 'Direct completion path' --format json | grep -q '"status":"done"'
 HOME="$TMP/home" PIN_ACTOR=agent:test "$PIN_BIN" close "$wf_id" --format json | grep -q '"status":"closed"'
 HOME="$TMP/home" "$PIN_BIN" rm "$wf_id" --format json >/dev/null
+
+rm_cleanup_item=$(HOME="$TMP/home" "$PIN_BIN" add '# Cleanup test' --kind technical --type task --format json)
+rm_cleanup_id=$(printf '%s' "$rm_cleanup_item" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+touch "$TMP/repo/.pin_vault/.$rm_cleanup_id.md.lock"
+touch "$TMP/repo/.pin_vault/.$rm_cleanup_id.edit-recovery.tmp"
+HOME="$TMP/home" "$PIN_BIN" rm "$rm_cleanup_id" --format json >/dev/null
+[ ! -f "$TMP/repo/.pin_vault/.$rm_cleanup_id.md.lock" ] || fail "rm left behind an orphaned lock file"
+[ ! -f "$TMP/repo/.pin_vault/.$rm_cleanup_id.edit-recovery.tmp" ] || fail "rm left behind an orphaned recovery file"
+
+multi_a=$(HOME="$TMP/home" "$PIN_BIN" add '# Multi A' --kind technical --type task --format json | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+multi_b=$(HOME="$TMP/home" "$PIN_BIN" add '# Multi B' --kind technical --type task --format json | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+multi_rm_res=$(HOME="$TMP/home" "$PIN_BIN" rm "$multi_a" "$multi_b" --format json)
+echo "$multi_rm_res" | grep -q "$multi_a" || fail "multi rm did not report multi_a deletion"
+echo "$multi_rm_res" | grep -q "$multi_b" || fail "multi rm did not report multi_b deletion"
+[ ! -f "$TMP/repo/.pin_vault/$multi_a.md" ] || fail "multi_a was not removed"
+[ ! -f "$TMP/repo/.pin_vault/$multi_b.md" ] || fail "multi_b was not removed"
 
 # A run that ends after the user moved the item must not reset the status
 preserve_item=$(HOME="$TMP/home" "$PIN_BIN" add '# Status preservation' --kind technical --type task --format json)
@@ -257,6 +275,11 @@ dependent=$(PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN
 dependent_id=$(printf '%s' "$dependent" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
 PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" depend "$dependent_id" "$dependency_id" --format json | grep -q '"action":"dependency_added"'
 PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" parent "$dependent_id" "$dependency_id" --format json | grep -q '"parent_id":"'
+parent_filtered=$(PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" list-project --parent "$dependency_id" --format json)
+assert_contains "$parent_filtered" "$dependent_id"
+if printf '%s' "$parent_filtered" | grep -q '"id":"'"$dependency_id"'"'; then
+    fail "parent filter returned the parent item instead of only child items"
+fi
 PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" relate "$dependent_id" "$dependency_id" --format json | grep -q '"related":\['
 PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" transition "$dependency_id" --to planned --format json >/dev/null
 PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" transition "$dependent_id" --to planned --format json >/dev/null
@@ -341,6 +364,9 @@ first_title=$(printf '%s' "$ranked" | sed -n 's/^\[{[^}]*"title":"\([^"]*\)".*/\
 assert_contains "$ranked" '"score":'
 limited=$(PIN_VAULT="$TMP/search-vault" PIN_PROJECT=search "$PIN_BIN" search 'ranked results' --limit 1 --format json)
 [ "$(printf '%s' "$limited" | grep -o '"id"' | wc -l | tr -d ' ')" -eq 1 ] || fail "search did not honor --limit"
+PIN_VAULT="$TMP/search-vault" PIN_PROJECT=search "$PIN_BIN" add '# Tagged Item' --kind technical --tags 'reliability,staging' --format json >/dev/null
+tag_search=$(PIN_VAULT="$TMP/search-vault" PIN_PROJECT=search "$PIN_BIN" search '#staging' --format json)
+assert_contains "$tag_search" '"title":"Tagged Item"'
 
 mkdir -p "$TMP/broken-vault"
 printf '%s\n' 'not a pin' >"$TMP/broken-vault/broken.md"

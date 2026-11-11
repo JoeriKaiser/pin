@@ -11,7 +11,8 @@ import {
   SPEC_SNIPPETS, collectTicketFields, expandQuickAdd, collapseQuickAdd, submitQuickAdd,
   openSpecModal, closeSpecModal, setSpecModalTab, submitSpecModal,
   closeActionModal, triggerModalSubmit, openCompleteModal, openBlockedModal, openCloseModal,
-  convertIdeaToSpec, setFormCallbacks, openWorktreeModal, closeWorktreeModal
+  convertIdeaToSpec, setFormCallbacks, openWorktreeModal, closeWorktreeModal,
+  openShortcutsModal, closeShortcutsModal
 } from './forms.js';
 import {
   openAgentDrawer, closeAgentDrawer, updateActiveRuns, toggleAllToolCards,
@@ -364,6 +365,9 @@ export function bindForms() {
   }
   if (els.btnWorktreeClose) els.btnWorktreeClose.addEventListener('click', closeWorktreeModal);
   if (els.btnWorktreeCancel) els.btnWorktreeCancel.addEventListener('click', closeWorktreeModal);
+  if (els.btnShortcuts) els.btnShortcuts.addEventListener('click', openShortcutsModal);
+  if (els.shortcutsModalCloseBtn) els.shortcutsModalCloseBtn.addEventListener('click', closeShortcutsModal);
+  if (els.btnThemeToggle) els.btnThemeToggle.addEventListener('click', toggleTheme);
   if (els.btnWorktreePrimary) {
     els.btnWorktreePrimary.addEventListener('click', function () {
       var item = state.pendingWorktreeItem;
@@ -446,6 +450,10 @@ export function bindGlobalShortcuts() {
       if (event.key === 'Escape') { event.preventDefault(); closeRunnerDialog(); }
       return;
     }
+    if (els.shortcutsModal && (els.shortcutsModal.open || els.shortcutsModal.hasAttribute('open'))) {
+      if (event.key === 'Escape') { event.preventDefault(); closeShortcutsModal(); }
+      return;
+    }
     if (event.key === 'Escape') {
       if (els.quickAddForm && !els.quickAddForm.hidden) { event.preventDefault(); collapseQuickAdd(); return; }
       if (els.worktreeModal && (els.worktreeModal.open || els.worktreeModal.hasAttribute('open'))) { event.preventDefault(); closeWorktreeModal(); return; }
@@ -497,6 +505,7 @@ export function bindGlobalShortcuts() {
     }
     if (input || event.metaKey || event.ctrlKey || event.altKey) return;
     if (event.key === 'n' || event.key === 'c') { event.preventDefault(); openSpecModal(); return; }
+    if (event.key === '?' || (event.key === '/' && event.shiftKey)) { event.preventDefault(); openShortcutsModal(); return; }
     if (event.key !== 'j' && event.key !== 'k' && event.key !== 'Enter') return;
     var idx = state.shown.findIndex(function (item) { return item.id === state.selected; });
     if (event.key === 'j' || event.key === 'k') {
@@ -510,7 +519,53 @@ export function bindGlobalShortcuts() {
   });
 }
 
+export function initTheme() {
+  if (typeof document === 'undefined' || !document.documentElement || typeof document.documentElement.getAttribute !== 'function') return;
+  var saved = null;
+  try {
+    if (typeof localStorage !== 'undefined' && localStorage && typeof localStorage.getItem === 'function') {
+      saved = localStorage.getItem('pin-theme');
+    }
+  } catch (_) {}
+  if (saved === 'dark' || saved === 'light') {
+    document.documentElement.setAttribute('data-theme', saved);
+  }
+}
+
+export function toggleTheme() {
+  if (typeof document === 'undefined' || !document.documentElement || typeof document.documentElement.getAttribute !== 'function') return;
+  var current = document.documentElement.getAttribute('data-theme');
+  var next = null;
+  if (!current) {
+    var isDark = typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    next = isDark ? 'light' : 'dark';
+  } else if (current === 'dark') {
+    next = 'light';
+  } else {
+    next = null;
+  }
+
+  try {
+    if (next) {
+      if (typeof document.documentElement.setAttribute === 'function') {
+        document.documentElement.setAttribute('data-theme', next);
+      }
+      if (typeof localStorage !== 'undefined' && localStorage && typeof localStorage.setItem === 'function') {
+        localStorage.setItem('pin-theme', next);
+      }
+    } else {
+      if (typeof document.documentElement.removeAttribute === 'function') {
+        document.documentElement.removeAttribute('data-theme');
+      }
+      if (typeof localStorage !== 'undefined' && localStorage && typeof localStorage.removeItem === 'function') {
+        localStorage.removeItem('pin-theme');
+      }
+    }
+  } catch (_) {}
+}
+
 export function bind(options) {
+  initTheme();
   if (options) setBindCallbacks(options);
 
   // Wire callbacks into earlier modules

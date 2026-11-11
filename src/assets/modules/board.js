@@ -117,6 +117,7 @@ export function buildBoardCard(item) {
 
     var viewRunBtn = node('button', 'btn-view-run', 'View Run');
     viewRunBtn.type = 'button';
+    viewRunBtn.setAttribute('aria-label', 'View run for ' + (item.title || item.id));
     viewRunBtn.addEventListener('click', function (e) {
       if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
       callbacks.openAgentDrawer(item.id);
@@ -135,6 +136,7 @@ export function buildBoardCard(item) {
         prLink.target = '_blank';
         prLink.rel = 'noopener noreferrer';
         prLink.title = 'Open Pull Request: ' + (item.pr_url || '');
+        prLink.setAttribute('aria-label', 'View pull request for ' + (item.title || item.id));
         prLink.addEventListener('click', function (e) {
           if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
         });
@@ -147,6 +149,7 @@ export function buildBoardCard(item) {
         var commitPrBtn = node('button', 'btn-commit-pr', 'Commit + PR');
         commitPrBtn.type = 'button';
         commitPrBtn.title = 'Start agent to commit worktree and create PR';
+        commitPrBtn.setAttribute('aria-label', 'Commit worktree and create pull request for ' + (item.title || item.id));
         commitPrBtn.addEventListener('click', function (e) {
           if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
           callbacks.sendCommitPrItem(item.id);
@@ -157,6 +160,7 @@ export function buildBoardCard(item) {
       var archiveBtn = node('button', 'btn-archive', 'Archive');
       archiveBtn.type = 'button';
       archiveBtn.title = 'Archive item';
+      archiveBtn.setAttribute('aria-label', 'Archive ' + (item.title || item.id));
       archiveBtn.addEventListener('click', function (e) {
         if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
         archiveBtn.disabled = true;
@@ -333,4 +337,11 @@ export function renderBoard() {
   text(els.countBlocked, counts.blocked);
   text(els.countDone, counts.done);
   text(els.countClosed, counts.closed);
+
+  var totalItems = (state.items || []).length;
+  var shownItems = (state.shown || []).length;
+  var countText = shownItems === totalItems
+    ? totalItems + (totalItems === 1 ? ' item' : ' items')
+    : shownItems + ' of ' + totalItems;
+  text(els.count, countText);
 }

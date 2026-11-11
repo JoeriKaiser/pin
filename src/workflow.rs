@@ -89,6 +89,7 @@ impl From<io::Error> for WorkflowError {
     }
 }
 
+#[derive(Debug)]
 pub struct FileLock {
     path: PathBuf,
 }
@@ -98,7 +99,11 @@ impl FileLock {
         let lock_filename = format!(".{filename}.lock");
         let lock_path = vault_path.join(lock_filename);
         let start = Instant::now();
-        let timeout = Duration::from_secs(3);
+        let timeout = std::env::var("PIN_LOCK_TIMEOUT_MS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .map(Duration::from_millis)
+            .unwrap_or_else(|| Duration::from_secs(3));
 
         while start.elapsed() < timeout {
             match fs::OpenOptions::new()
@@ -130,8 +135,14 @@ impl FileLock {
             }
         }
 
+        let duration_desc = if timeout.as_secs() > 0 && timeout.subsec_millis() == 0 {
+            format!("{} seconds", timeout.as_secs())
+        } else {
+            format!("{} ms", timeout.as_millis())
+        };
+
         Err(WorkflowError::LockConflict(format!(
-            "Could not acquire lock on {filename} within 3 seconds"
+            "Could not acquire lock on {filename} within {duration_desc}"
         )))
     }
 }
@@ -804,6 +815,11 @@ pub fn parent_item(
     expect_revision: Option<u64>,
 ) -> Result<IdeaMeta, WorkflowError> {
     let (mut meta, _lock) = load_and_lock(vault_path, filename, expect_revision)?;
+    if meta.id == parent_id {
+        return Err(WorkflowError::DependencyCycle(
+            "An item cannot be its own parent".to_string(),
+        ));
+    }
     meta.parent_id = Some(parent_id.to_string());
     let now = chrono::Utc::now().timestamp();
     let actor_str = actor.unwrap_or("agent:default").to_string();
@@ -829,6 +845,11 @@ pub fn relate_item(
     expect_revision: Option<u64>,
 ) -> Result<IdeaMeta, WorkflowError> {
     let (mut meta, _lock) = load_and_lock(vault_path, filename, expect_revision)?;
+    if related_id == meta.id {
+        return Err(WorkflowError::DependencyCycle(
+            "An item cannot relate to itself".to_string(),
+        ));
+    }
     if !meta.related.iter().any(|r| r == related_id) {
         meta.related.push(related_id.to_string());
     }
@@ -1258,6 +1279,24 @@ mod tests {
     }
 
     #[test]
+    fn test_parent_item_rejects_self_parent() {
+        let dir = tempdir().unwrap();
+        let f1 = setup_test_item(dir.path(), "012345678901", Status::Planned, None);
+
+        let res = parent_item(dir.path(), &f1, "012345678901", None, None);
+        assert!(matches!(res, Err(WorkflowError::DependencyCycle(_))));
+    }
+
+    #[test]
+    fn test_relate_item_rejects_self_relate() {
+        let dir = tempdir().unwrap();
+        let f1 = setup_test_item(dir.path(), "012345678901", Status::Planned, None);
+
+        let res = relate_item(dir.path(), &f1, "012345678901", None, None);
+        assert!(matches!(res, Err(WorkflowError::DependencyCycle(_))));
+    }
+
+    #[test]
     fn test_revision_conflict() {
         let dir = tempdir().unwrap();
         let filename = setup_test_item(dir.path(), "0123456789cc", Status::Planned, None);
@@ -1544,5 +1583,27 @@ mod tests {
         assert!(transformed.body.contains("## Problem & Context"));
         assert_eq!(transformed.current_revision(), 2);
         assert_eq!(transformed.activity.last().unwrap().action, "transform");
+    }
+
+    #[test]
+    fn test_lock_timeout_configurable_via_env() {
+        let dir = tempdir().unwrap();
+        let lock_path = dir.path().join(".test_timeout.md.lock");
+        fs::write(&lock_path, "1234:999999").unwrap();
+
+        std::env::set_var("PIN_LOCK_TIMEOUT_MS", "60");
+        let start = Instant::now();
+        let result = FileLock::acquire(dir.path(), "test_timeout.md");
+        let elapsed = start.elapsed();
+        std::env::remove_var("PIN_LOCK_TIMEOUT_MS");
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            WorkflowError::LockConflict(msg) => {
+                assert!(msg.contains("within 60 ms"));
+            }
+            other => panic!("Expected LockConflict, got {other:?}"),
+        }
+        assert!(elapsed < Duration::from_secs(1));
     }
 }

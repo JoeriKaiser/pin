@@ -213,6 +213,54 @@ pub fn scan_vault(vault_path: &Path) -> VaultScan {
     }
     scan.issues.extend(cycle_issues);
 
+    let mut parent_issues = Vec::new();
+    for meta in &scan.metas {
+        if let Some(parent_id) = &meta.parent_id {
+            if parent_id == &meta.id {
+                parent_issues.push(Issue {
+                    severity: Severity::Warning,
+                    code: "self_parent".to_string(),
+                    filename: meta.filename.clone(),
+                    message: format!("Item '{parent_id}' references itself as its parent"),
+                    field: Some("parent_id".to_string()),
+                });
+            } else if !statuses.contains_key(parent_id.as_str()) {
+                parent_issues.push(Issue {
+                    severity: Severity::Warning,
+                    code: "dangling_parent".to_string(),
+                    filename: meta.filename.clone(),
+                    message: format!("Parent '{parent_id}' is not in the vault"),
+                    field: Some("parent_id".to_string()),
+                });
+            }
+        }
+    }
+    scan.issues.extend(parent_issues);
+
+    let mut related_issues = Vec::new();
+    for meta in &scan.metas {
+        for rel_id in &meta.related {
+            if rel_id == &meta.id {
+                related_issues.push(Issue {
+                    severity: Severity::Warning,
+                    code: "self_related".to_string(),
+                    filename: meta.filename.clone(),
+                    message: format!("Item '{rel_id}' references itself in related links"),
+                    field: Some("related".to_string()),
+                });
+            } else if !statuses.contains_key(rel_id.as_str()) {
+                related_issues.push(Issue {
+                    severity: Severity::Warning,
+                    code: "dangling_related".to_string(),
+                    filename: meta.filename.clone(),
+                    message: format!("Related item '{rel_id}' is not in the vault"),
+                    field: Some("related".to_string()),
+                });
+            }
+        }
+    }
+    scan.issues.extend(related_issues);
+
     scan
 }
 
@@ -540,6 +588,98 @@ mod tests {
         assert!(
             codes.contains(&"dependency_cycle"),
             "dependency cycle must be reported: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn test_dangling_and_self_parent_are_reported() {
+        let dir = tempdir().unwrap();
+        // Dangling parent: parent not in vault
+        let raw_dangling = r#"---
+schema: 2
+id: "0123456789aa"
+project: "test"
+kind: "technical"
+status: "created"
+timestamp: 1700000000
+parent_id: "nonexistent00"
+title: "Child with missing parent"
+---
+# Child with missing parent
+"#;
+        fs::write(dir.path().join("0123456789aa.md"), raw_dangling).unwrap();
+
+        // Self parent: parent is self
+        let raw_self = r#"---
+schema: 2
+id: "0123456789bb"
+project: "test"
+kind: "technical"
+status: "created"
+timestamp: 1700000000
+parent_id: "0123456789bb"
+title: "Self parent item"
+---
+# Self parent item
+"#;
+        fs::write(dir.path().join("0123456789bb.md"), raw_self).unwrap();
+
+        let scan = scan_vault(dir.path());
+        let codes: Vec<&str> = scan.issues.iter().map(|i| i.code.as_str()).collect();
+        assert!(
+            codes.contains(&"dangling_parent"),
+            "dangling parent must be reported: {codes:?}"
+        );
+        assert!(
+            codes.contains(&"self_parent"),
+            "self parent must be reported: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn test_dangling_and_self_related_are_reported() {
+        let dir = tempdir().unwrap();
+        // Dangling related: related item not in vault
+        let raw_dangling = r#"---
+schema: 2
+id: "0123456789aa"
+project: "test"
+kind: "technical"
+status: "created"
+timestamp: 1700000000
+related:
+  - "nonexistent00"
+title: "Item with missing related"
+---
+# Item with missing related
+"#;
+        fs::write(dir.path().join("0123456789aa.md"), raw_dangling).unwrap();
+
+        // Self related: related is self
+        let raw_self = r#"---
+schema: 2
+id: "0123456789bb"
+project: "test"
+kind: "technical"
+status: "created"
+timestamp: 1700000000
+related:
+  - "0123456789bb"
+title: "Self related item"
+---
+# Self related item
+"#;
+        fs::write(dir.path().join("0123456789bb.md"), raw_self).unwrap();
+
+        let scan = scan_vault(dir.path());
+        let codes: Vec<&str> = scan.issues.iter().map(|i| i.code.as_str()).collect();
+        assert!(
+            codes.contains(&"dangling_related"),
+            "dangling related must be reported: {codes:?}"
+        );
+        assert!(
+            codes.contains(&"self_related"),
+            "self related must be reported: {codes:?}"
         );
     }
 

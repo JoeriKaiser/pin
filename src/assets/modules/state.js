@@ -108,7 +108,10 @@ export function matches(item) {
     item.title, item.project, item.id, item.type, item.status,
     item.claimed_by, tags(item).join(' '), item.content || item.body
   ].join('\n');
-  return norm(searchCorpus).indexOf(q) !== -1;
+  if (norm(searchCorpus).indexOf(q) !== -1) return true;
+  var cleanQ = q.replace(/^#/, '').replace(/^\[|\]$/g, '').trim();
+  if (cleanQ && norm(searchCorpus).indexOf(cleanQ) !== -1) return true;
+  return false;
 }
 
 export function updateShown() {

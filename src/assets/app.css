@@ -156,8 +156,92 @@
 }
 
 /* Dark Theme Palette (OKLCH) */
+:root[data-theme="dark"] {
+  --bg: oklch(0.14 0.015 255);
+  --surface: oklch(0.18 0.02 255);
+  --surface-raised: oklch(0.22 0.025 255);
+  --soft: oklch(0.25 0.025 255);
+  --selected: oklch(0.28 0.035 260);
+  --ink: oklch(0.95 0.006 250);
+  --muted: oklch(0.70 0.02 250);
+  --faint: oklch(0.52 0.025 250);
+  --line-subtle: oklch(0.20 0.02 255);
+  --line: oklch(0.26 0.025 255);
+  --line-strong: oklch(0.36 0.03 255);
+
+  /* Interactive Primary Accent (Dark) */
+  --accent: oklch(0.62 0.18 265);
+  --accent-hover: oklch(0.68 0.17 265);
+  --accent-subtle: oklch(0.24 0.06 265);
+  --accent-ink: #ffffff;
+  --focus: oklch(0.65 0.18 265);
+  --focus-ring: oklch(0.65 0.18 265 / 0.3);
+
+  /* Elevation & Shadows (Dark) */
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.5), 0 1px 2px -1px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 10px -2px rgba(0, 0, 0, 0.6), 0 2px 4px -2px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 14px 28px -4px rgba(0, 0, 0, 0.7);
+  --shadow-drawer: -8px 0 32px rgba(0, 0, 0, 0.8);
+  --shadow-inspector: -6px 0 24px rgba(0, 0, 0, 0.7);
+
+  /* Semantic Feedback (Dark) */
+  --success: oklch(0.22 0.05 150);
+  --success-ink: oklch(0.82 0.10 150);
+  --success-border: oklch(0.34 0.06 150);
+
+  --danger: oklch(0.24 0.06 25);
+  --danger-ink: oklch(0.82 0.12 25);
+  --danger-border: oklch(0.36 0.08 25);
+
+  --warning: oklch(0.24 0.06 75);
+  --warning-ink: oklch(0.84 0.11 75);
+  --warning-border: oklch(0.36 0.07 75);
+
+  /* Lifecycle Statuses (Dark) */
+  --status-created-bg: oklch(0.22 0.01 250);
+  --status-created-ink: oklch(0.76 0.015 250);
+  --status-created-border: oklch(0.30 0.015 250);
+  --status-created-accent: oklch(0.48 0.015 250);
+
+  --status-planned-bg: oklch(0.22 0.05 255);
+  --status-planned-ink: oklch(0.82 0.09 255);
+  --status-planned-border: oklch(0.34 0.07 255);
+  --status-planned-accent: oklch(0.62 0.15 255);
+
+  --status-inprogress-bg: oklch(0.22 0.05 150);
+  --status-inprogress-ink: oklch(0.82 0.12 150);
+  --status-inprogress-border: oklch(0.34 0.07 150);
+  --status-inprogress-accent: oklch(0.65 0.15 150);
+
+  --status-blocked-bg: oklch(0.24 0.06 25);
+  --status-blocked-ink: oklch(0.82 0.12 25);
+  --status-blocked-border: oklch(0.36 0.08 25);
+  --status-blocked-accent: oklch(0.65 0.16 25);
+
+  --status-done-bg: oklch(0.22 0.05 165);
+  --status-done-ink: oklch(0.82 0.11 165);
+  --status-done-border: oklch(0.34 0.07 165);
+  --status-done-accent: oklch(0.65 0.14 165);
+
+  --status-closed-bg: oklch(0.20 0.008 250);
+  --status-closed-ink: oklch(0.62 0.015 250);
+  --status-closed-border: oklch(0.28 0.015 250);
+  --status-closed-accent: oklch(0.40 0.01 250);
+
+  /* Priorities (Dark) */
+  --priority-high: oklch(0.66 0.17 25);
+  --priority-medium: oklch(0.74 0.14 75);
+  --priority-low: oklch(0.72 0.08 230);
+
+  /* Trajectory Roles & Swimlane (Dark) */
+  --role-model: oklch(0.72 0.15 290);
+  --role-tool: oklch(0.74 0.14 55);
+  --role-context: oklch(0.72 0.12 165);
+}
+
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: oklch(0.14 0.015 255);
     --surface: oklch(0.18 0.02 255);
     --surface-raised: oklch(0.22 0.025 255);
@@ -3264,6 +3348,62 @@ a:hover {
   color: var(--faint);
   font-family: var(--font-mono);
   margin-right: auto;
+}
+
+.shortcuts-modal {
+  max-width: min(92vw, 32rem);
+}
+
+.shortcuts-modal-body {
+  gap: var(--space-4);
+  font-size: var(--text-sm);
+}
+
+.shortcuts-section h3 {
+  margin: 0 0 var(--space-2) 0;
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  font-weight: var(--weight-bold);
+}
+
+.shortcuts-list {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.shortcut-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-1) 0;
+}
+
+.shortcut-row dt {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.shortcut-row kbd {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  padding: 0.15rem 0.4rem;
+  background: var(--soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  color: var(--ink);
+  line-height: var(--leading-none);
+  box-shadow: 0 1px 0 var(--line-strong);
+}
+
+.shortcut-row dd {
+  margin: 0;
+  color: var(--faint);
+  font-size: var(--text-sm);
 }
 
 .screenshot-ref {
