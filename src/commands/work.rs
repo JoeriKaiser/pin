@@ -240,6 +240,15 @@ pub fn handoff(args: &[String], command: &str, vault_path: &Path) -> CliResult<(
         reader.idx += 1;
     }
 
+    if [&progress, &next, &blocker, &verification]
+        .iter()
+        .all(|v| v.as_deref().map_or(true, |s| s.trim().is_empty()))
+    {
+        return Err(CliError::usage(
+            "'handoff' requires at least one of --progress, --next, --blocker, or --verification",
+        ));
+    }
+
     let filename =
         resolve_selector(&vault_path, selector).map_err(|e| CliError::usage(e.to_string()))?;
 
