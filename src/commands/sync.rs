@@ -25,8 +25,7 @@ pub fn sync(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> 
             }
             _ => {
                 if selector.is_none() {
-                    selector = Some(reader.next_val("selector")?.to_string());
-                    continue;
+                    selector = Some(arg.to_string());
                 } else {
                     return Err(CliError::usage(format!("Unexpected argument '{arg}'")));
                 }

@@ -511,9 +511,6 @@ pub fn reconcile_and_sync(
     let candidates: Vec<&IdeaMeta> = all_items
         .iter()
         .filter(|meta| {
-            if meta.archived_at.is_some() {
-                return false;
-            }
             if let Some(proj) = filter_project {
                 if !meta.project.eq_ignore_ascii_case(proj) {
                     return false;
@@ -522,8 +519,10 @@ pub fn reconcile_and_sync(
             if let Some(target) = target_id {
                 meta.id == target || meta.id.starts_with(target)
             } else {
-                // Only completed work can have a merged PR to reconcile.
+                // Completed work, or any work item that still has a stranded worktree or branch in this repo
                 meta.current_status() == Status::Done
+                    || repo_path.join(".pin_worktrees").join(&meta.id).exists()
+                    || branch_exists(repo_path, &format!("pin/{}", meta.id))
             }
         })
         .collect();
@@ -553,6 +552,11 @@ pub fn reconcile_and_sync(
         let branch_name = format!("pin/{}", meta.id);
         let had_worktree = wt_path.exists();
         let had_branch = branch_exists(repo_path, &branch_name);
+
+        if meta.archived_at.is_some() && !had_worktree && !had_branch {
+            continue;
+        }
+
         let is_dirty = had_worktree && has_uncommitted_changes(&wt_path);
         let should_remove_worktree = had_worktree && (!is_dirty || force);
         let worktree_preserved_dirty = had_worktree && is_dirty && !force;
@@ -580,15 +584,17 @@ pub fn reconcile_and_sync(
         }
 
         if !dry_run {
-            workflow::archive_item(
-                vault_path,
-                &meta.filename,
-                Resolution::Implemented,
-                actor,
-                Some(&resolution_note),
-                None,
-            )
-            .map_err(|e| format!("Failed to archive {}: {e}", meta.id))?;
+            if meta.archived_at.is_none() {
+                workflow::archive_item(
+                    vault_path,
+                    &meta.filename,
+                    Resolution::Implemented,
+                    actor,
+                    Some(&resolution_note),
+                    None,
+                )
+                .map_err(|e| format!("Failed to archive {}: {e}", meta.id))?;
+            }
             let mut worktree_removed = false;
             if should_remove_worktree
                 && WorktreeManager::remove_worktree(repo_path, &meta.id).is_ok()
@@ -1125,5 +1131,69 @@ mod tests {
         assert!(!res_force[0].worktree_preserved_dirty);
         assert!(res_force[0].worktree_removed);
         assert!(!wt.exists());
+    }
+
+    #[test]
+    fn test_reconcile_and_sync_cleans_up_archived_item_worktree() {
+        let dir = tempdir().unwrap();
+        let repo = dir.path().join("repo");
+        let vault = dir.path().join("vault");
+        fs::create_dir_all(&repo).unwrap();
+        fs::create_dir_all(&vault).unwrap();
+        setup_git_repo(&repo);
+
+        let item_id = "archivedwt12";
+        let file_path = vault.join(format!("{item_id}.md"));
+        let mut meta = IdeaMeta::new_work_item(
+            item_id.to_string(),
+            "test-proj".to_string(),
+            "Archived WT Test".to_string(),
+            "Body".to_string(),
+            crate::model::Kind::Technical,
+            crate::model::WorkType::Task,
+            Status::Done,
+            None,
+            None,
+            Some("human:tester".to_string()),
+        );
+        meta.archived_at = Some(1780000000);
+        meta.resolution = Some(Resolution::Implemented);
+        let rendered = crate::frontmatter::render_full_document(&meta);
+        fs::write(&file_path, rendered).unwrap();
+
+        // Provision worktree and branch
+        let wt = WorktreeManager::provision_worktree(&repo, item_id).unwrap();
+        assert!(wt.exists());
+        assert!(branch_exists(&repo, &format!("pin/{item_id}")));
+
+        // Simulate squash merge on main
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["checkout", "main"])
+            .output()
+            .unwrap();
+        fs::write(repo.join("file.txt"), "merged").unwrap();
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["add", "."])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["commit", "-m", &format!("feat: merged ({item_id})")])
+            .output()
+            .unwrap();
+
+        // Sync must clean up the worktree and branch even though item is already archived
+        let res = reconcile_and_sync(&vault, &repo, None, None, false, false, Some("agent:sync"))
+            .unwrap();
+        assert_eq!(res.len(), 1);
+        assert!(res[0].worktree_removed);
+        assert!(res[0].branch_deleted);
+        assert!(!wt.exists());
+        assert!(!branch_exists(&repo, &format!("pin/{item_id}")));
     }
 }

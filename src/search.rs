@@ -19,11 +19,18 @@ pub fn calculate_search_score(meta: &IdeaMeta, query: &str) -> Option<usize> {
     let tags_str = meta.tags.as_deref().unwrap_or("");
 
     for term in terms {
+        let clean_term = term
+            .trim_start_matches('#')
+            .trim_matches(|c| c == '[' || c == ']');
+        let in_id = contains_word_ignore_case(&meta.id, term)
+            || (!clean_term.is_empty() && contains_word_ignore_case(&meta.id, clean_term));
         let in_title = contains_word_ignore_case(&meta.title, term);
         let in_tags = contains_word_ignore_case(tags_str, term);
         let in_body = contains_word_ignore_case(&meta.body, term);
 
-        if in_title {
+        if in_id {
+            total_score += 100;
+        } else if in_title {
             total_score += 100;
         } else if in_tags {
             total_score += 50;
@@ -148,5 +155,24 @@ mod tests {
 
         // One term missing
         assert!(calculate_search_score(&idea, "cache database").is_none());
+    }
+
+    #[test]
+    fn test_search_matches_item_id_and_prefix() {
+        let idea = make_idea(
+            "6849b2e4e781",
+            "Fastlane Automation",
+            Some("ci"),
+            "Automate app store deployments.",
+            None,
+            100,
+        );
+
+        assert_eq!(calculate_search_score(&idea, "6849b2e4e781"), Some(100));
+        assert_eq!(calculate_search_score(&idea, "6849"), Some(100));
+        assert_eq!(calculate_search_score(&idea, "#6849"), Some(100));
+        assert_eq!(calculate_search_score(&idea, "[6849b2e4e781]"), Some(100));
+        assert_eq!(calculate_search_score(&idea, "6849 Fastlane"), Some(200));
+        assert!(calculate_search_score(&idea, "9999").is_none());
     }
 }

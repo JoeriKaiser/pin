@@ -128,6 +128,14 @@ function createMockElement(id, tagName = 'div') {
         preventDefault() {}
       });
     },
+    closest(sel) {
+      let cur = this;
+      while (cur) {
+        if (matchesSelector(cur, sel)) return cur;
+        cur = cur.parentNode;
+      }
+      return null;
+    },
     focus() {},
     blur() {}
   };
@@ -256,8 +264,24 @@ const documentMock = {
     if (sel.startsWith('#')) return [getOrCreateElement(sel.slice(1))];
     return [getOrCreateBySelector(sel)];
   },
-  addEventListener() {},
-  removeEventListener() {}
+  _listeners: {},
+  addEventListener(event, handler) {
+    if (!this._listeners[event]) this._listeners[event] = [];
+    this._listeners[event].push(handler);
+  },
+  removeEventListener(event, handler) {
+    if (!this._listeners[event]) return;
+    const idx = this._listeners[event].indexOf(handler);
+    if (idx !== -1) this._listeners[event].splice(idx, 1);
+  },
+  dispatchEvent(event) {
+    const evType = (event && event.type) || event;
+    const evObj = typeof event === 'object' ? event : { type: evType, target: this };
+    if (this._listeners && this._listeners[evType]) {
+      this._listeners[evType].forEach(h => h.call(this, evObj));
+    }
+    return true;
+  }
 };
 
 const localStorageMock = {
@@ -747,7 +771,53 @@ async function runHarness() {
   closeWorktreeModal();
 
   fetchStub = originalFetchAction;
-  console.log('PASS: Board card drop transition verified');
+
+  // Test ArrowRight/ArrowLeft navigation across columns
+  const colA = createMockElement('col-created', 'div');
+  colA.classList.add('board-col');
+  const colACards = createMockElement('', 'div');
+  colACards.classList.add('board-col-cards');
+  colA.appendChild(colACards);
+
+  const colB = createMockElement('col-planned', 'div');
+  colB.classList.add('board-col');
+  const colBCards = createMockElement('', 'div');
+  colBCards.classList.add('board-col-cards');
+  colB.appendChild(colBCards);
+
+  colA.nextElementSibling = colB;
+  colB.previousElementSibling = colA;
+
+  const cardA = testExports.buildBoardCard({ id: 'item-card-a', title: 'Card A', status: 'created' });
+  const cardB = testExports.buildBoardCard({ id: 'item-card-b', title: 'Card B', status: 'planned' });
+  colACards.appendChild(cardA);
+  colBCards.appendChild(cardB);
+
+  let focusedCard = null;
+  cardB.focus = function () { focusedCard = 'cardB'; };
+  cardA.focus = function () { focusedCard = 'cardA'; };
+
+  let rightPrevented = false;
+  document.dispatchEvent({
+    type: 'keydown',
+    key: 'ArrowRight',
+    target: cardA,
+    preventDefault() { rightPrevented = true; }
+  });
+  assert.strictEqual(rightPrevented, true, 'ArrowRight calls preventDefault');
+  assert.strictEqual(focusedCard, 'cardB', 'ArrowRight moves focus to card in adjacent column');
+
+  let leftPrevented = false;
+  document.dispatchEvent({
+    type: 'keydown',
+    key: 'ArrowLeft',
+    target: cardB,
+    preventDefault() { leftPrevented = true; }
+  });
+  assert.strictEqual(leftPrevented, true, 'ArrowLeft calls preventDefault');
+  assert.strictEqual(focusedCard, 'cardA', 'ArrowLeft moves focus back to previous column');
+
+  console.log('PASS: Board card drop transition and arrow navigation verified');
 
   console.log('\n--- 8. Testing Unified Run Dispatcher (sendRunItem) ---');
   const sendRunItem = testExports.sendRunItem || win.sendRunItem;
