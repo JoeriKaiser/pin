@@ -223,9 +223,9 @@ Duplicate titles are rejected by default. Use `--allow-duplicate` only when the 
 - `pin handoff <id|id-prefix|filename> [--actor <name>] [--progress <text>] [--next <text>] [--blocker <text>] [--verification <text>] [--expect-revision <n>] [--format json|plain]`
 - `pin complete <id|id-prefix|filename> --evidence <text> [--actor <name>] [--expect-revision <n>] [--format json|plain]`
 - `pin close <id|id-prefix|filename> [--actor <name>] [--note <text>] [--expect-revision <n>] [--format json|plain]`
-- `pin depend <id|id-prefix|filename> <dependency-id> [--actor <name>] [--expect-revision <n>] [--format json|plain]`
-- `pin parent <id|id-prefix|filename> <parent-id> [--actor <name>] [--expect-revision <n>] [--format json|plain]`
-- `pin relate <id|id-prefix|filename> <related-id> [--actor <name>] [--expect-revision <n>] [--format json|plain]`
+- `pin depend|undepend <id|id-prefix|filename> <dependency-id> [--remove] [--actor <name>] [--expect-revision <n>] [--format json|plain]`
+- `pin parent|unparent <id|id-prefix|filename> [<parent-id>] [--unset] [--actor <name>] [--expect-revision <n>] [--format json|plain]`
+- `pin relate|unrelate <id|id-prefix|filename> <related-id> [--remove] [--actor <name>] [--expect-revision <n>] [--format json|plain]`
 - `pin to-spec <id|prefix|filename> [--title <text>] [--body <text>] [--actor <name>] [--expect-revision <n>] [--format json|plain]`
 - `pin doctor [--repair] [--upgrade] [--strict] [--format json|plain]`
 - `pin archive <id|prefix|filename> [--resolution implemented|rejected|superseded|stale] [--note <text>]`

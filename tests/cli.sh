@@ -296,6 +296,26 @@ assert_contains "$ready_after" "$dependent_id"
 if PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" depend "$dependency_id" "$dependent_id" --format json >/dev/null 2>&1; then
     fail "dependency cycle was accepted"
 fi
+PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" depend "$dependent_id" "$dependency_id" --remove --format json | grep -q '"action":"dependency_removed"'
+dep_after_rm=$(PIN_VAULT="$TMP/dependency-vault" "$PIN_BIN" read "$dependent_id")
+case "$dep_after_rm" in *"depends_on:"*) fail "depend --remove did not remove dependency: $dep_after_rm" ;; esac
+
+PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" depend "$dependent_id" "$dependency_id" --format json >/dev/null
+PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" undepend "$dependent_id" "$dependency_id" --format json | grep -q '"action":"dependency_removed"'
+
+PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" parent "$dependent_id" --unset --format json | grep -q '"parent_id":null'
+parent_after_unset=$(PIN_VAULT="$TMP/dependency-vault" "$PIN_BIN" read "$dependent_id")
+case "$parent_after_unset" in *"parent_id:"*) fail "parent --unset did not clear parent: $parent_after_unset" ;; esac
+
+PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" parent "$dependent_id" "$dependency_id" --format json >/dev/null
+PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" unparent "$dependent_id" --format json | grep -q '"parent_id":null'
+
+PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" relate "$dependent_id" "$dependency_id" --remove --format json | grep -q '"action":"relation_removed"'
+rel_after_rm=$(PIN_VAULT="$TMP/dependency-vault" "$PIN_BIN" read "$dependent_id")
+case "$rel_after_rm" in *"related:"*) fail "relate --remove did not remove relation: $rel_after_rm" ;; esac
+
+PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" relate "$dependent_id" "$dependency_id" --format json >/dev/null
+PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" unrelate "$dependent_id" "$dependency_id" --format json | grep -q '"action":"relation_removed"'
 cat >"$TMP/dep-remove-editor" <<'EOF'
 #!/bin/sh
 [ "$1" = "--wait" ] || exit 2

@@ -118,11 +118,11 @@ pin complete <id|prefix|filename> --evidence <text> [--actor <name>]
              [--expect-revision <n>] [--format json|plain]
 pin close <id|prefix|filename> [--actor <name>] [--note <text>]
              [--expect-revision <n>] [--format json|plain]
-pin depend <id|prefix|filename> <dependency-id> [--actor <name>]
+pin depend|undepend <id|prefix|filename> <dependency-id> [--remove] [--actor <name>]
              [--expect-revision <n>] [--format json|plain]
-pin parent <id|prefix|filename> <parent-id> [--actor <name>]
+pin parent|unparent <id|prefix|filename> [<parent-id>] [--unset] [--actor <name>]
              [--expect-revision <n>] [--format json|plain]
-pin relate <id|prefix|filename> <related-id> [--actor <name>]
+pin relate|unrelate <id|prefix|filename> <related-id> [--remove] [--actor <name>]
              [--expect-revision <n>] [--format json|plain]
 pin to-spec <id|prefix|filename> [--title <text>] [--body <text>] [--actor <name>]
              [--expect-revision <n>] [--format json|plain]
@@ -165,7 +165,7 @@ Records move through explicit lifecycle states:
 
 ### Dependency gating
 
-`pin depend <item> <dependency>` records directed dependencies. `pin next` evaluates dependency readiness: an item is only returned when all of its dependencies are `done` or `closed`. Cycles are rejected during dependency declaration.
+`pin depend <item> <dependency>` records directed dependencies, while `pin undepend` or `pin depend --remove` clears them. `pin next` evaluates dependency readiness: an item is only returned when all of its dependencies are `done` or `closed`. Cycles are rejected during dependency declaration.
 
 ### Worktrees
 

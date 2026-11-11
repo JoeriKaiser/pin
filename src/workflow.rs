@@ -807,6 +807,37 @@ pub fn depend_item(
     Ok(meta)
 }
 
+pub fn undepend_item(
+    vault_path: &Path,
+    filename: &str,
+    dependency_id: &str,
+    actor: Option<&str>,
+    expect_revision: Option<u64>,
+) -> Result<IdeaMeta, WorkflowError> {
+    let (mut meta, _lock) = load_and_lock(vault_path, filename, expect_revision)?;
+
+    let was_present = meta.depends_on.iter().any(|d| d == dependency_id);
+    if !was_present {
+        return Ok(meta);
+    }
+
+    meta.depends_on.retain(|d| d != dependency_id);
+    let now = chrono::Utc::now().timestamp();
+    let actor_str = actor.unwrap_or("agent:default").to_string();
+
+    meta.activity.push(ActivityEvent {
+        at: now,
+        actor: actor_str,
+        action: "undepend".to_string(),
+        from: Some(meta.current_status()),
+        to: Some(meta.current_status()),
+        note: Some(format!("Removed dependency on {dependency_id}")),
+    });
+
+    save_item(vault_path, &mut meta)?;
+    Ok(meta)
+}
+
 pub fn parent_item(
     vault_path: &Path,
     filename: &str,
@@ -831,6 +862,38 @@ pub fn parent_item(
         from: Some(meta.current_status()),
         to: Some(meta.current_status()),
         note: Some(format!("Set parent to {parent_id}")),
+    });
+
+    save_item(vault_path, &mut meta)?;
+    Ok(meta)
+}
+
+pub fn unparent_item(
+    vault_path: &Path,
+    filename: &str,
+    actor: Option<&str>,
+    expect_revision: Option<u64>,
+) -> Result<IdeaMeta, WorkflowError> {
+    let (mut meta, _lock) = load_and_lock(vault_path, filename, expect_revision)?;
+
+    if meta.parent_id.is_none() {
+        return Ok(meta);
+    }
+
+    let old_parent = meta.parent_id.take();
+    let now = chrono::Utc::now().timestamp();
+    let actor_str = actor.unwrap_or("agent:default").to_string();
+
+    meta.activity.push(ActivityEvent {
+        at: now,
+        actor: actor_str,
+        action: "unparent".to_string(),
+        from: Some(meta.current_status()),
+        to: Some(meta.current_status()),
+        note: Some(match old_parent {
+            Some(ref p) => format!("Removed parent {p}"),
+            None => "Cleared parent".to_string(),
+        }),
     });
 
     save_item(vault_path, &mut meta)?;
@@ -863,6 +926,37 @@ pub fn relate_item(
         from: Some(meta.current_status()),
         to: Some(meta.current_status()),
         note: Some(format!("Related to {related_id}")),
+    });
+
+    save_item(vault_path, &mut meta)?;
+    Ok(meta)
+}
+
+pub fn unrelate_item(
+    vault_path: &Path,
+    filename: &str,
+    related_id: &str,
+    actor: Option<&str>,
+    expect_revision: Option<u64>,
+) -> Result<IdeaMeta, WorkflowError> {
+    let (mut meta, _lock) = load_and_lock(vault_path, filename, expect_revision)?;
+
+    let was_present = meta.related.iter().any(|r| r == related_id);
+    if !was_present {
+        return Ok(meta);
+    }
+
+    meta.related.retain(|r| r != related_id);
+    let now = chrono::Utc::now().timestamp();
+    let actor_str = actor.unwrap_or("agent:default").to_string();
+
+    meta.activity.push(ActivityEvent {
+        at: now,
+        actor: actor_str,
+        action: "unrelate".to_string(),
+        from: Some(meta.current_status()),
+        to: Some(meta.current_status()),
+        note: Some(format!("Removed relation to {related_id}")),
     });
 
     save_item(vault_path, &mut meta)?;
@@ -1326,6 +1420,42 @@ mod tests {
 
         let res = relate_item(dir.path(), &f1, "012345678901", None, None);
         assert!(matches!(res, Err(WorkflowError::DependencyCycle(_))));
+    }
+
+    #[test]
+    fn test_undepend_item_removes_dependency() {
+        let dir = tempdir().unwrap();
+        let _f1 = setup_test_item(dir.path(), "012345678901", Status::Planned, None);
+        let f2 = setup_test_item(dir.path(), "012345678902", Status::Planned, None);
+
+        depend_item(dir.path(), &f2, "012345678901", None, None).unwrap();
+        let updated = undepend_item(dir.path(), &f2, "012345678901", None, None).unwrap();
+        assert!(!updated.depends_on.contains(&"012345678901".to_string()));
+        assert_eq!(updated.activity.last().unwrap().action, "undepend");
+    }
+
+    #[test]
+    fn test_unparent_item_clears_parent() {
+        let dir = tempdir().unwrap();
+        let _f1 = setup_test_item(dir.path(), "012345678901", Status::Planned, None);
+        let f2 = setup_test_item(dir.path(), "012345678902", Status::Planned, None);
+
+        parent_item(dir.path(), &f2, "012345678901", None, None).unwrap();
+        let updated = unparent_item(dir.path(), &f2, None, None).unwrap();
+        assert_eq!(updated.parent_id, None);
+        assert_eq!(updated.activity.last().unwrap().action, "unparent");
+    }
+
+    #[test]
+    fn test_unrelate_item_removes_relation() {
+        let dir = tempdir().unwrap();
+        let _f1 = setup_test_item(dir.path(), "012345678901", Status::Planned, None);
+        let f2 = setup_test_item(dir.path(), "012345678902", Status::Planned, None);
+
+        relate_item(dir.path(), &f2, "012345678901", None, None).unwrap();
+        let updated = unrelate_item(dir.path(), &f2, "012345678901", None, None).unwrap();
+        assert!(!updated.related.contains(&"012345678901".to_string()));
+        assert_eq!(updated.activity.last().unwrap().action, "unrelate");
     }
 
     #[test]

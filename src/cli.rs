@@ -59,11 +59,11 @@ pub fn print_usage() {
          [--expect-revision <n>] [--format json|plain]\n  \
          close <id|prefix|filename> [--actor <name>] [--note <text>]\n        \
          [--expect-revision <n>] [--format json|plain]\n  \
-         depend <id|prefix|filename> <dependency-id> [--actor <name>]\n         \
+         depend|undepend <id|prefix|filename> <dependency-id> [--remove] [--actor <name>]\n         \
          [--expect-revision <n>] [--format json|plain]\n  \
-         parent <id|prefix|filename> <parent-id> [--actor <name>]\n         \
+         parent|unparent <id|prefix|filename> [<parent-id>] [--unset] [--actor <name>]\n         \
          [--expect-revision <n>] [--format json|plain]\n  \
-         relate <id|prefix|filename> <related-id> [--actor <name>]\n         \
+         relate|unrelate <id|prefix|filename> <related-id> [--remove] [--actor <name>]\n         \
          [--expect-revision <n>] [--format json|plain]\n  \
          to-spec <id|prefix|filename> [--title <text>] [--body <text>] [--actor <name>]\n          \
          [--expect-revision <n>] [--format json|plain]\n  \
