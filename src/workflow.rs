@@ -851,7 +851,11 @@ pub fn is_item_ready(
     all_items_map: &HashMap<String, &IdeaMeta>,
     now: i64,
 ) -> bool {
+    let lease_lapsed = item.current_status() == Status::InProgress
+        && item.claimed_by.is_some()
+        && !item.has_active_claim(now);
     let status_ready = item.current_status() == Status::Planned
+        || lease_lapsed
         || (item.current_status() == Status::Created
             && (item.work_type() == WorkType::Task || item.work_type() == WorkType::Bug));
     if !status_ready {
@@ -1450,6 +1454,28 @@ mod tests {
         assert!(ready_ids.contains(&"task01"));
         assert!(ready_ids.contains(&"bug01"));
         assert!(!ready_ids.contains(&"idea01"));
+    }
+
+    #[test]
+    fn test_is_item_ready_returns_work_whose_lease_lapsed() {
+        let mut item = IdeaMeta::new_work_item(
+            "lapsed01".to_string(),
+            "test".to_string(),
+            "Crashed run".to_string(),
+            "Body".to_string(),
+            Kind::Technical,
+            WorkType::Task,
+            Status::InProgress,
+            None,
+            None,
+            Some("agent:creator".to_string()),
+        );
+        item.claimed_by = Some("agent:gone".to_string());
+        item.claim_expires_at = Some(1_000);
+        let map = HashMap::new();
+
+        assert!(is_item_ready(&item, &map, 1_001));
+        assert!(!is_item_ready(&item, &map, 999));
     }
 
     #[test]

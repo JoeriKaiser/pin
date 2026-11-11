@@ -154,7 +154,7 @@ Records move through explicit lifecycle states:
 
 - `created` — originated idea, task, or bug; not yet planned or triaged.
 - `planned` — triaged, prioritized, unblocked, ready for agent execution.
-- `in_progress` — actively claimed by an agent or human with a valid lease.
+- `in_progress` — actively claimed by an agent or human with a valid lease. Once the lease lapses, `pin next` and `pin list --ready` offer the item again.
 - `blocked` — work halted; requires blocker resolution or dependency completion.
 - `done` — the single end status: completed with concrete evidence, set by `pin complete --evidence`.
 - `closed` — accepted outcome; terminal state.
