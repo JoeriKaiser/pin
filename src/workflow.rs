@@ -55,9 +55,11 @@ impl fmt::Display for WorkflowError {
                 claimed_by,
                 expires_at,
             } => {
+                let remaining = *expires_at - chrono::Utc::now().timestamp();
                 write!(
                     f,
-                    "Item is already claimed by '{claimed_by}' (claim expires at {expires_at})"
+                    "Item is already claimed by '{claimed_by}' (claim expires in {}m, at {expires_at})",
+                    (remaining.max(0) + 59) / 60
                 )
             }
             WorkflowError::NotClaimed => write!(f, "Item is not currently claimed"),
