@@ -512,3 +512,17 @@ export function closeWorktreeModal() {
     else els.worktreeModal.removeAttribute('open');
   }
 }
+
+export function openShortcutsModal() {
+  if (els.shortcutsModal) {
+    if (els.shortcutsModal.showModal) els.shortcutsModal.showModal();
+    else els.shortcutsModal.setAttribute('open', '');
+  }
+}
+
+export function closeShortcutsModal() {
+  if (els.shortcutsModal) {
+    if (els.shortcutsModal.close) els.shortcutsModal.close();
+    else els.shortcutsModal.removeAttribute('open');
+  }
+}

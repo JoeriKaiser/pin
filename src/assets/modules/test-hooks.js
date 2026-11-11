@@ -7,7 +7,8 @@ import {
 import {
   openSpecModal, closeSpecModal, setSpecModalTab, SPEC_SNIPPETS,
   expandQuickAdd, collapseQuickAdd, triggerModalSubmit,
-  openWorktreeModal, closeWorktreeModal
+  openWorktreeModal, closeWorktreeModal,
+  openShortcutsModal, closeShortcutsModal
 } from './forms.js';
 import {
   getClipboardImages, uploadScreenshot, handleScreenshotPaste
@@ -67,6 +68,8 @@ if (typeof window !== 'undefined') {
     handleScreenshotPaste: handleScreenshotPaste,
     openWorktreeModal: openWorktreeModal,
     closeWorktreeModal: closeWorktreeModal,
+    openShortcutsModal: openShortcutsModal,
+    closeShortcutsModal: closeShortcutsModal,
     sendCommitPrItem: sendCommitPrItem,
     sendRunItem: sendRunItem,
     buildBoardCard: buildBoardCard,

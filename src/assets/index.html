@@ -17,6 +17,7 @@
     <button id="btn-sync-git" class="control" type="button" title="Sync Git merge status">Sync Git</button>
     <button id="btn-update" class="control action-btn-update" type="button" title="Update pin" hidden>Update to <span id="update-version"></span></button>
     <button id="btn-new-ticket" class="control action-btn-accent" type="button" title="New spec ticket (n)">+ New Task</button>
+    <button id="btn-shortcuts" class="control" type="button" title="Keyboard shortcuts (?)">?</button>
     <div class="view-switch" role="group" aria-label="View mode">
       <button id="view-board-btn" class="control view-btn" type="button" aria-pressed="true">Board</button>
       <button id="view-detail-btn" class="control view-btn" type="button" aria-pressed="false">Detail</button>
@@ -411,6 +412,35 @@
   </div>
 </dialog>
 
+<dialog id="shortcuts-modal" class="action-dialog shortcuts-modal">
+  <div class="dialog-content shortcuts-modal-content">
+    <div class="dialog-header">
+      <h2>Keyboard Shortcuts</h2>
+      <button id="shortcuts-modal-close-btn" class="dialog-close" type="button" aria-label="Close">✕</button>
+    </div>
+    <div class="dialog-body shortcuts-modal-body">
+      <div class="shortcuts-section">
+        <h3>Navigation</h3>
+        <dl class="shortcuts-list">
+          <div class="shortcut-row"><dt><kbd>j</kbd> / <kbd>k</kbd></dt><dd>Select next / previous item</dd></div>
+          <div class="shortcut-row"><dt><kbd>↑</kbd> <kbd>↓</kbd></dt><dd>Navigate cards within column</dd></div>
+          <div class="shortcut-row"><dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Navigate cards across columns</dd></div>
+          <div class="shortcut-row"><dt><kbd>Enter</kbd></dt><dd>Open selected item / activate card</dd></div>
+          <div class="shortcut-row"><dt><kbd>Esc</kbd></dt><dd>Close dialog, collapse filters, or clear selection</dd></div>
+        </dl>
+      </div>
+      <div class="shortcuts-section">
+        <h3>Actions</h3>
+        <dl class="shortcuts-list">
+          <div class="shortcut-row"><dt><kbd>/</kbd></dt><dd>Focus search box</dd></div>
+          <div class="shortcut-row"><dt><kbd>n</kbd> or <kbd>c</kbd></dt><dd>Create new task</dd></div>
+          <div class="shortcut-row"><dt><kbd>?</kbd></dt><dd>Open keyboard shortcuts</dd></div>
+          <div class="shortcut-row"><dt><kbd>Cmd</kbd>/<kbd>Ctrl</kbd> + <kbd>Enter</kbd></dt><dd>Submit active dialog form</dd></div>
+        </dl>
+      </div>
+    </div>
+  </div>
+</dialog>
 
 <div id="toast" class="toast" hidden></div>
 

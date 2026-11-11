@@ -155,5 +155,8 @@ export var els = {
   btnWorktreeCancel: $('btn-worktree-cancel'),
   btnWorktreeClose: $('btn-worktree-close'),
   btnWorktreePrimary: $('btn-worktree-primary'),
-  btnWorktreeConfirm: $('btn-worktree-confirm')
+  btnWorktreeConfirm: $('btn-worktree-confirm'),
+  shortcutsModal: $('shortcuts-modal'),
+  shortcutsModalCloseBtn: $('shortcuts-modal-close-btn'),
+  btnShortcuts: $('btn-shortcuts')
 };

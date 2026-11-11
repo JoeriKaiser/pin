@@ -11,7 +11,8 @@ import {
   SPEC_SNIPPETS, collectTicketFields, expandQuickAdd, collapseQuickAdd, submitQuickAdd,
   openSpecModal, closeSpecModal, setSpecModalTab, submitSpecModal,
   closeActionModal, triggerModalSubmit, openCompleteModal, openBlockedModal, openCloseModal,
-  convertIdeaToSpec, setFormCallbacks, openWorktreeModal, closeWorktreeModal
+  convertIdeaToSpec, setFormCallbacks, openWorktreeModal, closeWorktreeModal,
+  openShortcutsModal, closeShortcutsModal
 } from './forms.js';
 import {
   openAgentDrawer, closeAgentDrawer, updateActiveRuns, toggleAllToolCards,
@@ -364,6 +365,8 @@ export function bindForms() {
   }
   if (els.btnWorktreeClose) els.btnWorktreeClose.addEventListener('click', closeWorktreeModal);
   if (els.btnWorktreeCancel) els.btnWorktreeCancel.addEventListener('click', closeWorktreeModal);
+  if (els.btnShortcuts) els.btnShortcuts.addEventListener('click', openShortcutsModal);
+  if (els.shortcutsModalCloseBtn) els.shortcutsModalCloseBtn.addEventListener('click', closeShortcutsModal);
   if (els.btnWorktreePrimary) {
     els.btnWorktreePrimary.addEventListener('click', function () {
       var item = state.pendingWorktreeItem;
@@ -446,6 +449,10 @@ export function bindGlobalShortcuts() {
       if (event.key === 'Escape') { event.preventDefault(); closeRunnerDialog(); }
       return;
     }
+    if (els.shortcutsModal && (els.shortcutsModal.open || els.shortcutsModal.hasAttribute('open'))) {
+      if (event.key === 'Escape') { event.preventDefault(); closeShortcutsModal(); }
+      return;
+    }
     if (event.key === 'Escape') {
       if (els.quickAddForm && !els.quickAddForm.hidden) { event.preventDefault(); collapseQuickAdd(); return; }
       if (els.worktreeModal && (els.worktreeModal.open || els.worktreeModal.hasAttribute('open'))) { event.preventDefault(); closeWorktreeModal(); return; }
@@ -497,6 +504,7 @@ export function bindGlobalShortcuts() {
     }
     if (input || event.metaKey || event.ctrlKey || event.altKey) return;
     if (event.key === 'n' || event.key === 'c') { event.preventDefault(); openSpecModal(); return; }
+    if (event.key === '?' || (event.key === '/' && event.shiftKey)) { event.preventDefault(); openShortcutsModal(); return; }
     if (event.key !== 'j' && event.key !== 'k' && event.key !== 'Enter') return;
     var idx = state.shown.findIndex(function (item) { return item.id === state.selected; });
     if (event.key === 'j' || event.key === 'k') {
