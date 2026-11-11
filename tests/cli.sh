@@ -1158,7 +1158,7 @@ assert_contains "$forced_sync_out" '"worktree_removed":true'
 
 # 4c. Reject dangling dependency
 bad_dep_out=$(PIN_VAULT="$sync_vault" "$PIN_BIN" depend "$reg_id" "nonexistent999" 2>&1 || true)
-assert_contains "$bad_dep_out" "No idea matches 'nonexistent999'"
+assert_contains "$bad_dep_out" "No item matches 'nonexistent999'"
 # 5. Subsequent sync
 none_out=$(cd "$sync_repo" && PIN_VAULT="$sync_vault" "$PIN_BIN" sync --format plain)
 assert_contains "$none_out" "No merged tickets to sync."
