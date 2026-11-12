@@ -136,6 +136,23 @@ export function renderDependencies(item) {
     if (parentStatus) {
       parentLi.appendChild(node('span', 'status-badge status-' + parentStatus, parentStatus));
     }
+
+    var parentRm = node('button', 'dep-remove-btn', '✕');
+    parentRm.type = 'button';
+    parentRm.title = 'Remove parent';
+    parentRm.setAttribute('aria-label', 'Remove parent');
+    parentRm.addEventListener('click', function (e) {
+      e.stopPropagation();
+      sendAction(item.id, { action: 'unparent', expect_revision: item.revision })
+        .then(function (res) {
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          showToast('Parent removed', false);
+          callbacks.refreshData();
+        })
+        .catch(function (err) { showToast('Action failed: ' + err.message, true); });
+    });
+    parentLi.appendChild(parentRm);
+
     list.appendChild(parentLi);
   }
 
@@ -159,6 +176,23 @@ export function renderDependencies(item) {
       subBtn.addEventListener('click', function () { setRoute(sub.id); });
       subLi.appendChild(subBtn);
       subLi.appendChild(node('span', 'status-badge status-' + subStatus, subStatus));
+
+      var subRm = node('button', 'dep-remove-btn', '✕');
+      subRm.type = 'button';
+      subRm.title = 'Unlink subtask';
+      subRm.setAttribute('aria-label', 'Unlink subtask ' + sub.id);
+      subRm.addEventListener('click', function (e) {
+        e.stopPropagation();
+        sendAction(sub.id, { action: 'unparent', expect_revision: sub.revision })
+          .then(function (res) {
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            showToast('Subtask unlinked', false);
+            callbacks.refreshData();
+          })
+          .catch(function (err) { showToast('Action failed: ' + err.message, true); });
+      });
+      subLi.appendChild(subRm);
+
       list.appendChild(subLi);
     });
   }
@@ -183,6 +217,23 @@ export function renderDependencies(item) {
       if (depItem) {
         li.appendChild(node('span', 'status-badge status-' + itemStatus(depItem), itemStatus(depItem)));
       }
+
+      var depRm = node('button', 'dep-remove-btn', '✕');
+      depRm.type = 'button';
+      depRm.title = 'Remove prerequisite';
+      depRm.setAttribute('aria-label', 'Remove prerequisite ' + depId);
+      depRm.addEventListener('click', function (e) {
+        e.stopPropagation();
+        sendAction(item.id, { action: 'undepend', target: depId, expect_revision: item.revision })
+          .then(function (res) {
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            showToast('Prerequisite removed', false);
+            callbacks.refreshData();
+          })
+          .catch(function (err) { showToast('Action failed: ' + err.message, true); });
+      });
+      li.appendChild(depRm);
+
       list.appendChild(li);
     });
   }
@@ -242,6 +293,23 @@ export function renderDependencies(item) {
       if (relStatus) {
         relLi.appendChild(node('span', 'status-badge status-' + relStatus, relStatus));
       }
+
+      var relRm = node('button', 'dep-remove-btn', '✕');
+      relRm.type = 'button';
+      relRm.title = 'Remove relationship';
+      relRm.setAttribute('aria-label', 'Remove relationship ' + relId);
+      relRm.addEventListener('click', function (e) {
+        e.stopPropagation();
+        sendAction(item.id, { action: 'unrelate', target: relId, expect_revision: item.revision })
+          .then(function (res) {
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            showToast('Relationship removed', false);
+            callbacks.refreshData();
+          })
+          .catch(function (err) { showToast('Action failed: ' + err.message, true); });
+      });
+      relLi.appendChild(relRm);
+
       list.appendChild(relLi);
     });
   }
@@ -251,6 +319,105 @@ export function renderDependencies(item) {
   } else {
     els.dependenciesCard.appendChild(node('div', 'help-text', 'No relationships'));
   }
+
+  // 6. Interactive add relationship control
+  var addBtn = node('button', 'dep-add-btn', '+ Add relationship');
+  addBtn.type = 'button';
+
+  var form = node('div', 'dep-add-form');
+  form.style.display = 'none';
+
+  var row = node('div', 'dep-add-row');
+
+  var sel = document.createElement('select');
+  sel.className = 'dep-add-select';
+  var optDep = document.createElement('option');
+  optDep.value = 'depend';
+  optDep.textContent = 'Prerequisite';
+  var optParent = document.createElement('option');
+  optParent.value = 'parent';
+  optParent.textContent = 'Parent';
+  var optRel = document.createElement('option');
+  optRel.value = 'relate';
+  optRel.textContent = 'Related';
+  sel.appendChild(optDep);
+  sel.appendChild(optParent);
+  sel.appendChild(optRel);
+  row.appendChild(sel);
+
+  var inp = document.createElement('input');
+  inp.className = 'dep-add-input';
+  inp.placeholder = 'Search item ID or title...';
+  inp.setAttribute('list', 'dep-items-datalist');
+  row.appendChild(inp);
+  form.appendChild(row);
+
+  var actionsRow = node('div', 'dep-add-row');
+  var confirmBtn = node('button', 'action-btn primary', 'Add');
+  confirmBtn.type = 'button';
+  var cancelBtn = node('button', 'action-btn', 'Cancel');
+  cancelBtn.type = 'button';
+  actionsRow.appendChild(confirmBtn);
+  actionsRow.appendChild(cancelBtn);
+  form.appendChild(actionsRow);
+
+  addBtn.addEventListener('click', function () {
+    addBtn.style.display = 'none';
+    form.style.display = 'flex';
+    inp.focus();
+  });
+
+  cancelBtn.addEventListener('click', function () {
+    form.style.display = 'none';
+    addBtn.style.display = '';
+    inp.value = '';
+  });
+
+  confirmBtn.addEventListener('click', function () {
+    var raw = inp.value.trim();
+    if (!raw) {
+      showToast('Please specify an item ID', true);
+      return;
+    }
+    var targetId = raw.split(/[\s:]+/)[0];
+    if (targetId === item.id) {
+      showToast('Cannot link item to itself', true);
+      return;
+    }
+    var actionType = sel.value;
+    sendAction(item.id, { action: actionType, target: targetId, expect_revision: item.revision })
+      .then(function (res) {
+        if (!res.ok) {
+          return res.text().then(function (t) { throw new Error(t || ('HTTP ' + res.status)); });
+        }
+        showToast('Relationship added', false);
+        callbacks.refreshData();
+      })
+      .catch(function (err) {
+        showToast('Action failed: ' + err.message, true);
+      });
+  });
+
+  var dl = document.getElementById('dep-items-datalist');
+  if (!dl && document.body) {
+    dl = document.createElement('datalist');
+    dl.id = 'dep-items-datalist';
+    document.body.appendChild(dl);
+  }
+  if (dl) {
+    clear(dl);
+    (state.items || []).forEach(function (other) {
+      if (other.id !== item.id) {
+        var opt = document.createElement('option');
+        opt.value = other.id;
+        opt.label = other.title ? other.title.slice(0, 50) : other.id;
+        dl.appendChild(opt);
+      }
+    });
+  }
+
+  els.dependenciesCard.appendChild(addBtn);
+  els.dependenciesCard.appendChild(form);
 }
 
 export function renderActions(item) {

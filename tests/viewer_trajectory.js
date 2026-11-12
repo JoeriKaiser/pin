@@ -954,6 +954,11 @@ async function runHarness() {
   const parentDepTexts = Array.from(parentDepLinks).map(l => l.textContent);
   assert.ok(parentDepTexts.includes('Child Subtask 1'), 'Parent detail view displays child subtask title');
 
+  const addBtn = depCard.querySelector('.dep-add-btn');
+  assert.ok(addBtn, '+ Add relationship button rendered');
+  const rmBtns = depCard.querySelectorAll('.dep-remove-btn');
+  assert.ok(rmBtns.length > 0, 'Relationship remove buttons rendered');
+
   console.log('PASS: Board card drop transition, arrow navigation, and theme/detail ergonomics verified');
 
   console.log('\n--- 8. Testing Unified Run Dispatcher (sendRunItem) ---');
