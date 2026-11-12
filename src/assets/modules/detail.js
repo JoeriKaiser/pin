@@ -112,11 +112,58 @@ export function renderWorkerBox(item) {
 export function renderDependencies(item) {
   if (!els.dependenciesCard) return;
   clear(els.dependenciesCard);
-  els.dependenciesCard.appendChild(node('h3', '', 'Dependencies'));
+  els.dependenciesCard.appendChild(node('h3', '', 'Relationships'));
 
   var list = node('ul', 'dependencies-list');
   var hasAny = false;
 
+  // 1. Parent epic or item
+  if (item.parent_id) {
+    hasAny = true;
+    var parentItem = find(item.parent_id);
+    var parentStatus = parentItem ? itemStatus(parentItem) : null;
+    var parentLi = node('li', 'dependency-item');
+    var parentInd = node('span', 'dep-indicator', '⇡');
+    parentInd.title = 'Parent item';
+    parentLi.appendChild(parentInd);
+
+    var parentBtn = node('button', 'dependency-link', (parentItem && parentItem.title ? parentItem.title : item.parent_id));
+    parentBtn.type = 'button';
+    parentBtn.title = 'Parent: ' + item.parent_id;
+    parentBtn.addEventListener('click', function () { setRoute(item.parent_id); });
+    parentLi.appendChild(parentBtn);
+
+    if (parentStatus) {
+      parentLi.appendChild(node('span', 'status-badge status-' + parentStatus, parentStatus));
+    }
+    list.appendChild(parentLi);
+  }
+
+  // 2. Subtasks
+  var subtasks = (state.items || []).filter(function (other) {
+    return other.parent_id === item.id;
+  });
+
+  if (subtasks.length) {
+    subtasks.forEach(function (sub) {
+      hasAny = true;
+      var subStatus = itemStatus(sub);
+      var subLi = node('li', 'dependency-item');
+      var subInd = node('span', 'dep-indicator', '⇣');
+      subInd.title = 'Subtask';
+      subLi.appendChild(subInd);
+
+      var subBtn = node('button', 'dependency-link', sub.title || sub.id);
+      subBtn.type = 'button';
+      subBtn.title = 'Subtask: ' + sub.id;
+      subBtn.addEventListener('click', function () { setRoute(sub.id); });
+      subLi.appendChild(subBtn);
+      subLi.appendChild(node('span', 'status-badge status-' + subStatus, subStatus));
+      list.appendChild(subLi);
+    });
+  }
+
+  // 3. Prerequisites
   if (item.depends_on && item.depends_on.length) {
     item.depends_on.forEach(function (depId) {
       hasAny = true;
@@ -124,7 +171,7 @@ export function renderDependencies(item) {
       var isDone = depItem && (itemStatus(depItem) === 'done' || itemStatus(depItem) === 'closed');
       var li = node('li', 'dependency-item');
       var ind = node('span', 'dep-indicator ' + (isDone ? 'resolved' : 'unresolved'), isDone ? '✓' : '○');
-      ind.title = isDone ? 'Resolved' : 'Unresolved prerequisite';
+      ind.title = isDone ? 'Resolved prerequisite' : 'Unresolved prerequisite';
       li.appendChild(ind);
 
       var btn = node('button', 'dependency-link', (depItem && depItem.title ? depItem.title : depId));
@@ -140,7 +187,8 @@ export function renderDependencies(item) {
     });
   }
 
-  var dependents = state.items.filter(function (other) {
+  // 4. Dependents
+  var dependents = (state.items || []).filter(function (other) {
     return other.depends_on && other.depends_on.indexOf(item.id) !== -1;
   });
 
@@ -162,10 +210,46 @@ export function renderDependencies(item) {
     });
   }
 
+  // 5. Related items
+  var relatedIds = [];
+  if (item.related && item.related.length) {
+    item.related.forEach(function (r) {
+      if (relatedIds.indexOf(r) === -1) relatedIds.push(r);
+    });
+  }
+  (state.items || []).forEach(function (other) {
+    if (other.id !== item.id && other.related && other.related.indexOf(item.id) !== -1) {
+      if (relatedIds.indexOf(other.id) === -1) relatedIds.push(other.id);
+    }
+  });
+
+  if (relatedIds.length) {
+    relatedIds.forEach(function (relId) {
+      hasAny = true;
+      var relItem = find(relId);
+      var relStatus = relItem ? itemStatus(relItem) : null;
+      var relLi = node('li', 'dependency-item');
+      var relInd = node('span', 'dep-indicator', '↔');
+      relInd.title = 'Related item';
+      relLi.appendChild(relInd);
+
+      var relBtn = node('button', 'dependency-link', (relItem && relItem.title ? relItem.title : relId));
+      relBtn.type = 'button';
+      relBtn.title = 'Related: ' + relId;
+      relBtn.addEventListener('click', function () { setRoute(relId); });
+      relLi.appendChild(relBtn);
+
+      if (relStatus) {
+        relLi.appendChild(node('span', 'status-badge status-' + relStatus, relStatus));
+      }
+      list.appendChild(relLi);
+    });
+  }
+
   if (hasAny) {
     els.dependenciesCard.appendChild(list);
   } else {
-    els.dependenciesCard.appendChild(node('div', 'help-text', 'No prerequisites or dependents'));
+    els.dependenciesCard.appendChild(node('div', 'help-text', 'No relationships'));
   }
 }
 
