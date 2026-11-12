@@ -851,6 +851,35 @@ pub fn parent_item(
             "An item cannot be its own parent".to_string(),
         ));
     }
+
+    if meta.parent_id.as_deref() == Some(parent_id) {
+        return Ok(meta);
+    }
+
+    let all_items = collect_ideas(vault_path)?;
+    if !all_items.iter().any(|item| item.id == parent_id) {
+        return Err(WorkflowError::ItemNotFound(parent_id.to_string()));
+    }
+
+    let mut parent_map: HashMap<String, Option<String>> = HashMap::new();
+    for item in &all_items {
+        parent_map.insert(item.id.clone(), item.parent_id.clone());
+    }
+
+    let mut curr = Some(parent_id.to_string());
+    let mut visited = HashSet::new();
+    while let Some(p) = curr {
+        if p == meta.id {
+            return Err(WorkflowError::DependencyCycle(format!(
+                "Setting parent to '{parent_id}' would create a parent cycle"
+            )));
+        }
+        if !visited.insert(p.clone()) {
+            break;
+        }
+        curr = parent_map.get(&p).cloned().flatten();
+    }
+
     meta.parent_id = Some(parent_id.to_string());
     let now = chrono::Utc::now().timestamp();
     let actor_str = actor.unwrap_or("agent:default").to_string();
@@ -913,6 +942,12 @@ pub fn relate_item(
             "An item cannot relate to itself".to_string(),
         ));
     }
+
+    let all_items = collect_ideas(vault_path)?;
+    if !all_items.iter().any(|item| item.id == related_id) {
+        return Err(WorkflowError::ItemNotFound(related_id.to_string()));
+    }
+
     if !meta.related.iter().any(|r| r == related_id) {
         meta.related.push(related_id.to_string());
     }
@@ -1414,12 +1449,46 @@ mod tests {
     }
 
     #[test]
+    fn test_parent_item_rejects_missing_parent() {
+        let dir = tempdir().unwrap();
+        let f1 = setup_test_item(dir.path(), "012345678901", Status::Planned, None);
+
+        let res = parent_item(dir.path(), &f1, "nonexistent99", None, None);
+        assert!(matches!(res, Err(WorkflowError::ItemNotFound(_))));
+    }
+
+    #[test]
+    fn test_parent_item_rejects_parent_cycle() {
+        let dir = tempdir().unwrap();
+        let f1 = setup_test_item(dir.path(), "012345678901", Status::Planned, None);
+        let f2 = setup_test_item(dir.path(), "012345678902", Status::Planned, None);
+        let f3 = setup_test_item(dir.path(), "012345678903", Status::Planned, None);
+
+        // 02 has parent 01; 03 has parent 02
+        parent_item(dir.path(), &f2, "012345678901", None, None).unwrap();
+        parent_item(dir.path(), &f3, "012345678902", None, None).unwrap();
+
+        // setting 01's parent to 03 would create cycle 01 -> 03 -> 02 -> 01
+        let res = parent_item(dir.path(), &f1, "012345678903", None, None);
+        assert!(matches!(res, Err(WorkflowError::DependencyCycle(_))));
+    }
+
+    #[test]
     fn test_relate_item_rejects_self_relate() {
         let dir = tempdir().unwrap();
         let f1 = setup_test_item(dir.path(), "012345678901", Status::Planned, None);
 
         let res = relate_item(dir.path(), &f1, "012345678901", None, None);
         assert!(matches!(res, Err(WorkflowError::DependencyCycle(_))));
+    }
+
+    #[test]
+    fn test_relate_item_rejects_missing_related() {
+        let dir = tempdir().unwrap();
+        let f1 = setup_test_item(dir.path(), "012345678901", Status::Planned, None);
+
+        let res = relate_item(dir.path(), &f1, "nonexistent99", None, None);
+        assert!(matches!(res, Err(WorkflowError::ItemNotFound(_))));
     }
 
     #[test]

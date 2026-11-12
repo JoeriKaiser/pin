@@ -213,6 +213,11 @@ pub fn scan_vault(vault_path: &Path) -> VaultScan {
     }
     scan.issues.extend(cycle_issues);
 
+    let mut parent_map: HashMap<&str, Option<&str>> = HashMap::new();
+    for meta in &scan.metas {
+        parent_map.insert(meta.id.as_str(), meta.parent_id.as_deref());
+    }
+
     let mut parent_issues = Vec::new();
     for meta in &scan.metas {
         if let Some(parent_id) = &meta.parent_id {
@@ -232,6 +237,32 @@ pub fn scan_vault(vault_path: &Path) -> VaultScan {
                     message: format!("Parent '{parent_id}' is not in the vault"),
                     field: Some("parent_id".to_string()),
                 });
+            } else {
+                let mut visited = HashSet::new();
+                let mut curr = Some(parent_id.as_str());
+                let mut found_cycle = false;
+                while let Some(p) = curr {
+                    if p == meta.id.as_str() {
+                        found_cycle = true;
+                        break;
+                    }
+                    if !visited.insert(p) {
+                        break;
+                    }
+                    curr = parent_map.get(p).copied().flatten();
+                }
+                if found_cycle {
+                    parent_issues.push(Issue {
+                        severity: Severity::Warning,
+                        code: "parent_cycle".to_string(),
+                        filename: meta.filename.clone(),
+                        message: format!(
+                            "Parent cycle detected: '{parent_id}' leads back to '{}'",
+                            meta.id
+                        ),
+                        field: Some("parent_id".to_string()),
+                    });
+                }
             }
         }
     }
@@ -636,6 +667,45 @@ title: "Self parent item"
         assert!(
             codes.contains(&"self_parent"),
             "self parent must be reported: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn test_parent_cycle_is_reported() {
+        let dir = tempdir().unwrap();
+        // Item 1 has parent 2; Item 2 has parent 1
+        let raw1 = r#"---
+schema: 2
+id: "0123456789a1"
+project: "test"
+kind: "technical"
+status: "created"
+timestamp: 1700000000
+parent_id: "0123456789a2"
+title: "Item 1"
+---
+# Item 1
+"#;
+        let raw2 = r#"---
+schema: 2
+id: "0123456789a2"
+project: "test"
+kind: "technical"
+status: "created"
+timestamp: 1700000000
+parent_id: "0123456789a1"
+title: "Item 2"
+---
+# Item 2
+"#;
+        fs::write(dir.path().join("0123456789a1.md"), raw1).unwrap();
+        fs::write(dir.path().join("0123456789a2.md"), raw2).unwrap();
+
+        let scan = scan_vault(dir.path());
+        let codes: Vec<&str> = scan.issues.iter().map(|i| i.code.as_str()).collect();
+        assert!(
+            codes.contains(&"parent_cycle"),
+            "parent cycle must be reported: {codes:?}"
         );
     }
 
