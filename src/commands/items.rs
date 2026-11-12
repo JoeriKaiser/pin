@@ -21,6 +21,7 @@ pub fn add(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> {
     let (mut content, mut project, mut title, mut tags) = (None, None, None, None);
     let (mut kind, mut item_type, mut status, mut actor, mut priority, mut format) =
         (None, None, None, None, None, None);
+    let (mut parent, mut depends_on) = (None, Vec::new());
     let (mut use_stdin, mut allow_duplicate) = (false, false);
 
     while let Some(arg) = reader.peek()? {
@@ -30,6 +31,8 @@ pub fn add(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> {
             "--project" => project = Some(reader.next_val("--project")?),
             "--title" => title = Some(reader.next_val("--title")?),
             "--tags" => tags = Some(reader.next_val("--tags")?),
+            "--parent" => parent = Some(reader.next_val("--parent")?),
+            "--depends-on" | "--depends" => depends_on.push(reader.next_val(arg)?),
             "--kind" => {
                 let val = reader.next_val("--kind")?;
                 match val.parse::<Kind>() {
@@ -144,7 +147,7 @@ pub fn add(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> {
     let resolved_type = item_type.unwrap_or(WorkType::Task);
     let final_status = status.unwrap_or(Status::Created);
 
-    let idea = IdeaMeta::new_work_item(
+    let mut idea = IdeaMeta::new_work_item(
         id.clone(),
         proj_name,
         title_val,
@@ -156,6 +159,31 @@ pub fn add(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> {
         tags.map(|s| s.to_string()),
         Some(creator),
     );
+
+    if let Some(p) = parent {
+        let parent_filename = resolve_selector(vault_path, p)
+            .map_err(|e| CliError::usage(format!("Invalid parent: {e}")))?;
+        let parent_content = fs::read_to_string(vault_path.join(&parent_filename))
+            .map_err(|e| CliError::usage(format!("Could not read parent file: {e}")))?;
+        let mut issues = Vec::new();
+        let parent_meta =
+            parse_front_matter_detailed(&parent_filename, &parent_content, &mut issues)
+                .ok_or_else(|| CliError::usage("Invalid front matter in parent file"))?;
+        idea.parent_id = Some(parent_meta.id);
+    }
+
+    for dep in depends_on {
+        let dep_filename = resolve_selector(vault_path, dep)
+            .map_err(|e| CliError::usage(format!("Invalid dependency: {e}")))?;
+        let dep_content = fs::read_to_string(vault_path.join(&dep_filename))
+            .map_err(|e| CliError::usage(format!("Could not read dependency file: {e}")))?;
+        let mut issues = Vec::new();
+        let dep_meta = parse_front_matter_detailed(&dep_filename, &dep_content, &mut issues)
+            .ok_or_else(|| CliError::usage("Invalid front matter in dependency file"))?;
+        if !idea.depends_on.contains(&dep_meta.id) {
+            idea.depends_on.push(dep_meta.id);
+        }
+    }
 
     atomic_write(&file_path, &render_full_document(&idea))
         .map_err(|e| CliError::usage(format!("Failed to save idea: {e}")))?;

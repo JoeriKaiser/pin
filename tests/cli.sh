@@ -1249,6 +1249,11 @@ assert_contains "$next_parent_out" "\"id\":\"$child_item\""
 ctx_parent_out=$(PIN_VAULT="$next_vault" "$PIN_BIN" context --parent "$parent_item" --format json)
 assert_contains "$ctx_parent_out" "\"id\":\"$child_item\""
 
+# 4f. Test pin add with --parent and --depends-on
+subtask_out=$(PIN_VAULT="$next_vault" "$PIN_BIN" add '# Direct Subtask' --kind technical --type task --parent "$parent_item" --depends-on "$task_item" --format json)
+assert_contains "$subtask_out" "\"parent_id\":\"$parent_item\""
+assert_contains "$subtask_out" "\"depends_on\":[\"$task_item\"]"
+
 # 5. Subsequent sync
 none_out=$(cd "$sync_repo" && PIN_VAULT="$sync_vault" "$PIN_BIN" sync --format plain)
 assert_contains "$none_out" "No merged tickets to sync."
