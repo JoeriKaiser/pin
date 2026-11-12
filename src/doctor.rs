@@ -124,17 +124,20 @@ pub fn scan_vault(vault_path: &Path) -> VaultScan {
 
     // `pin next` only returns an item once every dependency reaches `done` or
     // `closed`, so a dependency that was cancelled or deleted leaves dependents
-    // permanently unready with no explanation. Report those two cases here.
+    // permanently unready with no explanation. Report those cases here.
     let statuses: HashMap<&str, Status> = scan
         .metas
         .iter()
         .map(|m| (m.id.as_str(), m.current_status()))
         .collect();
 
+    let metas_by_id: HashMap<&str, &IdeaMeta> =
+        scan.metas.iter().map(|m| (m.id.as_str(), m)).collect();
+
     let mut unresolved = Vec::new();
     for meta in &scan.metas {
         for dep_id in &meta.depends_on {
-            match statuses.get(dep_id.as_str()) {
+            match metas_by_id.get(dep_id.as_str()) {
                 None => unresolved.push(Issue {
                     severity: Severity::Warning,
                     code: "dangling_dependency".to_string(),
@@ -142,16 +145,42 @@ pub fn scan_vault(vault_path: &Path) -> VaultScan {
                     message: format!("Depends on '{dep_id}', which is not in the vault"),
                     field: Some("depends_on".to_string()),
                 }),
-                Some(Status::Cancelled) => unresolved.push(Issue {
-                    severity: Severity::Warning,
-                    code: "blocked_by_cancelled".to_string(),
-                    filename: meta.filename.clone(),
-                    message: format!(
-                        "Depends on '{dep_id}', which was cancelled and can never satisfy the dependency"
-                    ),
-                    field: Some("depends_on".to_string()),
-                }),
-                Some(_) => {}
+                Some(dep_meta) => {
+                    if dep_meta.current_status() == Status::Cancelled {
+                        unresolved.push(Issue {
+                            severity: Severity::Warning,
+                            code: "blocked_by_cancelled".to_string(),
+                            filename: meta.filename.clone(),
+                            message: format!(
+                                "Depends on '{dep_id}', which was cancelled and can never satisfy the dependency"
+                            ),
+                            field: Some("depends_on".to_string()),
+                        });
+                    } else if dep_meta.is_archived() {
+                        use crate::model::Resolution;
+                        match dep_meta.resolution {
+                            Some(
+                                Resolution::Rejected | Resolution::Superseded | Resolution::Stale,
+                            ) => {
+                                unresolved.push(Issue {
+                                    severity: Severity::Warning,
+                                    code: "blocked_by_archived".to_string(),
+                                    filename: meta.filename.clone(),
+                                    message: format!(
+                                        "Depends on '{dep_id}', which was archived as {} and can never satisfy the dependency",
+                                        dep_meta
+                                            .resolution
+                                            .as_ref()
+                                            .map(|r| r.as_str())
+                                            .unwrap_or("archived")
+                                    ),
+                                    field: Some("depends_on".to_string()),
+                                });
+                            }
+                            _ => {}
+                        }
+                    }
+                }
             }
         }
     }
@@ -530,7 +559,7 @@ pub fn emit_doctor_report(
 mod tests {
     use super::*;
     use crate::frontmatter::render_full_document;
-    use crate::model::{Kind, WorkType};
+    use crate::model::{Kind, Resolution, WorkType};
     use tempfile::tempdir;
 
     fn write_item(dir: &Path, id: &str, status: Status, depends_on: Vec<&str>) -> String {
@@ -706,6 +735,44 @@ title: "Item 2"
         assert!(
             codes.contains(&"parent_cycle"),
             "parent cycle must be reported: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn test_blocked_by_archived_is_reported() {
+        let dir = tempdir().unwrap();
+        let mut dep = IdeaMeta::new_work_item(
+            "0123456789a1".to_string(),
+            "test".to_string(),
+            "Dep".to_string(),
+            "Body".to_string(),
+            Kind::Technical,
+            WorkType::Task,
+            Status::Created,
+            None,
+            None,
+            Some("agent:creator".to_string()),
+        );
+        dep.archived_at = Some(1700000000);
+        dep.resolution = Some(Resolution::Rejected);
+        fs::write(
+            dir.path().join("0123456789a1.md"),
+            render_full_document(&dep),
+        )
+        .unwrap();
+
+        write_item(
+            dir.path(),
+            "0123456789a2",
+            Status::Planned,
+            vec!["0123456789a1"],
+        );
+
+        let scan = scan_vault(dir.path());
+        let codes: Vec<&str> = scan.issues.iter().map(|i| i.code.as_str()).collect();
+        assert!(
+            codes.contains(&"blocked_by_archived"),
+            "dependency on rejected archived item must be reported: {codes:?}"
         );
     }
 
