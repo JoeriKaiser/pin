@@ -545,6 +545,15 @@ async function runHarness() {
     findDescendant(lastRow, '.trajectory-badge');
   assert.ok(finalBadge, 'Finished row has CONTEXT badge');
 
+  const announcerEl = documentMock.getElementById('agent-status-announcer');
+  assert.ok(announcerEl, 'agent-status-announcer element exists');
+  assert.strictEqual(announcerEl.textContent, 'Agent run completed.');
+
+  handleAgentStreamEvent({
+    type: 'waiting_for_user'
+  });
+  assert.strictEqual(announcerEl.textContent, 'Agent is waiting for your reply.');
+
   // Swimlane SVG
   const swimlaneContent = swimlaneSvgEl.innerHTML ||
     (swimlaneSvgEl.children && swimlaneSvgEl.children.map(c => c.innerHTML || c.textContent).join('')) ||
@@ -907,6 +916,57 @@ async function runHarness() {
   assert.ok(copyBtn, 'Copy ID button rendered in proposal context');
   assert.ok(idBadge, 'ID badge rendered in proposal context');
   assert.strictEqual(idBadge.textContent, 'detailte');
+
+  // Test renderDetail populates parent, subtasks, prerequisites, dependents, and related items
+  const parentTestItem = {
+    id: 'parentitem01',
+    title: 'Parent Epic Spec',
+    type: 'task',
+    kind: 'technical',
+    status: 'planned',
+    timestamp: 1700000000
+  };
+  const childTestItem = {
+    id: 'childitem001',
+    title: 'Child Subtask 1',
+    parent_id: 'parentitem01',
+    type: 'task',
+    kind: 'technical',
+    status: 'created',
+    timestamp: 1700000001
+  };
+  const relTestItem = {
+    id: 'relitem00001',
+    title: 'Related Spec',
+    related: ['childitem001'],
+    type: 'idea',
+    kind: 'technical',
+    status: 'created',
+    timestamp: 1700000002
+  };
+  testExports.state.items.push(parentTestItem, childTestItem, relTestItem);
+
+  // Inspect child item: should list parent item and related item
+  testExports.state.selected = 'childitem001';
+  renderDetail();
+  const depCard = documentMock.getElementById('dependencies-card');
+  assert.ok(depCard, 'dependencies-card element exists');
+  const depLinks = depCard.querySelectorAll('.dependency-link');
+  const depTexts = Array.from(depLinks).map(l => l.textContent);
+  assert.ok(depTexts.includes('Parent Epic Spec'), 'Child detail view displays parent title');
+  assert.ok(depTexts.includes('Related Spec'), 'Child detail view displays related item title');
+
+  // Inspect parent item: should list child subtask
+  testExports.state.selected = 'parentitem01';
+  renderDetail();
+  const parentDepLinks = depCard.querySelectorAll('.dependency-link');
+  const parentDepTexts = Array.from(parentDepLinks).map(l => l.textContent);
+  assert.ok(parentDepTexts.includes('Child Subtask 1'), 'Parent detail view displays child subtask title');
+
+  const addBtn = depCard.querySelector('.dep-add-btn');
+  assert.ok(addBtn, '+ Add relationship button rendered');
+  const rmBtns = depCard.querySelectorAll('.dep-remove-btn');
+  assert.ok(rmBtns.length > 0, 'Relationship remove buttons rendered');
 
   console.log('PASS: Board card drop transition, arrow navigation, and theme/detail ergonomics verified');
 

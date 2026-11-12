@@ -124,17 +124,20 @@ pub fn scan_vault(vault_path: &Path) -> VaultScan {
 
     // `pin next` only returns an item once every dependency reaches `done` or
     // `closed`, so a dependency that was cancelled or deleted leaves dependents
-    // permanently unready with no explanation. Report those two cases here.
+    // permanently unready with no explanation. Report those cases here.
     let statuses: HashMap<&str, Status> = scan
         .metas
         .iter()
         .map(|m| (m.id.as_str(), m.current_status()))
         .collect();
 
+    let metas_by_id: HashMap<&str, &IdeaMeta> =
+        scan.metas.iter().map(|m| (m.id.as_str(), m)).collect();
+
     let mut unresolved = Vec::new();
     for meta in &scan.metas {
         for dep_id in &meta.depends_on {
-            match statuses.get(dep_id.as_str()) {
+            match metas_by_id.get(dep_id.as_str()) {
                 None => unresolved.push(Issue {
                     severity: Severity::Warning,
                     code: "dangling_dependency".to_string(),
@@ -142,16 +145,42 @@ pub fn scan_vault(vault_path: &Path) -> VaultScan {
                     message: format!("Depends on '{dep_id}', which is not in the vault"),
                     field: Some("depends_on".to_string()),
                 }),
-                Some(Status::Cancelled) => unresolved.push(Issue {
-                    severity: Severity::Warning,
-                    code: "blocked_by_cancelled".to_string(),
-                    filename: meta.filename.clone(),
-                    message: format!(
-                        "Depends on '{dep_id}', which was cancelled and can never satisfy the dependency"
-                    ),
-                    field: Some("depends_on".to_string()),
-                }),
-                Some(_) => {}
+                Some(dep_meta) => {
+                    if dep_meta.current_status() == Status::Cancelled {
+                        unresolved.push(Issue {
+                            severity: Severity::Warning,
+                            code: "blocked_by_cancelled".to_string(),
+                            filename: meta.filename.clone(),
+                            message: format!(
+                                "Depends on '{dep_id}', which was cancelled and can never satisfy the dependency"
+                            ),
+                            field: Some("depends_on".to_string()),
+                        });
+                    } else if dep_meta.is_archived() {
+                        use crate::model::Resolution;
+                        match dep_meta.resolution {
+                            Some(
+                                Resolution::Rejected | Resolution::Superseded | Resolution::Stale,
+                            ) => {
+                                unresolved.push(Issue {
+                                    severity: Severity::Warning,
+                                    code: "blocked_by_archived".to_string(),
+                                    filename: meta.filename.clone(),
+                                    message: format!(
+                                        "Depends on '{dep_id}', which was archived as {} and can never satisfy the dependency",
+                                        dep_meta
+                                            .resolution
+                                            .as_ref()
+                                            .map(|r| r.as_str())
+                                            .unwrap_or("archived")
+                                    ),
+                                    field: Some("depends_on".to_string()),
+                                });
+                            }
+                            _ => {}
+                        }
+                    }
+                }
             }
         }
     }
@@ -213,6 +242,11 @@ pub fn scan_vault(vault_path: &Path) -> VaultScan {
     }
     scan.issues.extend(cycle_issues);
 
+    let mut parent_map: HashMap<&str, Option<&str>> = HashMap::new();
+    for meta in &scan.metas {
+        parent_map.insert(meta.id.as_str(), meta.parent_id.as_deref());
+    }
+
     let mut parent_issues = Vec::new();
     for meta in &scan.metas {
         if let Some(parent_id) = &meta.parent_id {
@@ -232,6 +266,32 @@ pub fn scan_vault(vault_path: &Path) -> VaultScan {
                     message: format!("Parent '{parent_id}' is not in the vault"),
                     field: Some("parent_id".to_string()),
                 });
+            } else {
+                let mut visited = HashSet::new();
+                let mut curr = Some(parent_id.as_str());
+                let mut found_cycle = false;
+                while let Some(p) = curr {
+                    if p == meta.id.as_str() {
+                        found_cycle = true;
+                        break;
+                    }
+                    if !visited.insert(p) {
+                        break;
+                    }
+                    curr = parent_map.get(p).copied().flatten();
+                }
+                if found_cycle {
+                    parent_issues.push(Issue {
+                        severity: Severity::Warning,
+                        code: "parent_cycle".to_string(),
+                        filename: meta.filename.clone(),
+                        message: format!(
+                            "Parent cycle detected: '{parent_id}' leads back to '{}'",
+                            meta.id
+                        ),
+                        field: Some("parent_id".to_string()),
+                    });
+                }
             }
         }
     }
@@ -278,6 +338,34 @@ pub fn repair_vault(vault_path: &Path) -> usize {
     let mut paths: Vec<_> = entries.flatten().map(|e| e.path()).collect();
     paths.sort();
 
+    // Pass 1: gather all valid item IDs in the vault
+    let mut valid_ids = HashSet::new();
+    for path in &paths {
+        if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("md") {
+            let filename = path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
+            if filename.starts_with('.') {
+                continue;
+            }
+            if let Ok(content) = fs::read_to_string(path) {
+                let mut issues = Vec::new();
+                if let Some(meta) = parse_front_matter_detailed(&filename, &content, &mut issues) {
+                    let id =
+                        if meta.id.len() == 12 && meta.id.chars().all(|c| c.is_ascii_hexdigit()) {
+                            meta.id
+                        } else {
+                            derive_deterministic_id(&filename)
+                        };
+                    valid_ids.insert(id);
+                }
+            }
+        }
+    }
+
+    // Pass 2: repair invalid schema, ID, and dangling/self relationships
     for path in paths {
         if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("md") {
             let filename = path
@@ -306,6 +394,27 @@ pub fn repair_vault(vault_path: &Path) -> usize {
                     meta.id.len() == 12 && meta.id.chars().all(|c| c.is_ascii_hexdigit());
                 if !is_valid_hex_id || issues.iter().any(|i| i.code == "missing_id") {
                     meta.id = derive_deterministic_id(&filename);
+                    needs_repair = true;
+                }
+
+                if let Some(parent_id) = &meta.parent_id {
+                    if parent_id == &meta.id || !valid_ids.contains(parent_id) {
+                        meta.parent_id = None;
+                        needs_repair = true;
+                    }
+                }
+
+                let orig_dep_len = meta.depends_on.len();
+                meta.depends_on
+                    .retain(|d| d != &meta.id && valid_ids.contains(d));
+                if meta.depends_on.len() != orig_dep_len {
+                    needs_repair = true;
+                }
+
+                let orig_rel_len = meta.related.len();
+                meta.related
+                    .retain(|r| r != &meta.id && valid_ids.contains(r));
+                if meta.related.len() != orig_rel_len {
                     needs_repair = true;
                 }
 
@@ -395,6 +504,12 @@ pub fn is_repairable_code(code: &str) -> bool {
         || code == "missing_id"
         || code == "invalid_schema"
         || code == "invalid_id"
+        || code == "self_parent"
+        || code == "dangling_parent"
+        || code == "self_dependency"
+        || code == "dangling_dependency"
+        || code == "self_related"
+        || code == "dangling_related"
 }
 
 pub fn emit_doctor_report(
@@ -499,7 +614,7 @@ pub fn emit_doctor_report(
 mod tests {
     use super::*;
     use crate::frontmatter::render_full_document;
-    use crate::model::{Kind, WorkType};
+    use crate::model::{Kind, Resolution, WorkType};
     use tempfile::tempdir;
 
     fn write_item(dir: &Path, id: &str, status: Status, depends_on: Vec<&str>) -> String {
@@ -640,6 +755,83 @@ title: "Self parent item"
     }
 
     #[test]
+    fn test_parent_cycle_is_reported() {
+        let dir = tempdir().unwrap();
+        // Item 1 has parent 2; Item 2 has parent 1
+        let raw1 = r#"---
+schema: 2
+id: "0123456789a1"
+project: "test"
+kind: "technical"
+status: "created"
+timestamp: 1700000000
+parent_id: "0123456789a2"
+title: "Item 1"
+---
+# Item 1
+"#;
+        let raw2 = r#"---
+schema: 2
+id: "0123456789a2"
+project: "test"
+kind: "technical"
+status: "created"
+timestamp: 1700000000
+parent_id: "0123456789a1"
+title: "Item 2"
+---
+# Item 2
+"#;
+        fs::write(dir.path().join("0123456789a1.md"), raw1).unwrap();
+        fs::write(dir.path().join("0123456789a2.md"), raw2).unwrap();
+
+        let scan = scan_vault(dir.path());
+        let codes: Vec<&str> = scan.issues.iter().map(|i| i.code.as_str()).collect();
+        assert!(
+            codes.contains(&"parent_cycle"),
+            "parent cycle must be reported: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn test_blocked_by_archived_is_reported() {
+        let dir = tempdir().unwrap();
+        let mut dep = IdeaMeta::new_work_item(
+            "0123456789a1".to_string(),
+            "test".to_string(),
+            "Dep".to_string(),
+            "Body".to_string(),
+            Kind::Technical,
+            WorkType::Task,
+            Status::Created,
+            None,
+            None,
+            Some("agent:creator".to_string()),
+        );
+        dep.archived_at = Some(1700000000);
+        dep.resolution = Some(Resolution::Rejected);
+        fs::write(
+            dir.path().join("0123456789a1.md"),
+            render_full_document(&dep),
+        )
+        .unwrap();
+
+        write_item(
+            dir.path(),
+            "0123456789a2",
+            Status::Planned,
+            vec!["0123456789a1"],
+        );
+
+        let scan = scan_vault(dir.path());
+        let codes: Vec<&str> = scan.issues.iter().map(|i| i.code.as_str()).collect();
+        assert!(
+            codes.contains(&"blocked_by_archived"),
+            "dependency on rejected archived item must be reported: {codes:?}"
+        );
+    }
+
+    #[test]
     fn test_dangling_and_self_related_are_reported() {
         let dir = tempdir().unwrap();
         // Dangling related: related item not in vault
@@ -743,8 +935,84 @@ Body content.
         assert!(is_repairable_code("missing_id"));
         assert!(is_repairable_code("invalid_schema"));
         assert!(is_repairable_code("invalid_id"));
-        assert!(!is_repairable_code("dangling_parent"));
-        assert!(!is_repairable_code("self_parent"));
-        assert!(!is_repairable_code("dangling_dependency"));
+        assert!(is_repairable_code("dangling_parent"));
+        assert!(is_repairable_code("self_parent"));
+        assert!(is_repairable_code("dangling_dependency"));
+        assert!(is_repairable_code("self_dependency"));
+        assert!(is_repairable_code("dangling_related"));
+        assert!(is_repairable_code("self_related"));
+        assert!(!is_repairable_code("parent_cycle"));
+        assert!(!is_repairable_code("dependency_cycle"));
+        assert!(!is_repairable_code("blocked_by_archived"));
+    }
+
+    #[test]
+    fn test_repair_cleans_dangling_and_self_relationships() {
+        let dir = tempdir().unwrap();
+        let valid_item = r#"---
+schema: 2
+id: "111111111111"
+project: "test"
+kind: "technical"
+type: "task"
+status: "created"
+timestamp: 1700000000
+title: "Valid Item"
+---
+# Valid Item
+"#;
+        let broken_item = r#"---
+schema: 2
+id: "222222222222"
+project: "test"
+kind: "technical"
+type: "task"
+status: "created"
+timestamp: 1700000001
+title: "Broken Item"
+parent_id: "222222222222"
+depends_on:
+  - "111111111111"
+  - "222222222222"
+  - "999999999999"
+related:
+  - "222222222222"
+  - "888888888888"
+---
+# Broken Item
+"#;
+        fs::write(dir.path().join("111111111111.md"), valid_item).unwrap();
+        fs::write(dir.path().join("222222222222.md"), broken_item).unwrap();
+
+        let initial_scan = scan_vault(dir.path());
+        assert!(initial_scan.issues.iter().any(|i| i.code == "self_parent"));
+        assert!(initial_scan
+            .issues
+            .iter()
+            .any(|i| i.code == "self_dependency"));
+        assert!(initial_scan
+            .issues
+            .iter()
+            .any(|i| i.code == "dangling_dependency"));
+        assert!(initial_scan.issues.iter().any(|i| i.code == "self_related"));
+        assert!(initial_scan
+            .issues
+            .iter()
+            .any(|i| i.code == "dangling_related"));
+
+        let repaired = repair_vault(dir.path());
+        assert_eq!(repaired, 1);
+
+        let repaired_scan = scan_vault(dir.path());
+        assert_eq!(repaired_scan.issues.len(), 0);
+
+        let repaired_meta = &repaired_scan
+            .metas
+            .iter()
+            .find(|m| m.id == "222222222222")
+            .unwrap();
+        assert_eq!(repaired_meta.parent_id, None);
+        assert_eq!(repaired_meta.depends_on, vec!["111111111111".to_string()]);
+        assert!(repaired_meta.related.is_empty());
     }
 }

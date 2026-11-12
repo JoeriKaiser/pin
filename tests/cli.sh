@@ -280,6 +280,13 @@ assert_contains "$parent_filtered" "$dependent_id"
 if printf '%s' "$parent_filtered" | grep -q '"id":"'"$dependency_id"'"'; then
     fail "parent filter returned the parent item instead of only child items"
 fi
+tree_plain=$(PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" tree --format plain)
+assert_contains "$tree_plain" "$dependency_id"
+assert_contains "$tree_plain" "$dependent_id"
+assert_contains "$tree_plain" "└──"
+tree_json=$(PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" tree "$dependency_id" --format json)
+assert_contains "$tree_json" "\"id\":\"$dependency_id\""
+assert_contains "$tree_json" "\"children\":[{\"id\":\"$dependent_id\""
 PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" relate "$dependent_id" "$dependency_id" --format json | grep -q '"related":\['
 PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" transition "$dependency_id" --to planned --format json >/dev/null
 PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" transition "$dependent_id" --to planned --format json >/dev/null
@@ -387,6 +394,12 @@ limited=$(PIN_VAULT="$TMP/search-vault" PIN_PROJECT=search "$PIN_BIN" search 'ra
 PIN_VAULT="$TMP/search-vault" PIN_PROJECT=search "$PIN_BIN" add '# Tagged Item' --kind technical --tags 'reliability,staging' --format json >/dev/null
 tag_search=$(PIN_VAULT="$TMP/search-vault" PIN_PROJECT=search "$PIN_BIN" search '#staging' --format json)
 assert_contains "$tag_search" '"title":"Tagged Item"'
+
+PIN_VAULT="$TMP/search-vault" PIN_PROJECT=search "$PIN_BIN" add '# Ready Task item' --kind technical --type task --status planned --format json >/dev/null
+PIN_VAULT="$TMP/search-vault" PIN_PROJECT=search "$PIN_BIN" add '# Unready Idea item' --kind technical --type idea --status created --format json >/dev/null
+ready_search=$(PIN_VAULT="$TMP/search-vault" PIN_PROJECT=search "$PIN_BIN" search 'item' --ready --format json)
+assert_contains "$ready_search" '"title":"Ready Task item"'
+[ "$(printf '%s' "$ready_search" | grep -c 'Unready Idea item')" -eq 0 ] || fail "search --ready included unready idea"
 
 mkdir -p "$TMP/broken-vault"
 printf '%s\n' 'not a pin' >"$TMP/broken-vault/broken.md"
@@ -1237,6 +1250,22 @@ assert_contains "$next_tag_out" "\"id\":\"$task_item\""
 
 ctx_tag_out=$(PIN_VAULT="$next_vault" "$PIN_BIN" context --tag beta --format json)
 assert_contains "$ctx_tag_out" "\"id\":\"$bug_item\""
+
+# 4e. Test pin next and context with --parent filter
+parent_item=$(PIN_VAULT="$next_vault" "$PIN_BIN" add '# Parent Epic' --kind technical --type task --format json | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+child_item=$(PIN_VAULT="$next_vault" "$PIN_BIN" add '# Child Task' --kind technical --type task --format json | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+PIN_VAULT="$next_vault" "$PIN_BIN" parent "$child_item" "$parent_item" >/dev/null
+
+next_parent_out=$(PIN_VAULT="$next_vault" "$PIN_BIN" next --parent "$parent_item" --format json)
+assert_contains "$next_parent_out" "\"id\":\"$child_item\""
+
+ctx_parent_out=$(PIN_VAULT="$next_vault" "$PIN_BIN" context --parent "$parent_item" --format json)
+assert_contains "$ctx_parent_out" "\"id\":\"$child_item\""
+
+# 4f. Test pin add with --parent and --depends-on
+subtask_out=$(PIN_VAULT="$next_vault" "$PIN_BIN" add '# Direct Subtask' --kind technical --type task --parent "$parent_item" --depends-on "$task_item" --format json)
+assert_contains "$subtask_out" "\"parent_id\":\"$parent_item\""
+assert_contains "$subtask_out" "\"depends_on\":[\"$task_item\"]"
 
 # 5. Subsequent sync
 none_out=$(cd "$sync_repo" && PIN_VAULT="$sync_vault" "$PIN_BIN" sync --format plain)

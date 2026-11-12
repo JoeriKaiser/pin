@@ -30,9 +30,9 @@ pub fn print_usage() {
          Commands:\n  \
          init --local [--project <name>] [--format json|plain]\n  \
          add <markdown> [--kind <kind>] [--type task|bug|idea|decision]\n                 \
-         [--status <status>] [--actor <name>] [--stdin] [--project <name>]\n                 \
-         [--title <title>] [--tags <csv>] [--priority low|medium|high]\n                 \
-         [--allow-duplicate] [--format json|plain]\n  \
+         [--status <status>] [--actor <name>] [--parent <id>] [--depends-on <id>]\n                 \
+         [--stdin] [--project <name>] [--title <title>] [--tags <csv>]\n                 \
+         [--priority low|medium|high] [--allow-duplicate] [--format json|plain]\n  \
          list [--project <name>] [--tag <name>] [--kind <kind>] [--type <type>]\n       \
          [--status <status>] [--claimed-by <actor>] [--parent <id>] [--ready]\n       \
          [--archived|--all] [--format json|table|plain]\n  \
@@ -40,12 +40,13 @@ pub fn print_usage() {
          [--status <status>] [--claimed-by <actor>] [--parent <id>] [--ready] [--archived|--all]\n               \
          [--format json|table|plain]\n  \
          search <query> [--project <name>] [--tag <name>] [--kind <kind>]\n                 \
-         [--type <type>] [--status <status>] [--claimed-by <actor>] [--parent <id>]\n                 \
+         [--type <type>] [--status <status>] [--claimed-by <actor>] [--parent <id>] [--ready]\n                 \
          [--limit <n>] [--archived|--all] [--format json|table|plain]\n  \
+         tree [id|prefix|filename] [--project <name>] [--archived|--all] [--format json|plain]\n  \
          context [--project <name>] [--tag <name>] [--kind <kind>] [--type <type>]\n          \
-         [--status <status>] [--limit <n>] [--group kind] [--archived|--all] [--format json|plain]\n  \
+         [--status <status>] [--parent <id>] [--limit <n>] [--group kind] [--archived|--all] [--format json|plain]\n  \
          next [--project <name>] [--tag <name>] [--kind <kind>] [--type <type>]\n        \
-         [--limit <n>] [--format json|plain]\n  \
+         [--parent <id>] [--limit <n>] [--format json|plain]\n  \
          transition <id|prefix|filename> --to <status> [--actor <name>]\n              \
          [--note <text>] [--expect-revision <n>] [--worktree] [--format json|plain]\n  \
          claim <id|prefix|filename> [--actor <name>] [--lease <seconds>]\n        \

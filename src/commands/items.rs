@@ -11,6 +11,7 @@ use crate::vault::{
     atomic_write, collect_ideas_with_filter, generate_id, resolve_project, resolve_selector,
     FilterOptions,
 };
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::path::Path;
@@ -21,6 +22,7 @@ pub fn add(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> {
     let (mut content, mut project, mut title, mut tags) = (None, None, None, None);
     let (mut kind, mut item_type, mut status, mut actor, mut priority, mut format) =
         (None, None, None, None, None, None);
+    let (mut parent, mut depends_on) = (None, Vec::new());
     let (mut use_stdin, mut allow_duplicate) = (false, false);
 
     while let Some(arg) = reader.peek()? {
@@ -30,6 +32,8 @@ pub fn add(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> {
             "--project" => project = Some(reader.next_val("--project")?),
             "--title" => title = Some(reader.next_val("--title")?),
             "--tags" => tags = Some(reader.next_val("--tags")?),
+            "--parent" => parent = Some(reader.next_val("--parent")?),
+            "--depends-on" | "--depends" => depends_on.push(reader.next_val(arg)?),
             "--kind" => {
                 let val = reader.next_val("--kind")?;
                 match val.parse::<Kind>() {
@@ -144,7 +148,7 @@ pub fn add(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> {
     let resolved_type = item_type.unwrap_or(WorkType::Task);
     let final_status = status.unwrap_or(Status::Created);
 
-    let idea = IdeaMeta::new_work_item(
+    let mut idea = IdeaMeta::new_work_item(
         id.clone(),
         proj_name,
         title_val,
@@ -156,6 +160,31 @@ pub fn add(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> {
         tags.map(|s| s.to_string()),
         Some(creator),
     );
+
+    if let Some(p) = parent {
+        let parent_filename = resolve_selector(vault_path, p)
+            .map_err(|e| CliError::usage(format!("Invalid parent: {e}")))?;
+        let parent_content = fs::read_to_string(vault_path.join(&parent_filename))
+            .map_err(|e| CliError::usage(format!("Could not read parent file: {e}")))?;
+        let mut issues = Vec::new();
+        let parent_meta =
+            parse_front_matter_detailed(&parent_filename, &parent_content, &mut issues)
+                .ok_or_else(|| CliError::usage("Invalid front matter in parent file"))?;
+        idea.parent_id = Some(parent_meta.id);
+    }
+
+    for dep in depends_on {
+        let dep_filename = resolve_selector(vault_path, dep)
+            .map_err(|e| CliError::usage(format!("Invalid dependency: {e}")))?;
+        let dep_content = fs::read_to_string(vault_path.join(&dep_filename))
+            .map_err(|e| CliError::usage(format!("Could not read dependency file: {e}")))?;
+        let mut issues = Vec::new();
+        let dep_meta = parse_front_matter_detailed(&dep_filename, &dep_content, &mut issues)
+            .ok_or_else(|| CliError::usage("Invalid front matter in dependency file"))?;
+        if !idea.depends_on.contains(&dep_meta.id) {
+            idea.depends_on.push(dep_meta.id);
+        }
+    }
 
     atomic_write(&file_path, &render_full_document(&idea))
         .map_err(|e| CliError::usage(format!("Failed to save idea: {e}")))?;
@@ -272,10 +301,12 @@ pub fn search(args: &[String], command: &str, vault_path: &Path) -> CliResult<()
         mut filter_claimed_by,
         mut filter_parent,
     ) = (None, None, None, None, None, None, None);
-    let (mut archive_filter, mut limit, mut format) = (ArchiveFilter::Active, None, None);
+    let (mut filter_ready, mut archive_filter, mut limit, mut format) =
+        (false, ArchiveFilter::Active, None, None);
 
     while let Some(arg) = reader.peek()? {
         match arg {
+            "--ready" => filter_ready = true,
             "--archived" => archive_filter = ArchiveFilter::Archived,
             "--all" => archive_filter = ArchiveFilter::All,
             "--project" => filter_project = Some(reader.next_val("--project")?.to_string()),
@@ -326,7 +357,7 @@ pub fn search(args: &[String], command: &str, vault_path: &Path) -> CliResult<()
         status: filter_status,
         claimed_by: filter_claimed_by.as_deref(),
         parent_id: filter_parent.as_deref(),
-        ready: false,
+        ready: filter_ready,
         query: Some(query),
         archive_filter,
     };
@@ -600,5 +631,214 @@ pub fn rm(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> {
             println!("Removed {removed_id}  {filename}");
         }
     }
+    Ok(())
+}
+
+#[derive(serde::Serialize)]
+struct JsonTreeNode<'a> {
+    pub id: &'a str,
+    pub title: &'a str,
+    #[serde(rename = "type")]
+    pub item_type: &'a str,
+    pub status: &'a str,
+    pub kind: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<&'a str>,
+    pub children: Vec<JsonTreeNode<'a>>,
+}
+
+fn build_json_tree<'a>(
+    node: &'a IdeaMeta,
+    children_map: &HashMap<&'a str, Vec<&'a IdeaMeta>>,
+    branch_visited: &mut HashSet<&'a str>,
+) -> JsonTreeNode<'a> {
+    branch_visited.insert(&node.id);
+    let mut children_nodes = Vec::new();
+    if let Some(children) = children_map.get(node.id.as_str()) {
+        for child in children {
+            if !branch_visited.contains(child.id.as_str()) {
+                children_nodes.push(build_json_tree(child, children_map, branch_visited));
+            }
+        }
+    }
+    branch_visited.remove(node.id.as_str());
+    JsonTreeNode {
+        id: &node.id,
+        title: &node.title,
+        item_type: node.work_type().as_str(),
+        status: node.current_status().as_str(),
+        kind: node.kind.as_str(),
+        parent_id: node.parent_id.as_deref(),
+        children: children_nodes,
+    }
+}
+
+fn print_tree_branch(
+    node: &IdeaMeta,
+    prefix: &str,
+    is_last: bool,
+    is_root: bool,
+    children_map: &HashMap<&str, Vec<&IdeaMeta>>,
+    branch_visited: &mut HashSet<String>,
+) {
+    let branch_str = if is_root {
+        ""
+    } else if is_last {
+        "└── "
+    } else {
+        "├── "
+    };
+
+    let is_cycle = branch_visited.contains(&node.id);
+    let cycle_mark = if is_cycle { " (cycle)" } else { "" };
+
+    println!(
+        "{}{}{}  {:<8}  {:<11}  {}{}",
+        prefix,
+        branch_str,
+        node.id,
+        node.work_type().as_str(),
+        node.current_status().as_str(),
+        node.title,
+        cycle_mark
+    );
+
+    if is_cycle {
+        return;
+    }
+
+    branch_visited.insert(node.id.clone());
+
+    if let Some(children) = children_map.get(node.id.as_str()) {
+        let child_prefix = if is_root {
+            String::new()
+        } else if is_last {
+            format!("{prefix}    ")
+        } else {
+            format!("{prefix}│   ")
+        };
+        let count = children.len();
+        for (i, child) in children.iter().enumerate() {
+            let child_is_last = i + 1 == count;
+            print_tree_branch(
+                child,
+                &child_prefix,
+                child_is_last,
+                false,
+                children_map,
+                branch_visited,
+            );
+        }
+    }
+
+    branch_visited.remove(&node.id);
+}
+
+pub fn tree(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> {
+    let mut reader = ArgReader::new(args, command);
+    let mut selector: Option<String> = None;
+    let mut filter_project: Option<String> = None;
+    let mut archive_filter = ArchiveFilter::Active;
+    let mut format = None;
+
+    while let Some(arg) = reader.peek()? {
+        match arg {
+            "--archived" => archive_filter = ArchiveFilter::Archived,
+            "--all" => archive_filter = ArchiveFilter::All,
+            "--project" => filter_project = Some(reader.next_val("--project")?.to_string()),
+            "--format" => format = Some(reader.parse_format(false)?),
+            flag if flag.starts_with("--") => {
+                return Err(CliError::usage(format!("Unknown flag '{flag}'")));
+            }
+            _ => {
+                if selector.is_none() {
+                    selector = Some(arg.to_string());
+                } else {
+                    return Err(CliError::usage(format!("Unexpected argument '{arg}'")));
+                }
+            }
+        }
+        reader.idx += 1;
+    }
+
+    let filter = FilterOptions {
+        project: filter_project.as_deref(),
+        archive_filter,
+        ..Default::default()
+    };
+
+    let ideas = collect_ideas_with_filter(vault_path, &filter).map_err(|e| {
+        CliError::usage(format!(
+            "Could not read vault {}: {e}",
+            vault_path.display()
+        ))
+    })?;
+
+    let mut children_map: HashMap<&str, Vec<&IdeaMeta>> = HashMap::new();
+    let mut id_map: HashMap<&str, &IdeaMeta> = HashMap::new();
+
+    for idea in &ideas {
+        id_map.insert(idea.id.as_str(), idea);
+        if let Some(parent_id) = &idea.parent_id {
+            children_map
+                .entry(parent_id.as_str())
+                .or_default()
+                .push(idea);
+        }
+    }
+
+    for children in children_map.values_mut() {
+        children.sort_by_key(|c| {
+            (
+                c.created_at_ns.unwrap_or(c.timestamp * 1_000_000_000),
+                &c.id,
+            )
+        });
+    }
+
+    let roots: Vec<&IdeaMeta> = if let Some(s) = selector {
+        let filename =
+            resolve_selector(vault_path, &s).map_err(|e| CliError::usage(e.to_string()))?;
+        let root_id = filename.trim_end_matches(".md");
+        match id_map.get(root_id) {
+            Some(item) => vec![*item],
+            None => {
+                return Err(CliError::usage(format!(
+                    "Item '{s}' not found in the selected project/filter"
+                )));
+            }
+        }
+    } else {
+        let mut r: Vec<&IdeaMeta> = ideas
+            .iter()
+            .filter(|i| match &i.parent_id {
+                None => true,
+                Some(pid) => !id_map.contains_key(pid.as_str()),
+            })
+            .collect();
+        r.sort_by_key(|i| {
+            (
+                i.created_at_ns.unwrap_or(i.timestamp * 1_000_000_000),
+                &i.id,
+            )
+        });
+        r
+    };
+
+    let fmt = format.unwrap_or_else(|| default_format(OutputFormat::Plain));
+    if fmt == OutputFormat::Json {
+        let mut branch_visited = HashSet::new();
+        let tree_nodes: Vec<JsonTreeNode> = roots
+            .iter()
+            .map(|r| build_json_tree(r, &children_map, &mut branch_visited))
+            .collect();
+        println!("{}", serde_json::to_string(&tree_nodes).unwrap_or_default());
+    } else {
+        let mut branch_visited = HashSet::new();
+        for root in roots {
+            print_tree_branch(root, "", true, true, &children_map, &mut branch_visited);
+        }
+    }
+
     Ok(())
 }

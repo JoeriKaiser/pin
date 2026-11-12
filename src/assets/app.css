@@ -1870,6 +1870,78 @@ a:hover {
   color: var(--warning-ink);
 }
 
+.dep-remove-btn {
+  background: none;
+  border: none;
+  color: var(--faint);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  padding: 0 var(--space-1);
+  line-height: 1;
+  opacity: 0.6;
+  border-radius: var(--radius-sm);
+  transition: opacity var(--duration-fast), color var(--duration-fast);
+}
+
+.dep-remove-btn:hover {
+  opacity: 1;
+  color: var(--danger-ink);
+}
+
+.dep-add-btn {
+  background: none;
+  border: 1px dashed var(--edge);
+  border-radius: var(--radius-sm);
+  color: var(--faint);
+  font-size: var(--text-xs);
+  padding: var(--space-1) var(--space-2);
+  cursor: pointer;
+  width: 100%;
+  text-align: center;
+  margin-top: var(--space-2);
+  transition: border-color var(--duration-fast), color var(--duration-fast);
+}
+
+.dep-add-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.dep-add-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1-5);
+  margin-top: var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  background: var(--surface-overlay, var(--surface));
+}
+
+.dep-add-row {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.dep-add-select,
+.dep-add-input {
+  font-size: var(--text-xs);
+  padding: var(--space-1);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.dep-add-select {
+  flex-shrink: 0;
+}
+
+.dep-add-input {
+  flex: 1;
+  min-width: 0;
+}
+
 .help-text {
   font-size: var(--text-xs);
   color: var(--faint);
