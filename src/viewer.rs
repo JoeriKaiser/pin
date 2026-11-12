@@ -129,6 +129,14 @@ struct ActionPayload {
     body: Option<String>,
     #[serde(default)]
     resolution: Option<String>,
+    #[serde(
+        default,
+        alias = "dependency",
+        alias = "parent",
+        alias = "related",
+        alias = "target_id"
+    )]
+    target: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -278,6 +286,22 @@ fn start_failure_response(err: &AcpManagerError) -> (u16, &'static str, String) 
             serde_json::json!({ "error": err.to_string() }).to_string(),
         ),
     }
+}
+
+fn resolve_target_id(vault_path: &Path, raw: &str) -> String {
+    if let Ok(target_filename) = resolve_selector(vault_path, raw) {
+        if let Ok(content) = std::fs::read_to_string(vault_path.join(&target_filename)) {
+            let mut issues = Vec::new();
+            if let Some(target_meta) = crate::frontmatter::parse_front_matter_detailed(
+                &target_filename,
+                &content,
+                &mut issues,
+            ) {
+                return target_meta.id;
+            }
+        }
+    }
+    raw.to_string()
 }
 
 fn compute_vault_etag(vault_path: &Path) -> String {
@@ -1357,6 +1381,87 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                         payload.body.as_deref(),
                         payload.expect_revision,
                     ),
+                    "depend" => match payload.target.as_deref() {
+                        Some(t) => {
+                            let dep_id = resolve_target_id(&snapshot.vault_path, t);
+                            workflow::depend_item(
+                                &snapshot.vault_path,
+                                &filename,
+                                &dep_id,
+                                Some(actor_to_use),
+                                payload.expect_revision,
+                            )
+                        }
+                        None => Err(workflow::WorkflowError::UnknownAction(
+                            "Action 'depend' requires 'target'".to_string(),
+                        )),
+                    },
+                    "undepend" => match payload.target.as_deref() {
+                        Some(t) => {
+                            let dep_id = resolve_target_id(&snapshot.vault_path, t);
+                            workflow::undepend_item(
+                                &snapshot.vault_path,
+                                &filename,
+                                &dep_id,
+                                Some(actor_to_use),
+                                payload.expect_revision,
+                            )
+                        }
+                        None => Err(workflow::WorkflowError::UnknownAction(
+                            "Action 'undepend' requires 'target'".to_string(),
+                        )),
+                    },
+                    "parent" => match payload.target.as_deref() {
+                        Some(t) => {
+                            let parent_id = resolve_target_id(&snapshot.vault_path, t);
+                            workflow::parent_item(
+                                &snapshot.vault_path,
+                                &filename,
+                                &parent_id,
+                                Some(actor_to_use),
+                                payload.expect_revision,
+                            )
+                        }
+                        None => Err(workflow::WorkflowError::UnknownAction(
+                            "Action 'parent' requires 'target'".to_string(),
+                        )),
+                    },
+                    "unparent" => workflow::unparent_item(
+                        &snapshot.vault_path,
+                        &filename,
+                        Some(actor_to_use),
+                        payload.expect_revision,
+                    ),
+                    "relate" => match payload.target.as_deref() {
+                        Some(t) => {
+                            let rel_id = resolve_target_id(&snapshot.vault_path, t);
+                            workflow::relate_item(
+                                &snapshot.vault_path,
+                                &filename,
+                                &rel_id,
+                                Some(actor_to_use),
+                                payload.expect_revision,
+                            )
+                        }
+                        None => Err(workflow::WorkflowError::UnknownAction(
+                            "Action 'relate' requires 'target'".to_string(),
+                        )),
+                    },
+                    "unrelate" => match payload.target.as_deref() {
+                        Some(t) => {
+                            let rel_id = resolve_target_id(&snapshot.vault_path, t);
+                            workflow::unrelate_item(
+                                &snapshot.vault_path,
+                                &filename,
+                                &rel_id,
+                                Some(actor_to_use),
+                                payload.expect_revision,
+                            )
+                        }
+                        None => Err(workflow::WorkflowError::UnknownAction(
+                            "Action 'unrelate' requires 'target'".to_string(),
+                        )),
+                    },
                     other => Err(workflow::WorkflowError::UnknownAction(other.to_string())),
                 };
 
@@ -2570,6 +2675,15 @@ mod tests {
         assert_eq!(payload.resolution.as_deref(), Some("implemented"));
         assert_eq!(payload.expect_revision, Some(3));
         assert_eq!(payload.note.as_deref(), Some("shipped"));
+    }
+
+    #[test]
+    fn test_action_payload_relationship() {
+        let json = r###"{"action":"depend","target":"0123456789aa","expect_revision":2}"###;
+        let payload: ActionPayload = serde_json::from_str(json).unwrap();
+        assert_eq!(payload.action, "depend");
+        assert_eq!(payload.target.as_deref(), Some("0123456789aa"));
+        assert_eq!(payload.expect_revision, Some(2));
     }
 
     #[test]
