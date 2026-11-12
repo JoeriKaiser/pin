@@ -338,6 +338,34 @@ pub fn repair_vault(vault_path: &Path) -> usize {
     let mut paths: Vec<_> = entries.flatten().map(|e| e.path()).collect();
     paths.sort();
 
+    // Pass 1: gather all valid item IDs in the vault
+    let mut valid_ids = HashSet::new();
+    for path in &paths {
+        if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("md") {
+            let filename = path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
+            if filename.starts_with('.') {
+                continue;
+            }
+            if let Ok(content) = fs::read_to_string(path) {
+                let mut issues = Vec::new();
+                if let Some(meta) = parse_front_matter_detailed(&filename, &content, &mut issues) {
+                    let id =
+                        if meta.id.len() == 12 && meta.id.chars().all(|c| c.is_ascii_hexdigit()) {
+                            meta.id
+                        } else {
+                            derive_deterministic_id(&filename)
+                        };
+                    valid_ids.insert(id);
+                }
+            }
+        }
+    }
+
+    // Pass 2: repair invalid schema, ID, and dangling/self relationships
     for path in paths {
         if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("md") {
             let filename = path
@@ -366,6 +394,27 @@ pub fn repair_vault(vault_path: &Path) -> usize {
                     meta.id.len() == 12 && meta.id.chars().all(|c| c.is_ascii_hexdigit());
                 if !is_valid_hex_id || issues.iter().any(|i| i.code == "missing_id") {
                     meta.id = derive_deterministic_id(&filename);
+                    needs_repair = true;
+                }
+
+                if let Some(parent_id) = &meta.parent_id {
+                    if parent_id == &meta.id || !valid_ids.contains(parent_id) {
+                        meta.parent_id = None;
+                        needs_repair = true;
+                    }
+                }
+
+                let orig_dep_len = meta.depends_on.len();
+                meta.depends_on
+                    .retain(|d| d != &meta.id && valid_ids.contains(d));
+                if meta.depends_on.len() != orig_dep_len {
+                    needs_repair = true;
+                }
+
+                let orig_rel_len = meta.related.len();
+                meta.related
+                    .retain(|r| r != &meta.id && valid_ids.contains(r));
+                if meta.related.len() != orig_rel_len {
                     needs_repair = true;
                 }
 
@@ -455,6 +504,12 @@ pub fn is_repairable_code(code: &str) -> bool {
         || code == "missing_id"
         || code == "invalid_schema"
         || code == "invalid_id"
+        || code == "self_parent"
+        || code == "dangling_parent"
+        || code == "self_dependency"
+        || code == "dangling_dependency"
+        || code == "self_related"
+        || code == "dangling_related"
 }
 
 pub fn emit_doctor_report(
@@ -880,8 +935,84 @@ Body content.
         assert!(is_repairable_code("missing_id"));
         assert!(is_repairable_code("invalid_schema"));
         assert!(is_repairable_code("invalid_id"));
-        assert!(!is_repairable_code("dangling_parent"));
-        assert!(!is_repairable_code("self_parent"));
-        assert!(!is_repairable_code("dangling_dependency"));
+        assert!(is_repairable_code("dangling_parent"));
+        assert!(is_repairable_code("self_parent"));
+        assert!(is_repairable_code("dangling_dependency"));
+        assert!(is_repairable_code("self_dependency"));
+        assert!(is_repairable_code("dangling_related"));
+        assert!(is_repairable_code("self_related"));
+        assert!(!is_repairable_code("parent_cycle"));
+        assert!(!is_repairable_code("dependency_cycle"));
+        assert!(!is_repairable_code("blocked_by_archived"));
+    }
+
+    #[test]
+    fn test_repair_cleans_dangling_and_self_relationships() {
+        let dir = tempdir().unwrap();
+        let valid_item = r#"---
+schema: 2
+id: "111111111111"
+project: "test"
+kind: "technical"
+type: "task"
+status: "created"
+timestamp: 1700000000
+title: "Valid Item"
+---
+# Valid Item
+"#;
+        let broken_item = r#"---
+schema: 2
+id: "222222222222"
+project: "test"
+kind: "technical"
+type: "task"
+status: "created"
+timestamp: 1700000001
+title: "Broken Item"
+parent_id: "222222222222"
+depends_on:
+  - "111111111111"
+  - "222222222222"
+  - "999999999999"
+related:
+  - "222222222222"
+  - "888888888888"
+---
+# Broken Item
+"#;
+        fs::write(dir.path().join("111111111111.md"), valid_item).unwrap();
+        fs::write(dir.path().join("222222222222.md"), broken_item).unwrap();
+
+        let initial_scan = scan_vault(dir.path());
+        assert!(initial_scan.issues.iter().any(|i| i.code == "self_parent"));
+        assert!(initial_scan
+            .issues
+            .iter()
+            .any(|i| i.code == "self_dependency"));
+        assert!(initial_scan
+            .issues
+            .iter()
+            .any(|i| i.code == "dangling_dependency"));
+        assert!(initial_scan.issues.iter().any(|i| i.code == "self_related"));
+        assert!(initial_scan
+            .issues
+            .iter()
+            .any(|i| i.code == "dangling_related"));
+
+        let repaired = repair_vault(dir.path());
+        assert_eq!(repaired, 1);
+
+        let repaired_scan = scan_vault(dir.path());
+        assert_eq!(repaired_scan.issues.len(), 0);
+
+        let repaired_meta = &repaired_scan
+            .metas
+            .iter()
+            .find(|m| m.id == "222222222222")
+            .unwrap();
+        assert_eq!(repaired_meta.parent_id, None);
+        assert_eq!(repaired_meta.depends_on, vec!["111111111111".to_string()]);
+        assert!(repaired_meta.related.is_empty());
     }
 }
