@@ -216,6 +216,7 @@ Duplicate titles are rejected by default. Use `--allow-duplicate` only when the 
 - `pin list [--project <name>] [--tag <name>] [--kind <kind>] [--type <type>] [--status <status>] [--claimed-by <actor>] [--parent <id>] [--ready] [--archived|--all] [--format json|table|plain]`
 - `pin list-project [--tag <name>] [--kind <kind>] [--type <type>] [--status <status>] [--claimed-by <actor>] [--parent <id>] [--ready] [--archived|--all] [--format json|table|plain]`
 - `pin search <query> [--project <name>] [--tag <name>] [--kind <kind>] [--type <type>] [--status <status>] [--claimed-by <actor>] [--parent <id>] [--ready] [--limit <n>] [--archived|--all] [--format json|table|plain]`
+- `pin tree [id|prefix|filename] [--project <name>] [--archived|--all] [--format json|plain]`
 - `pin next [--project <name>] [--tag <name>] [--kind <kind>] [--type <type>] [--parent <id>] [--limit <n>] [--format json|plain]`
 - `pin transition <id|id-prefix|filename> --to <status> [--actor <name>] [--note <text>] [--expect-revision <n>] [--worktree] [--format json|plain]`
 - `pin claim <id|id-prefix|filename> [--actor <name>] [--lease <seconds>] [--expect-revision <n>] [--worktree] [--format json|plain]`

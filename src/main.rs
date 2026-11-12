@@ -105,6 +105,7 @@ fn run() -> CliResult<()> {
         "add" => commands::items::add(&args, cmd, &vault_path)?,
         "list" | "list-project" => commands::items::list(&args, cmd, &vault_path)?,
         "search" => commands::items::search(&args, cmd, &vault_path)?,
+        "tree" => commands::items::tree(&args, cmd, &vault_path)?,
         "read" => commands::items::read(&args, cmd, &vault_path)?,
         "edit" => commands::items::edit(&args, cmd, &vault_path)?,
         "rm" => commands::items::rm(&args, cmd, &vault_path)?,

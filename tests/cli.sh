@@ -280,6 +280,13 @@ assert_contains "$parent_filtered" "$dependent_id"
 if printf '%s' "$parent_filtered" | grep -q '"id":"'"$dependency_id"'"'; then
     fail "parent filter returned the parent item instead of only child items"
 fi
+tree_plain=$(PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" tree --format plain)
+assert_contains "$tree_plain" "$dependency_id"
+assert_contains "$tree_plain" "$dependent_id"
+assert_contains "$tree_plain" "└──"
+tree_json=$(PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" tree "$dependency_id" --format json)
+assert_contains "$tree_json" "\"id\":\"$dependency_id\""
+assert_contains "$tree_json" "\"children\":[{\"id\":\"$dependent_id\""
 PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" relate "$dependent_id" "$dependency_id" --format json | grep -q '"related":\['
 PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" transition "$dependency_id" --to planned --format json >/dev/null
 PIN_VAULT="$TMP/dependency-vault" PIN_PROJECT=dependencies "$PIN_BIN" transition "$dependent_id" --to planned --format json >/dev/null

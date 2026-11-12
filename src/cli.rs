@@ -42,6 +42,7 @@ pub fn print_usage() {
          search <query> [--project <name>] [--tag <name>] [--kind <kind>]\n                 \
          [--type <type>] [--status <status>] [--claimed-by <actor>] [--parent <id>] [--ready]\n                 \
          [--limit <n>] [--archived|--all] [--format json|table|plain]\n  \
+         tree [id|prefix|filename] [--project <name>] [--archived|--all] [--format json|plain]\n  \
          context [--project <name>] [--tag <name>] [--kind <kind>] [--type <type>]\n          \
          [--status <status>] [--parent <id>] [--limit <n>] [--group kind] [--archived|--all] [--format json|plain]\n  \
          next [--project <name>] [--tag <name>] [--kind <kind>] [--type <type>]\n        \
