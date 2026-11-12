@@ -300,10 +300,12 @@ pub fn search(args: &[String], command: &str, vault_path: &Path) -> CliResult<()
         mut filter_claimed_by,
         mut filter_parent,
     ) = (None, None, None, None, None, None, None);
-    let (mut archive_filter, mut limit, mut format) = (ArchiveFilter::Active, None, None);
+    let (mut filter_ready, mut archive_filter, mut limit, mut format) =
+        (false, ArchiveFilter::Active, None, None);
 
     while let Some(arg) = reader.peek()? {
         match arg {
+            "--ready" => filter_ready = true,
             "--archived" => archive_filter = ArchiveFilter::Archived,
             "--all" => archive_filter = ArchiveFilter::All,
             "--project" => filter_project = Some(reader.next_val("--project")?.to_string()),
@@ -354,7 +356,7 @@ pub fn search(args: &[String], command: &str, vault_path: &Path) -> CliResult<()
         status: filter_status,
         claimed_by: filter_claimed_by.as_deref(),
         parent_id: filter_parent.as_deref(),
-        ready: false,
+        ready: filter_ready,
         query: Some(query),
         archive_filter,
     };

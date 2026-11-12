@@ -388,6 +388,12 @@ PIN_VAULT="$TMP/search-vault" PIN_PROJECT=search "$PIN_BIN" add '# Tagged Item' 
 tag_search=$(PIN_VAULT="$TMP/search-vault" PIN_PROJECT=search "$PIN_BIN" search '#staging' --format json)
 assert_contains "$tag_search" '"title":"Tagged Item"'
 
+PIN_VAULT="$TMP/search-vault" PIN_PROJECT=search "$PIN_BIN" add '# Ready Task item' --kind technical --type task --status planned --format json >/dev/null
+PIN_VAULT="$TMP/search-vault" PIN_PROJECT=search "$PIN_BIN" add '# Unready Idea item' --kind technical --type idea --status created --format json >/dev/null
+ready_search=$(PIN_VAULT="$TMP/search-vault" PIN_PROJECT=search "$PIN_BIN" search 'item' --ready --format json)
+assert_contains "$ready_search" '"title":"Ready Task item"'
+[ "$(printf '%s' "$ready_search" | grep -c 'Unready Idea item')" -eq 0 ] || fail "search --ready included unready idea"
+
 mkdir -p "$TMP/broken-vault"
 printf '%s\n' 'not a pin' >"$TMP/broken-vault/broken.md"
 if PIN_VAULT="$TMP/broken-vault" "$PIN_BIN" doctor --format json >"$TMP/doctor.json"; then
