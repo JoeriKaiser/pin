@@ -1238,6 +1238,17 @@ assert_contains "$next_tag_out" "\"id\":\"$task_item\""
 ctx_tag_out=$(PIN_VAULT="$next_vault" "$PIN_BIN" context --tag beta --format json)
 assert_contains "$ctx_tag_out" "\"id\":\"$bug_item\""
 
+# 4e. Test pin next and context with --parent filter
+parent_item=$(PIN_VAULT="$next_vault" "$PIN_BIN" add '# Parent Epic' --kind technical --type task --format json | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+child_item=$(PIN_VAULT="$next_vault" "$PIN_BIN" add '# Child Task' --kind technical --type task --format json | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+PIN_VAULT="$next_vault" "$PIN_BIN" parent "$child_item" "$parent_item" >/dev/null
+
+next_parent_out=$(PIN_VAULT="$next_vault" "$PIN_BIN" next --parent "$parent_item" --format json)
+assert_contains "$next_parent_out" "\"id\":\"$child_item\""
+
+ctx_parent_out=$(PIN_VAULT="$next_vault" "$PIN_BIN" context --parent "$parent_item" --format json)
+assert_contains "$ctx_parent_out" "\"id\":\"$child_item\""
+
 # 5. Subsequent sync
 none_out=$(cd "$sync_repo" && PIN_VAULT="$sync_vault" "$PIN_BIN" sync --format plain)
 assert_contains "$none_out" "No merged tickets to sync."

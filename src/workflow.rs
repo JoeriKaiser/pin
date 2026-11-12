@@ -1038,6 +1038,7 @@ pub fn next_ready_items_filtered(
     kind: Option<Kind>,
     item_type: Option<WorkType>,
     tag: Option<&str>,
+    parent_id: Option<&str>,
     limit: usize,
 ) -> Vec<IdeaMeta> {
     let now = chrono::Utc::now().timestamp();
@@ -1061,6 +1062,15 @@ pub fn next_ready_items_filtered(
             }
             if let Some(t) = item_type {
                 if item.work_type() != t {
+                    return false;
+                }
+            }
+            if let Some(parent) = parent_id {
+                let matches_parent = item
+                    .parent_id
+                    .as_deref()
+                    .is_some_and(|p| p == parent || p.starts_with(parent));
+                if !matches_parent {
                     return false;
                 }
             }
@@ -1097,7 +1107,7 @@ pub fn next_ready_items(
     project: Option<&str>,
     limit: usize,
 ) -> Vec<IdeaMeta> {
-    next_ready_items_filtered(all_items, project, None, None, None, limit)
+    next_ready_items_filtered(all_items, project, None, None, None, None, limit)
 }
 
 #[cfg(test)]
@@ -1728,13 +1738,27 @@ mod tests {
         assert!(!ready_ids.contains(&"idea01"));
 
         // Test filtered by type
-        let bugs =
-            next_ready_items_filtered(&items, Some("test"), None, Some(WorkType::Bug), None, 10);
+        let bugs = next_ready_items_filtered(
+            &items,
+            Some("test"),
+            None,
+            Some(WorkType::Bug),
+            None,
+            None,
+            10,
+        );
         assert_eq!(bugs.len(), 1);
         assert_eq!(bugs[0].id, "bug01");
 
-        let tasks =
-            next_ready_items_filtered(&items, Some("test"), None, Some(WorkType::Task), None, 10);
+        let tasks = next_ready_items_filtered(
+            &items,
+            Some("test"),
+            None,
+            Some(WorkType::Task),
+            None,
+            None,
+            10,
+        );
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].id, "task01");
     }

@@ -13,8 +13,9 @@ pub fn context(args: &[String], command: &str, vault_path: &Path) -> CliResult<(
         mut filter_type,
         mut filter_status,
         mut filter_tag,
+        mut filter_parent,
         mut limit,
-    ) = (None, None, None, None, None, None);
+    ) = (None, None, None, None, None, None, None);
     let (mut archive_filter, mut group_kind, mut format) = (ArchiveFilter::Active, false, None);
 
     while let Some(arg) = reader.peek()? {
@@ -23,6 +24,7 @@ pub fn context(args: &[String], command: &str, vault_path: &Path) -> CliResult<(
             "--all" => archive_filter = ArchiveFilter::All,
             "--project" => filter_project = Some(reader.next_val("--project")?.to_string()),
             "--tag" => filter_tag = Some(reader.next_val("--tag")?.to_string()),
+            "--parent" => filter_parent = Some(reader.next_val("--parent")?.to_string()),
             "--kind" => {
                 let val = reader.next_val("--kind")?;
                 filter_kind = Some(
@@ -72,6 +74,7 @@ pub fn context(args: &[String], command: &str, vault_path: &Path) -> CliResult<(
         kind: filter_kind,
         item_type: filter_type,
         status: filter_status,
+        parent_id: filter_parent.as_deref(),
         archive_filter,
         ..Default::default()
     };
@@ -102,6 +105,7 @@ pub fn next(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> 
     let mut filter_tag = None;
     let mut filter_kind = None;
     let mut filter_type = None;
+    let mut filter_parent = None;
     let mut limit = Some(1);
     let mut format = None;
 
@@ -109,6 +113,7 @@ pub fn next(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> 
         match arg {
             "--project" => filter_project = Some(reader.next_val("--project")?.to_string()),
             "--tag" => filter_tag = Some(reader.next_val("--tag")?.to_string()),
+            "--parent" => filter_parent = Some(reader.next_val("--parent")?.to_string()),
             "--kind" => {
                 let val = reader.next_val("--kind")?;
                 filter_kind = Some(
@@ -149,6 +154,7 @@ pub fn next(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> 
         filter_kind,
         filter_type,
         filter_tag.as_deref(),
+        filter_parent.as_deref(),
         limit.unwrap_or(1),
     );
 
