@@ -211,12 +211,12 @@ Duplicate titles are rejected by default. Use `--allow-duplicate` only when the 
 
 ## Commands
 
-- `pin context [--project <name>] [--tag <name>] [--kind <kind>] [--type <type>] [--status <status>] [--limit <n>] [--group kind] [--archived|--all] [--format json|plain]`
-- `pin add <markdown> --kind technical|product|business|project [--stdin] [--project <name>] [--title <title>] [--tags <csv>] [--priority low|medium|high] [--type idea|task|bug|decision] [--format json|plain]`
+- `pin context [--project <name>] [--tag <name>] [--kind <kind>] [--type <type>] [--status <status>] [--parent <id>] [--limit <n>] [--group kind] [--archived|--all] [--format json|plain]`
+- `pin add <markdown> --kind technical|product|business|project [--stdin] [--project <name>] [--title <title>] [--tags <csv>] [--priority low|medium|high] [--type idea|task|bug|decision] [--status <status>] [--parent <id>] [--depends-on <id>] [--format json|plain]`
 - `pin list [--project <name>] [--tag <name>] [--kind <kind>] [--type <type>] [--status <status>] [--claimed-by <actor>] [--parent <id>] [--ready] [--archived|--all] [--format json|table|plain]`
 - `pin list-project [--tag <name>] [--kind <kind>] [--type <type>] [--status <status>] [--claimed-by <actor>] [--parent <id>] [--ready] [--archived|--all] [--format json|table|plain]`
-- `pin search <query> [--project <name>] [--tag <name>] [--kind <kind>] [--type <type>] [--status <status>] [--claimed-by <actor>] [--parent <id>] [--limit <n>] [--archived|--all] [--format json|table|plain]`
-- `pin next [--project <name>] [--tag <name>] [--kind <kind>] [--type <type>] [--limit <n>] [--format json|plain]`
+- `pin search <query> [--project <name>] [--tag <name>] [--kind <kind>] [--type <type>] [--status <status>] [--claimed-by <actor>] [--parent <id>] [--ready] [--limit <n>] [--archived|--all] [--format json|table|plain]`
+- `pin next [--project <name>] [--tag <name>] [--kind <kind>] [--type <type>] [--parent <id>] [--limit <n>] [--format json|plain]`
 - `pin transition <id|id-prefix|filename> --to <status> [--actor <name>] [--note <text>] [--expect-revision <n>] [--worktree] [--format json|plain]`
 - `pin claim <id|id-prefix|filename> [--actor <name>] [--lease <seconds>] [--expect-revision <n>] [--worktree] [--format json|plain]`
 - `pin release|unclaim <id|id-prefix|filename> [--actor <name>] [--force] [--expect-revision <n>] [--format json|plain]`
