@@ -545,6 +545,15 @@ async function runHarness() {
     findDescendant(lastRow, '.trajectory-badge');
   assert.ok(finalBadge, 'Finished row has CONTEXT badge');
 
+  const announcerEl = documentMock.getElementById('agent-status-announcer');
+  assert.ok(announcerEl, 'agent-status-announcer element exists');
+  assert.strictEqual(announcerEl.textContent, 'Agent run completed.');
+
+  handleAgentStreamEvent({
+    type: 'waiting_for_user'
+  });
+  assert.strictEqual(announcerEl.textContent, 'Agent is waiting for your reply.');
+
   // Swimlane SVG
   const swimlaneContent = swimlaneSvgEl.innerHTML ||
     (swimlaneSvgEl.children && swimlaneSvgEl.children.map(c => c.innerHTML || c.textContent).join('')) ||

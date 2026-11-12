@@ -17,7 +17,7 @@ import {
 import {
   openAgentDrawer, closeAgentDrawer, updateActiveRuns, toggleAllToolCards,
   openToolInspector, closeToolInspector, copyToolOutput, filterTrajectoryRows,
-  appendTrajectoryContextRow, setAgentCallbacks
+  appendTrajectoryContextRow, setAgentCallbacks, announceAgentStatus
 } from './agent.js';
 import { bindRunnerUi, closeRunnerDialog } from './runner.js';
 
@@ -398,6 +398,7 @@ export function bindAgent() {
             });
           }
           showToast('Agent cancelled', false);
+          announceAgentStatus('Agent run cancelled.');
           updateActiveRuns();
         }).catch(function (err) {
           showToast(err.message || 'Failed to cancel', true);

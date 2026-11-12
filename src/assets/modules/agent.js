@@ -8,6 +8,13 @@ import { setRoute } from './router.js';
 var callbacks = { refreshData: function () {}, renderBoard: function () {}, renderDetail: function () {}, renderAgentsTable: function () {} };
 export function setAgentCallbacks(cbs) { if (cbs) Object.assign(callbacks, cbs); }
 
+export function announceAgentStatus(message) {
+  var el = els.agentStatusAnnouncer || (typeof document !== 'undefined' && document.getElementById('agent-status-announcer'));
+  if (el && message) {
+    el.textContent = message;
+  }
+}
+
 function setStatusPill(status, cls) {
   if (els.agentStatusPill) {
     text(els.agentStatusPill, status);
@@ -173,6 +180,9 @@ export function openAgentDrawer(itemId) {
   var pillText = isRunning ? 'Running' : (itemSt === 'in_progress' ? 'Interrupted' : ((itemSt === 'done' || itemSt === 'closed') ? 'Completed' : 'Idle'));
   setStatusPill(pillText, pillCls);
   if (els.btnCancelAgent) els.btnCancelAgent.disabled = !isRunning;
+  if (isRunning) {
+    announceAgentStatus('Viewing running agent for ' + ((itm && itm.title) ? itm.title : itemId));
+  }
 
   var planSec = $('agent-plan-section');
   if (planSec) planSec.hidden = true;
@@ -325,6 +335,7 @@ function finishStream(success, data, defaultMsg) {
   if (els.readerTrajectoryBadge) els.readerTrajectoryBadge.hidden = true;
   var msg = success ? 'Agent run completed.' : ('Agent run failed: ' + (data.message || data.error || defaultMsg));
   appendTrajectoryContextRow(msg);
+  announceAgentStatus(msg);
   setStatusPill(success ? 'Completed' : ('Failed: ' + (data.message || data.error || defaultMsg)), success ? 'status-completed' : 'status-failed');
   if (els.btnCancelAgent) els.btnCancelAgent.disabled = true;
   if (state.currentStream) { state.currentStream.close(); state.currentStream = null; }
@@ -351,6 +362,7 @@ export function handleAgentStreamEvent(data) {
     }
     setStatusPill('Waiting for reply', 'status-running');
     appendTrajectoryContextRow('Agent is waiting for your reply.');
+    announceAgentStatus('Agent is waiting for your reply.');
     scrollTrajectoryStreamToBottom();
     return;
   }

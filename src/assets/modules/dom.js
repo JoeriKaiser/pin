@@ -117,6 +117,7 @@ export var els = {
   tabAgentTrajectory: $('tab-agent-trajectory'),
   readerTrajectoryBadge: $('reader-trajectory-badge'),
   agentDrawer: $('agent-drawer'),
+  agentStatusAnnouncer: $('agent-status-announcer'),
   agentTaskTitle: $('agent-task-title'),
   agentItemId: $('agent-item-id'),
   agentStatusPill: $('agent-status-pill'),
