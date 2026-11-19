@@ -207,6 +207,14 @@ pub fn transition_item(
     let current_status = meta.current_status();
 
     if target_status == Status::Done {
+        if current_status == Status::Closed || current_status == Status::Cancelled {
+            return Err(WorkflowError::InvalidTransition {
+                from: current_status,
+                to: Status::Done,
+                reason: "closed or cancelled items must be reopened before marking done"
+                    .to_string(),
+            });
+        }
         // Must provide evidence or note when marking done directly
         let has_evidence = note.is_some_and(|n| !n.trim().is_empty())
             || meta
@@ -222,8 +230,8 @@ pub fn transition_item(
     let actor_str = actor.unwrap_or("agent:default").to_string();
     let now = chrono::Utc::now().timestamp();
 
-    if target_status.is_finished() {
-        // Release any active claim upon completion or closure
+    if target_status.is_finished() || matches!(target_status, Status::Created | Status::Planned) {
+        // Release any active claim when moving out of active work into backlog, planned, or a finished state
         meta.claimed_by = None;
         meta.claim_expires_at = None;
     }
@@ -948,9 +956,10 @@ pub fn relate_item(
         return Err(WorkflowError::ItemNotFound(related_id.to_string()));
     }
 
-    if !meta.related.iter().any(|r| r == related_id) {
-        meta.related.push(related_id.to_string());
+    if meta.related.iter().any(|r| r == related_id) {
+        return Ok(meta);
     }
+    meta.related.push(related_id.to_string());
     let now = chrono::Utc::now().timestamp();
     let actor_str = actor.unwrap_or("agent:default").to_string();
 
@@ -1871,5 +1880,74 @@ mod tests {
             other => panic!("Expected LockConflict, got {other:?}"),
         }
         assert!(elapsed < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn test_transition_back_to_planned_clears_active_claim() {
+        let dir = tempdir().unwrap();
+        let filename = setup_test_item(dir.path(), "0123456789ee", Status::Planned, None);
+
+        let claimed = claim_item(dir.path(), &filename, "agent:one", 3600, None).unwrap();
+        assert_eq!(claimed.claimed_by.as_deref(), Some("agent:one"));
+
+        let requeued = transition_item(
+            dir.path(),
+            &filename,
+            Status::Planned,
+            Some("human:viewer"),
+            Some("Reassigning"),
+            None,
+        )
+        .unwrap();
+        assert_eq!(requeued.current_status(), Status::Planned);
+        assert!(requeued.claimed_by.is_none());
+        assert!(requeued.claim_expires_at.is_none());
+
+        // Another agent can immediately claim without ClaimConflict
+        let claimed_again = claim_item(dir.path(), &filename, "agent:two", 3600, None).unwrap();
+        assert_eq!(claimed_again.claimed_by.as_deref(), Some("agent:two"));
+    }
+
+    #[test]
+    fn test_transition_to_done_rejects_closed_or_cancelled() {
+        let dir = tempdir().unwrap();
+        let closed_file = setup_test_item(dir.path(), "0123456789f1", Status::Closed, None);
+        let cancelled_file = setup_test_item(dir.path(), "0123456789f2", Status::Cancelled, None);
+
+        let err1 = transition_item(
+            dir.path(),
+            &closed_file,
+            Status::Done,
+            Some("agent:a"),
+            Some("evidence"),
+            None,
+        )
+        .unwrap_err();
+        assert!(matches!(err1, WorkflowError::InvalidTransition { .. }));
+
+        let err2 = transition_item(
+            dir.path(),
+            &cancelled_file,
+            Status::Done,
+            Some("agent:a"),
+            Some("evidence"),
+            None,
+        )
+        .unwrap_err();
+        assert!(matches!(err2, WorkflowError::InvalidTransition { .. }));
+    }
+
+    #[test]
+    fn test_relate_item_is_idempotent() {
+        let dir = tempdir().unwrap();
+        let file_a = setup_test_item(dir.path(), "0123456789a1", Status::Planned, None);
+        let _file_b = setup_test_item(dir.path(), "0123456789b2", Status::Planned, None);
+
+        let first =
+            relate_item(dir.path(), &file_a, "0123456789b2", Some("agent:a"), None).unwrap();
+        let second =
+            relate_item(dir.path(), &file_a, "0123456789b2", Some("agent:a"), None).unwrap();
+        assert_eq!(first.current_revision(), second.current_revision());
+        assert_eq!(first.activity.len(), second.activity.len());
     }
 }
