@@ -37,6 +37,21 @@ export function fetchItemLog(id) {
   return fetch(BASE + 'items/' + encodeURIComponent(id) + '/log');
 }
 
+export function ensureActionOk(res) {
+  if (res && typeof res.ok === 'boolean' && !res.ok) {
+    var parseBody = typeof res.json === 'function'
+      ? res.json().catch(function () { return {}; })
+      : Promise.resolve({});
+    return parseBody.then(function (data) {
+      var err = new Error((data && data.error) || ('Action failed (' + res.status + ')'));
+      err.status = res.status;
+      err.data = data;
+      throw err;
+    });
+  }
+  return Promise.resolve(res);
+}
+
 export function sendAction(id, payload) {
   return fetch(BASE + 'items/' + encodeURIComponent(id) + '/action', {
     method: 'POST',

@@ -2044,6 +2044,58 @@ async function runHarness() {
   assert.strictEqual(testExports.state.runner.modelsCommand, 'agent/b', 'model list is tagged with its command');
   console.log('PASS: Runner settings, model discovery, save, SSE, and worktree summary verified');
 
+  console.log('\n--- 17. Testing Deep Links, Board Filtering, Multi-Term Search, Action Errors, and Render Key ---');
+  // 1. Deep link preservation on initial ingest when starting in board mode
+  testExports.state.viewMode = 'board';
+  testExports.state.selected = null;
+  window.location.hash = '#/item/dep-child';
+  testExports.ingest({
+    scope: 'demo',
+    archive_filter: 'active',
+    captured_at: '2026-11-19T00:00:00Z',
+    items: [
+      { id: 'dep-parent', title: 'Auth key rotation', status: 'in_progress', type: 'task', priority: 'high', revision: 1, tags: ['auth'], content: 'Rotate keys cleanly' },
+      { id: 'dep-child', title: 'Login redirect fix', status: 'planned', type: 'bug', priority: 'high', revision: 2, tags: ['auth', 'cookie'], depends_on: ['dep-parent'], content: 'Fix 302 loop' }
+    ]
+  });
+  assert.strictEqual(testExports.state.viewMode, 'detail', 'deep link switches to detail mode instead of wiping hash');
+  assert.strictEqual(testExports.state.selected, 'dep-child', 'deep link item remains selected');
+  assert.strictEqual(window.location.hash, '#/item/dep-child', 'deep link hash is preserved');
+
+  // 2. Multi-term AND search matches across title + tags + content
+  testExports.setViewMode('board');
+  testExports.state.filters.text = 'cookie loop';
+  testExports.renderBoard();
+  assert.strictEqual(testExports.state.shown.length, 1, 'multi-term query matches item across tags and body');
+  assert.strictEqual(testExports.state.shown[0].id, 'dep-child');
+  testExports.state.filters.text = '';
+  testExports.renderBoard();
+
+  // 3. computeRenderKey changes when prerequisite dependency resolves
+  const depChild = testExports.state.items.find(i => i.id === 'dep-child');
+  const depParent = testExports.state.items.find(i => i.id === 'dep-parent');
+  const lockedKey = testExports.computeRenderKey(depChild);
+  depParent.status = 'done';
+  const unlockedKey = testExports.computeRenderKey(depChild);
+  assert.notStrictEqual(lockedKey, unlockedKey, 'renderKey invalidates when prerequisite resolves');
+
+  // 4. Board drop action surfaces HTTP 409 error instead of fake success toast
+  const origFetch17 = global.fetch;
+  global.fetch = function () {
+    return Promise.resolve({
+      ok: false,
+      status: 409,
+      json: () => Promise.resolve({ error: 'Revision conflict: expected 2' })
+    });
+  };
+  testExports.handleCardDrop('dep-child', 'created');
+  await new Promise(r => setTimeout(r, 20));
+  const toastEl17 = document.getElementById('toast');
+  assert.ok(toastEl17.textContent.includes('Revision conflict'), 'rejected board action shows server error toast');
+  assert.ok(toastEl17.className.includes('toast-error'), 'rejected board action uses error toast style');
+  global.fetch = origFetch17;
+  console.log('PASS: Deep links, multi-term search, renderKey invalidation, and HTTP error handling verified');
+
   console.log('\n========================================');
   console.log('ALL VIEWER TRAJECTORY TESTS PASSED (0)');
   console.log('========================================');
