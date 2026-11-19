@@ -185,6 +185,35 @@ fn branch_exists(repo_path: &Path, branch_name: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn is_on_first_parent_chain(
+    repo_path: &Path,
+    branch_oid: &str,
+    branch: &str,
+    target: &str,
+) -> bool {
+    // When `branch` is a strict ancestor of `target`, walking `--first-parent`
+    // from `target` down to `^branch` stops at the child of `branch` if and
+    // only if `branch` sits on `target`'s first-parent lineage (e.g. an
+    // untouched worktree created before `target` moved ahead).
+    let range = format!("{branch}..{target}");
+    let Ok(out) = Command::new("git")
+        .arg("-C")
+        .arg(repo_path)
+        .args(["rev-list", "--first-parent", "--parents", &range])
+        .output()
+    else {
+        return false;
+    };
+    if !out.status.success() {
+        return false;
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let Some(oldest_line) = stdout.lines().rev().find(|l| !l.trim().is_empty()) else {
+        return false;
+    };
+    oldest_line.split_whitespace().nth(1) == Some(branch_oid)
+}
+
 fn is_ancestor_of_any(repo_path: &Path, branch: &str, targets: &[String]) -> bool {
     let branch_oid = get_branch_commit(repo_path, branch);
     let Some(b_oid) = branch_oid else {
@@ -203,7 +232,8 @@ fn is_ancestor_of_any(repo_path: &Path, branch: &str, targets: &[String]) -> boo
             .args(["merge-base", "--is-ancestor", branch, target])
             .output()
         {
-            if out.status.success() {
+            if out.status.success() && !is_on_first_parent_chain(repo_path, &b_oid, branch, target)
+            {
                 return true;
             }
         }
@@ -526,6 +556,13 @@ pub fn reconcile_and_sync(
     force: bool,
     actor: Option<&str>,
 ) -> Result<Vec<SyncResult>, String> {
+    let resolved_target_file = match target_id {
+        Some(target) => {
+            Some(crate::vault::resolve_selector(vault_path, target).map_err(|e| e.to_string())?)
+        }
+        None => None,
+    };
+
     let all_items = collect_ideas(vault_path).map_err(|e| format!("Failed to read vault: {e}"))?;
 
     let candidates: Vec<&IdeaMeta> = all_items
@@ -536,8 +573,8 @@ pub fn reconcile_and_sync(
                     return false;
                 }
             }
-            if let Some(target) = target_id {
-                meta.id == target || meta.id.starts_with(target)
+            if let Some(ref target_file) = resolved_target_file {
+                meta.filename == *target_file
             } else {
                 // Completed work, or any work item that still has a stranded worktree or branch in this repo
                 meta.current_status() == Status::Done
@@ -557,13 +594,24 @@ pub fn reconcile_and_sync(
     for meta in candidates {
         let git_info = resolver.resolve_item(&meta.id);
         let is_merged = git_info.status == GitItemStatus::Merged;
-        let is_archived_or_closed = meta.archived_at.is_some()
+        let is_archived = meta.is_archived();
+        let is_archived_or_closed = is_archived
             || meta.current_status() == Status::Closed
             || meta.current_status() == Status::Cancelled;
 
         if !is_merged && !is_archived_or_closed {
             continue;
         }
+
+        let effective_resolution = if is_merged {
+            Resolution::Implemented
+        } else if let Some(res) = meta.resolution {
+            res
+        } else if meta.current_status() == Status::Cancelled {
+            Resolution::Rejected
+        } else {
+            Resolution::Implemented
+        };
 
         let resolution_note = if let Some(pr_num) = git_info.pr_number {
             format!("Merged in PR #{pr_num}")
@@ -573,19 +621,19 @@ pub fn reconcile_and_sync(
         } else if is_merged {
             "Merged into main".to_string()
         } else {
-            meta.resolution_note.clone().unwrap_or_else(|| {
-                format!(
-                    "Archived ({})",
-                    meta.resolution.map(|r| r.as_str()).unwrap_or("closed")
-                )
-            })
+            meta.resolution_note
+                .clone()
+                .unwrap_or_else(|| format!("Archived ({})", effective_resolution.as_str()))
         };
         let wt_path = repo_path.join(".pin_worktrees").join(&meta.id);
         let branch_name = format!("pin/{}", meta.id);
         let had_worktree = wt_path.exists();
         let had_branch = branch_exists(repo_path, &branch_name);
 
-        if meta.archived_at.is_some() && !had_worktree && !had_branch {
+        if is_archived && !had_worktree && !had_branch {
+            continue;
+        }
+        if !is_merged && !had_worktree && !had_branch {
             continue;
         }
 
@@ -607,13 +655,7 @@ pub fn reconcile_and_sync(
                 } else {
                     "skipped_dirty".to_string()
                 },
-                resolution: if is_merged {
-                    "implemented".to_string()
-                } else {
-                    meta.resolution
-                        .map(|r| r.as_str().to_string())
-                        .unwrap_or_else(|| "closed".to_string())
-                },
+                resolution: effective_resolution.as_str().to_string(),
                 resolution_note,
                 worktree_removed: false,
                 branch_deleted: false,
@@ -626,11 +668,11 @@ pub fn reconcile_and_sync(
         }
 
         if !dry_run {
-            if meta.archived_at.is_none() {
+            if !is_archived {
                 workflow::archive_item(
                     vault_path,
                     &meta.filename,
-                    Resolution::Implemented,
+                    effective_resolution,
                     actor,
                     Some(&resolution_note),
                     None,
@@ -677,18 +719,12 @@ pub fn reconcile_and_sync(
                 } else {
                     "archived".to_string()
                 },
-                action: if meta.archived_at.is_some() {
+                action: if is_archived {
                     "synced".to_string()
                 } else {
                     "archived".to_string()
                 },
-                resolution: if is_merged {
-                    "implemented".to_string()
-                } else {
-                    meta.resolution
-                        .map(|r| r.as_str().to_string())
-                        .unwrap_or_else(|| "closed".to_string())
-                },
+                resolution: effective_resolution.as_str().to_string(),
                 resolution_note: resolution_note.clone(),
                 worktree_removed,
                 branch_deleted,
@@ -707,13 +743,7 @@ pub fn reconcile_and_sync(
                     "archived".to_string()
                 },
                 action: "dry_run".to_string(),
-                resolution: if is_merged {
-                    "implemented".to_string()
-                } else {
-                    meta.resolution
-                        .map(|r| r.as_str().to_string())
-                        .unwrap_or_else(|| "closed".to_string())
-                },
+                resolution: effective_resolution.as_str().to_string(),
                 resolution_note,
                 worktree_removed: should_remove_worktree,
                 branch_deleted: had_branch && !worktree_preserved_dirty,
@@ -1359,5 +1389,124 @@ printf ']'
         assert_eq!(prs.len(), 1200);
         assert_eq!(prs[0].number, 0);
         assert_eq!(prs[1199].head_ref_name, "pin/item00001199");
+    }
+
+    #[test]
+    fn test_untouched_worktree_not_marked_merged_when_main_advances() {
+        let dir = tempdir().unwrap();
+        let repo = dir.path().join("repo");
+        let vault = dir.path().join("vault");
+        fs::create_dir_all(&repo).unwrap();
+        fs::create_dir_all(&vault).unwrap();
+        setup_git_repo(&repo);
+
+        let item_id = "untouched123";
+        let file_path = vault.join(format!("{item_id}.md"));
+        let meta = IdeaMeta::new_work_item(
+            item_id.to_string(),
+            "test-proj".to_string(),
+            "Active task".to_string(),
+            "Body".to_string(),
+            crate::model::Kind::Technical,
+            crate::model::WorkType::Task,
+            Status::InProgress,
+            None,
+            None,
+            Some("human:tester".to_string()),
+        );
+        fs::write(&file_path, crate::frontmatter::render_full_document(&meta)).unwrap();
+
+        // Provision a fresh worktree at commit C1 (no commits on branch yet)
+        let wt = WorktreeManager::provision_worktree(&repo, item_id).unwrap();
+        assert!(wt.exists());
+
+        // Advance main to C2 while the worktree is untouched
+        fs::write(repo.join("unrelated.txt"), "main moved ahead").unwrap();
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["add", "."])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["commit", "-m", "unrelated commit on main"])
+            .output()
+            .unwrap();
+
+        let resolver = GitStatusResolver::with_prs(repo.clone(), None);
+        let status = resolver.resolve_item(item_id);
+        assert_eq!(status.status, GitItemStatus::None);
+
+        let res = reconcile_and_sync(&vault, &repo, None, None, false, false, Some("agent:sync"))
+            .unwrap();
+        assert!(
+            res.is_empty(),
+            "untouched active worktree must not be synced"
+        );
+        assert!(wt.exists(), "untouched active worktree must not be deleted");
+        assert!(branch_exists(&repo, &format!("pin/{item_id}")));
+        let disk = fs::read_to_string(&file_path).unwrap();
+        assert!(!disk.contains("archived_at:"));
+    }
+
+    #[test]
+    fn test_cancelled_item_sync_uses_rejected_resolution_and_supports_filename_selector() {
+        let dir = tempdir().unwrap();
+        let repo = dir.path().join("repo");
+        let vault = dir.path().join("vault");
+        fs::create_dir_all(&repo).unwrap();
+        fs::create_dir_all(&vault).unwrap();
+        setup_git_repo(&repo);
+
+        let item_id = "cancelwt1234";
+        let file_path = vault.join(format!("{item_id}.md"));
+        let meta = IdeaMeta::new_work_item(
+            item_id.to_string(),
+            "test-proj".to_string(),
+            "Cancelled Task".to_string(),
+            "Body".to_string(),
+            crate::model::Kind::Technical,
+            crate::model::WorkType::Task,
+            Status::Cancelled,
+            None,
+            None,
+            Some("human:tester".to_string()),
+        );
+        fs::write(&file_path, crate::frontmatter::render_full_document(&meta)).unwrap();
+
+        let wt = WorktreeManager::provision_worktree(&repo, item_id).unwrap();
+        assert!(wt.exists());
+
+        // Unknown selector must error instead of silently returning empty
+        assert!(reconcile_and_sync(
+            &vault,
+            &repo,
+            None,
+            Some("doesnotexist"),
+            false,
+            false,
+            Some("agent:sync"),
+        )
+        .is_err());
+
+        // Filename selector works and records rejected resolution on disk and in SyncResult
+        let res = reconcile_and_sync(
+            &vault,
+            &repo,
+            None,
+            Some(&format!("{item_id}.md")),
+            false,
+            false,
+            Some("agent:sync"),
+        )
+        .unwrap();
+        assert_eq!(res.len(), 1);
+        assert_eq!(res[0].resolution, "rejected");
+        assert!(res[0].worktree_removed);
+        assert!(res[0].branch_deleted);
+        let disk = fs::read_to_string(&file_path).unwrap();
+        assert!(disk.contains("resolution: \"rejected\""));
     }
 }
