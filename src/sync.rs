@@ -89,15 +89,23 @@ pub fn query_gh_prs(repo_path: &Path) -> Option<Vec<GhPrInfo>> {
         return None;
     }
     const GH_TIMEOUT: Duration = Duration::from_secs(3);
+    query_gh_prs_with_command("gh", repo_path, GH_TIMEOUT)
+}
 
-    let mut child = Command::new("gh")
-        .arg("-C")
-        .arg(repo_path)
+fn query_gh_prs_with_command(
+    program: &str,
+    repo_path: &Path,
+    timeout: Duration,
+) -> Option<Vec<GhPrInfo>> {
+    let mut child = Command::new(program)
+        .current_dir(repo_path)
         .args([
             "pr",
             "list",
             "--state",
             "all",
+            "--limit",
+            "100",
             "--json",
             "number,headRefName,state,url",
         ])
@@ -107,26 +115,38 @@ pub fn query_gh_prs(repo_path: &Path) -> Option<Vec<GhPrInfo>> {
         .spawn()
         .ok()?;
 
-    let deadline = Instant::now() + GH_TIMEOUT;
+    // Drain stdout on a helper thread so outputs larger than the OS pipe buffer
+    // cannot block the child before try_wait sees it exit.
+    let mut stdout = child.stdout.take()?;
+    let reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        stdout.read_to_end(&mut buf).ok().map(|_| buf)
+    });
+
+    let deadline = Instant::now() + timeout;
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
             Ok(None) if Instant::now() >= deadline => {
                 let _ = child.kill();
                 let _ = child.wait();
+                let _ = reader.join();
                 return None;
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(50)),
-            Err(_) => return None,
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = reader.join();
+                return None;
+            }
         }
     };
 
+    let buf = reader.join().ok()??;
     if !status.success() {
         return None;
     }
-    let mut stdout = child.stdout.take()?;
-    let mut buf = Vec::new();
-    stdout.read_to_end(&mut buf).ok()?;
     serde_json::from_slice(&buf).ok()
 }
 
@@ -1287,5 +1307,57 @@ mod tests {
         assert!(res[0].branch_deleted);
         assert!(!wt.exists());
         assert!(!branch_exists(&repo, &format!("pin/{item_id}")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_query_gh_prs_uses_cwd_and_drains_large_stdout() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempdir().unwrap();
+        let repo = dir.path().join("repo");
+        fs::create_dir_all(&repo).unwrap();
+
+        let fake_gh = dir.path().join("fake-gh");
+        // Verify we never receive `-C`, verify cwd matches repo, and emit >128 KiB JSON
+        // to prove stdout draining does not deadlock the OS pipe buffer.
+        let script = r#"#!/bin/sh
+for arg in "$@"; do
+  if [ "$arg" = "-C" ]; then
+    echo "unexpected -C flag" >&2
+    exit 2
+  fi
+done
+if [ "$(pwd -P)" != "$(cd "$EXPECTED_CWD" && pwd -P)" ]; then
+  echo "wrong cwd" >&2
+  exit 3
+fi
+printf '['
+i=0
+while [ "$i" -lt 1200 ]; do
+  if [ "$i" -gt 0 ]; then printf ','; fi
+  printf '{"number":%d,"headRefName":"pin/item%08d","state":"OPEN","url":"https://github.com/org/repo/pull/%d/extra-padding-to-exceed-pipe-buffer-size"}' "$i" "$i" "$i"
+  i=$((i + 1))
+done
+printf ']'
+"#;
+        fs::write(&fake_gh, script).unwrap();
+        let mut perms = fs::metadata(&fake_gh).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&fake_gh, perms).unwrap();
+
+        // Pass EXPECTED_CWD via repo path check inside the script by embedding it
+        let script_with_path = script.replace(
+            "$EXPECTED_CWD",
+            &repo.to_string_lossy().replace('"', "\\\""),
+        );
+        fs::write(&fake_gh, script_with_path).unwrap();
+
+        let prs =
+            query_gh_prs_with_command(fake_gh.to_str().unwrap(), &repo, Duration::from_secs(3))
+                .expect("fake gh should return parsed PR list");
+        assert_eq!(prs.len(), 1200);
+        assert_eq!(prs[0].number, 0);
+        assert_eq!(prs[1199].head_ref_name, "pin/item00001199");
     }
 }
