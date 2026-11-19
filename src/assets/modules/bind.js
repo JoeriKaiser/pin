@@ -224,20 +224,37 @@ export function bindNavigation() {
   window.addEventListener('hashchange', applyRoute);
 }
 
+function updateFilterToggleLabel() {
+  if (!els.filterToggle) return;
+  var active = 0;
+  if (state.filters.status) active++;
+  if (state.filters.type) active++;
+  if (state.filters.kind) active++;
+  if (state.filters.priority) active++;
+  if (state.filters.project && state.filters.project.trim()) active++;
+  text(els.filterToggle, active > 0 ? 'Filters (' + active + ')' : 'Filters');
+}
+
+function applyFilters() {
+  updateFilterToggleLabel();
+  renderList();
+  renderBoard();
+}
+
 export function bindFilters() {
   var searchDebounceTimer = null;
   if (els.search) {
     els.search.addEventListener('input', function () {
       state.filters.text = this.value;
       clearTimeout(searchDebounceTimer);
-      searchDebounceTimer = setTimeout(renderList, 40);
+      searchDebounceTimer = setTimeout(applyFilters, 40);
     });
   }
-  if (els.status) els.status.addEventListener('change', function () { state.filters.status = this.value; renderList(); });
-  if (els.type) els.type.addEventListener('change', function () { state.filters.type = this.value; renderList(); });
-  if (els.kind) els.kind.addEventListener('change', function () { state.filters.kind = this.value; renderList(); });
-  if (els.priority) els.priority.addEventListener('change', function () { state.filters.priority = this.value; renderList(); });
-  if (els.project) els.project.addEventListener('input', function () { state.filters.project = this.value; renderList(); });
+  if (els.status) els.status.addEventListener('change', function () { state.filters.status = this.value; applyFilters(); });
+  if (els.type) els.type.addEventListener('change', function () { state.filters.type = this.value; applyFilters(); });
+  if (els.kind) els.kind.addEventListener('change', function () { state.filters.kind = this.value; applyFilters(); });
+  if (els.priority) els.priority.addEventListener('change', function () { state.filters.priority = this.value; applyFilters(); });
+  if (els.project) els.project.addEventListener('input', function () { state.filters.project = this.value; applyFilters(); });
   if (els.filterToggle) {
     els.filterToggle.addEventListener('click', function () {
       var open = els.filters.hidden;
@@ -254,7 +271,7 @@ export function bindFilters() {
       if (els.kind) els.kind.value = '';
       if (els.priority) els.priority.value = '';
       if (els.project) els.project.value = '';
-      renderList();
+      applyFilters();
     });
   }
 }
