@@ -10,9 +10,11 @@ var callbacks = {
   openWorktreeModal: function () {},
   openCloseModal: function () {},
   openAgentDrawer: function () {},
+  closeAgentDrawer: function () {},
   sendCommitPrItem: function () {},
   refreshData: function () {},
-  renderAgentsTable: function () {}
+  renderAgentsTable: function () {},
+  stopAgentsTicker: function () {}
 };
 
 export function setBoardCallbacks(cbs) {
@@ -200,7 +202,15 @@ export function buildBoardCard(item) {
 }
 
 export function setViewMode(mode) {
+  var prevMode = state.viewMode;
   state.viewMode = mode === 'detail' ? 'detail' : (mode === 'agents' ? 'agents' : 'board');
+  if (prevMode === 'agents' && state.viewMode !== 'agents' && callbacks.stopAgentsTicker) {
+    callbacks.stopAgentsTicker();
+  }
+  if (prevMode === 'detail' && state.viewMode !== 'detail') {
+    if (callbacks.closeAgentDrawer) callbacks.closeAgentDrawer();
+    state.readerTab = 'spec';
+  }
   if (els.workspace) {
     els.workspace.classList.toggle('mode-board', state.viewMode === 'board');
     els.workspace.classList.toggle('mode-detail', state.viewMode === 'detail');
