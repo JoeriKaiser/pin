@@ -1933,7 +1933,7 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                     "OK",
                     mime,
                     &bytes,
-                    false,
+                    true,
                     method == "GET",
                     None,
                 );
@@ -2079,10 +2079,36 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
     if let Some(stripped) = subpath.strip_prefix("items/") {
         if let Some(id_part) = stripped.strip_suffix("/log") {
             let id = id_part.trim();
+            if !crate::vault::validate_selector(id) {
+                send_response(
+                    &mut stream,
+                    400,
+                    "Bad Request",
+                    "text/plain; charset=utf-8",
+                    b"Invalid item selector",
+                    true,
+                    true,
+                    None,
+                );
+                return;
+            }
             let canonical_id = match crate::vault::resolve_selector(&snapshot.vault_path, id) {
                 Ok(f) => f.strip_suffix(".md").unwrap_or(&f).to_string(),
                 Err(_) => id.to_string(),
             };
+            if !crate::vault::validate_selector(&canonical_id) {
+                send_response(
+                    &mut stream,
+                    400,
+                    "Bad Request",
+                    "text/plain; charset=utf-8",
+                    b"Invalid item selector",
+                    true,
+                    true,
+                    None,
+                );
+                return;
+            }
             let log_path = snapshot
                 .vault_path
                 .join("runs")
@@ -2117,12 +2143,28 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
 
         if let Some(id) = stripped.strip_suffix("/stream") {
             let id = id.trim();
+            if !crate::vault::validate_selector(id) {
+                send_response(
+                    &mut stream,
+                    400,
+                    "Bad Request",
+                    "text/plain; charset=utf-8",
+                    b"Invalid item selector",
+                    true,
+                    true,
+                    None,
+                );
+                return;
+            }
             let _ = stream.set_read_timeout(None);
             let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(10)));
 
             let mut writer = BufWriter::new(stream);
-            let sse_headers = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\nAccess-Control-Allow-Origin: *\r\n\r\n";
+            let sse_headers = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\n\r\n";
             if writer.write_all(sse_headers.as_bytes()).is_err() || writer.flush().is_err() {
+                return;
+            }
+            if method == "HEAD" {
                 return;
             }
             let timing = snapshot.acp_manager.get_run_timing(id);
@@ -2171,11 +2213,27 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
             }
 
             if let Some(rx) = sub_rx {
-                while let Ok(event) = rx.recv() {
-                    let payload = serde_json::to_string(&event).unwrap_or_default();
-                    let frame = format!("data: {payload}\n\n");
-                    if writer.write_all(frame.as_bytes()).is_err() || writer.flush().is_err() {
-                        return;
+                loop {
+                    match rx.recv_timeout(std::time::Duration::from_secs(15)) {
+                        Ok(event) => {
+                            let payload = serde_json::to_string(&event).unwrap_or_default();
+                            let frame = format!("data: {payload}\n\n");
+                            if writer.write_all(frame.as_bytes()).is_err()
+                                || writer.flush().is_err()
+                            {
+                                return;
+                            }
+                        }
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                            if writer.write_all(b": keepalive\n\n").is_err()
+                                || writer.flush().is_err()
+                            {
+                                return;
+                            }
+                        }
+                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                            return;
+                        }
                     }
                 }
             }
@@ -2188,7 +2246,7 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
         let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(10)));
 
         let mut writer = BufWriter::new(stream);
-        let sse_headers = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\nAccess-Control-Allow-Origin: *\r\n\r\n";
+        let sse_headers = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\n\r\n";
         if writer.write_all(sse_headers.as_bytes()).is_err() || writer.flush().is_err() {
             return;
         }
@@ -2841,5 +2899,64 @@ mod tests {
         let encoded = json_error_bytes("bad \"quote\" and\nnewline");
         let parsed: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
         assert_eq!(parsed["error"], "bad \"quote\" and\nnewline");
+    }
+
+    #[test]
+    fn test_viewer_rejects_log_path_traversal_and_handles_stream_head() {
+        let dir = tempfile::tempdir().unwrap();
+        let snapshot = Arc::new(create_snapshot(
+            &[],
+            dir.path().to_path_buf(),
+            "test",
+            ArchiveFilter::Active,
+            None,
+            None,
+            None,
+            None,
+        ));
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let port = addr.port();
+        let token = snapshot.token.clone();
+
+        // Path traversal attempt on /log must return 400
+        let snap1 = Arc::clone(&snapshot);
+        let l1 = listener.try_clone().unwrap();
+        let h1 = std::thread::spawn(move || {
+            if let Ok((stream, _)) = l1.accept() {
+                handle_client(stream, &snap1, port);
+            }
+        });
+        let mut c1 = std::net::TcpStream::connect(addr).unwrap();
+        use std::io::{Read, Write};
+        let req1 =
+            format!("GET /{token}/items/../../etc/passwd/log HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        c1.write_all(req1.as_bytes()).unwrap();
+        let mut resp1 = String::new();
+        c1.read_to_string(&mut resp1).unwrap();
+        h1.join().unwrap();
+        assert!(
+            resp1.starts_with("HTTP/1.1 400 Bad Request\r\n"),
+            "got: {resp1}"
+        );
+
+        // HEAD /items/{id}/stream returns headers only and terminates immediately
+        let snap2 = Arc::clone(&snapshot);
+        let l2 = listener.try_clone().unwrap();
+        let h2 = std::thread::spawn(move || {
+            if let Ok((stream, _)) = l2.accept() {
+                handle_client(stream, &snap2, port);
+            }
+        });
+        let mut c2 = std::net::TcpStream::connect(addr).unwrap();
+        let req2 =
+            format!("HEAD /{token}/items/0123456789ab/stream HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        c2.write_all(req2.as_bytes()).unwrap();
+        let mut resp2 = String::new();
+        c2.read_to_string(&mut resp2).unwrap();
+        h2.join().unwrap();
+        assert!(resp2.starts_with("HTTP/1.1 200 OK\r\n"), "got: {resp2}");
+        assert!(resp2.contains("Content-Type: text/event-stream"));
+        assert!(!resp2.contains("Access-Control-Allow-Origin: *"));
     }
 }

@@ -431,8 +431,12 @@ impl AcpManager {
         }
         let canonical_id = match crate::vault::resolve_selector(&self.vault_path, item_id) {
             Ok(f) => f.strip_suffix(".md").unwrap_or(&f).to_string(),
-            Err(_) => item_id.to_string(),
+            Err(_) if crate::vault::validate_selector(item_id) => item_id.to_string(),
+            Err(_) => return None,
         };
+        if !crate::vault::validate_selector(&canonical_id) {
+            return None;
+        }
         let disk_path = self
             .vault_path
             .join("runs")
@@ -487,8 +491,12 @@ impl AcpManager {
         }
         let canonical_id = match crate::vault::resolve_selector(&self.vault_path, item_id) {
             Ok(f) => f.strip_suffix(".md").unwrap_or(&f).to_string(),
-            Err(_) => item_id.to_string(),
+            Err(_) if crate::vault::validate_selector(item_id) => item_id.to_string(),
+            Err(_) => return Vec::new(),
         };
+        if !crate::vault::validate_selector(&canonical_id) {
+            return Vec::new();
+        }
         let disk_path = self
             .vault_path
             .join("runs")
