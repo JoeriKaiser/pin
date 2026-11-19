@@ -56,16 +56,21 @@ export function ingest(data) {
   setupFilters();
   updateShown();
 
-  if (state.viewMode === 'agents' || (typeof location !== 'undefined' && location && location.hash === '#/agents')) {
+  var currentHash = (typeof location !== 'undefined' && location && location.hash) ? location.hash : '';
+  var currentRoute = route();
+
+  if (currentHash === '#/agents' || state.viewMode === 'agents') {
     state.viewMode = 'agents';
     state.selected = null;
+  } else if (currentRoute) {
+    state.viewMode = 'detail';
+    state.selected = currentRoute;
   } else if (state.viewMode === 'board') {
-    if (typeof history !== 'undefined' && history.replaceState && typeof location !== 'undefined' && location.hash && location.hash !== '#/' && location.hash !== '#') {
+    if (typeof history !== 'undefined' && history.replaceState && currentHash && currentHash !== '#/' && currentHash !== '#') {
       history.replaceState(null, '', '#/');
     }
     state.selected = null;
   } else {
-    var currentRoute = route();
     if (!currentRoute && !isNarrow() && state.items.length) {
       if (typeof history !== 'undefined' && history.replaceState) {
         history.replaceState(null, '', '#/item/' + encodeURIComponent(state.items[0].id));

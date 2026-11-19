@@ -1,6 +1,6 @@
 import { state, find, itemStatus, itemType, priority, hasUnresolvedPrereqs, updateShown } from './state.js';
 import { els } from './dom.js';
-import { sendAction } from './api.js';
+import { sendAction, ensureActionOk } from './api.js';
 import { node, text, clear, showToast } from './formatters.js';
 import { setRoute } from './router.js';
 
@@ -10,9 +10,11 @@ var callbacks = {
   openWorktreeModal: function () {},
   openCloseModal: function () {},
   openAgentDrawer: function () {},
+  closeAgentDrawer: function () {},
   sendCommitPrItem: function () {},
   refreshData: function () {},
-  renderAgentsTable: function () {}
+  renderAgentsTable: function () {},
+  stopAgentsTicker: function () {}
 };
 
 export function setBoardCallbacks(cbs) {
@@ -30,6 +32,7 @@ export function handleCardDrop(droppedId, targetStatus) {
       callbacks.openCompleteModal(item);
     } else {
       sendAction(item.id, { action: 'transition', to: 'done', expect_revision: rev })
+        .then(ensureActionOk)
         .then(function () {
           showToast('Moved to Done', false);
           callbacks.refreshData();
@@ -53,6 +56,7 @@ export function handleCardDrop(droppedId, targetStatus) {
   if (targetStatus === 'planned') {
     if (cur === 'planned') return;
     sendAction(item.id, { action: 'transition', to: 'planned', expect_revision: rev })
+      .then(ensureActionOk)
       .then(function () {
         showToast('Moved to Planned', false);
         callbacks.refreshData();
@@ -64,6 +68,7 @@ export function handleCardDrop(droppedId, targetStatus) {
   if (targetStatus === 'created') {
     if (cur !== 'created') {
       sendAction(item.id, { action: 'transition', to: 'created', expect_revision: rev })
+        .then(ensureActionOk)
         .then(function () {
           showToast('Moved to Backlog', false);
           callbacks.refreshData();
@@ -165,6 +170,7 @@ export function buildBoardCard(item) {
         if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
         archiveBtn.disabled = true;
         sendAction(item.id, { action: 'archive', expect_revision: item.revision })
+          .then(ensureActionOk)
           .then(function () {
             showToast('Archived ' + (item.title || item.id), false);
             callbacks.refreshData();
@@ -200,7 +206,15 @@ export function buildBoardCard(item) {
 }
 
 export function setViewMode(mode) {
+  var prevMode = state.viewMode;
   state.viewMode = mode === 'detail' ? 'detail' : (mode === 'agents' ? 'agents' : 'board');
+  if (prevMode === 'agents' && state.viewMode !== 'agents' && callbacks.stopAgentsTicker) {
+    callbacks.stopAgentsTicker();
+  }
+  if (prevMode === 'detail' && state.viewMode !== 'detail') {
+    if (callbacks.closeAgentDrawer) callbacks.closeAgentDrawer();
+    state.readerTab = 'spec';
+  }
   if (els.workspace) {
     els.workspace.classList.toggle('mode-board', state.viewMode === 'board');
     els.workspace.classList.toggle('mode-detail', state.viewMode === 'detail');
@@ -237,7 +251,7 @@ export function setViewMode(mode) {
 }
 
 export function computeRenderKey(item) {
-  return (item.revision || '') + ':' + (item.title || '') + ':' + itemStatus(item) + ':' + (state.activeRuns && state.activeRuns.has(item.id)) + ':' + (item.git_status || '') + ':' + (item.pr_number || '') + ':' + (item.pr_url || '') + ':' + (item.claim_expires_at || '') + ':' + (item.claimed_by || '');
+  return (item.revision || '') + ':' + (item.title || '') + ':' + itemStatus(item) + ':' + itemType(item) + ':' + priority(item) + ':' + (hasUnresolvedPrereqs(item) ? '1' : '0') + ':' + (item.archived_at || '') + ':' + (state.activeRuns && state.activeRuns.has(item.id)) + ':' + (item.git_status || '') + ':' + (item.pr_number || '') + ':' + (item.pr_url || '') + ':' + (item.claim_expires_at || '') + ':' + (item.claimed_by || '');
 }
 
 export function renderBoard() {

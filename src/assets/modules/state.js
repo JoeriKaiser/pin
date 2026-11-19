@@ -104,14 +104,21 @@ export function matches(item) {
   if (f.priority && priority(item) !== f.priority) return false;
   if (f.project && norm(item.project) !== norm(f.project).trim()) return false;
   if (!q) return true;
-  var searchCorpus = [
+  var handoff = item.handoff || {};
+  var searchCorpus = norm([
     item.title, item.project, item.id, item.type, item.status,
-    item.claimed_by, tags(item).join(' '), item.content || item.body
-  ].join('\n');
-  if (norm(searchCorpus).indexOf(q) !== -1) return true;
-  var cleanQ = q.replace(/^#/, '').replace(/^\[|\]$/g, '').trim();
-  if (cleanQ && norm(searchCorpus).indexOf(cleanQ) !== -1) return true;
-  return false;
+    item.claimed_by, tags(item).join(' '), item.content || item.body,
+    handoff.progress, handoff.next, handoff.blocker, handoff.verification
+  ].join('\n'));
+  var terms = q.split(/\s+/).filter(Boolean);
+  for (var i = 0; i < terms.length; i++) {
+    var term = terms[i];
+    var clean = term.replace(/^#/, '').replace(/^\[|\]$/g, '').trim();
+    if (searchCorpus.indexOf(term) === -1 && (!clean || searchCorpus.indexOf(clean) === -1)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 export function updateShown() {

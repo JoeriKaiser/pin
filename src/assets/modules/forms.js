@@ -1,6 +1,6 @@
 import { state, find } from './state.js';
 import { els, $ } from './dom.js';
-import { createItem, sendAction, fetchData } from './api.js';
+import { createItem, sendAction, ensureActionOk, fetchData } from './api.js';
 import { text, clear, node, showToast, showDialogError } from './formatters.js';
 import { PURIFY_CONFIG, markedRenderer, sanitizeHtml } from './markdown.js';
 import { setRoute } from './router.js';
@@ -52,8 +52,10 @@ export function convertIdeaToSpec(item) {
   var rev = item.revision;
   showToast('Converting to spec ticket...', false);
   return sendAction(item.id, { action: 'to_spec', expect_revision: rev })
+    .then(ensureActionOk)
     .then(function () {
       showToast('Converted to spec ticket', false);
+      callbacks.refreshData();
     })
     .catch(function (err) {
       showToast('Conversion failed: ' + err.message, true);
@@ -132,6 +134,9 @@ export function submitQuickAdd() {
     resetQuickAdd();
     setQuickAddDisabled(false);
     showToast('Created ' + (newItem && newItem.type ? newItem.type : 'task') + ': ' + ((newItem && newItem.title) || fields.title), false);
+    if (newItem && newItem.id && !find(newItem.id)) {
+      state.items.unshift(newItem);
+    }
     callbacks.refreshData();
     if (newItem && newItem.id) {
       setRoute(newItem.id);
@@ -273,6 +278,9 @@ export function submitSpecModal() {
     setSpecModalDisabled(false);
     closeSpecModal();
     showToast('Created ' + (newItem && newItem.type ? newItem.type : 'task') + ': ' + ((newItem && newItem.title) || fields.title), false);
+    if (newItem && newItem.id && !find(newItem.id)) {
+      state.items.unshift(newItem);
+    }
     callbacks.refreshData();
     if (newItem && newItem.id) {
       setRoute(newItem.id);
@@ -384,7 +392,7 @@ export function triggerModalSubmit() {
                 var latestItem = find(lastAction.id);
                 if (!latestItem) throw new Error('Item not found in vault after sync');
                 lastAction.payload.expect_revision = latestItem.revision;
-                return sendAction(lastAction.id, lastAction.payload);
+                return sendAction(lastAction.id, lastAction.payload).then(ensureActionOk);
               })
               .then(function () {
                 closeActionModal();
@@ -437,7 +445,9 @@ export function openCompleteModal(item) {
         showDialogError('Verification evidence is required.');
         return false;
       }
-      return sendAction(item.id, { action: 'complete', evidence: val, expect_revision: rev });
+      var payload = { action: 'complete', evidence: val, expect_revision: rev };
+      state.lastAction = { id: item.id, payload: payload };
+      return sendAction(item.id, payload);
     }
   });
 }
@@ -467,7 +477,9 @@ export function openBlockedModal(item) {
         showDialogError('Blocker reason is required.');
         return false;
       }
-      return sendAction(item.id, { action: 'transition', to: 'blocked', note: val, expect_revision: rev });
+      var payload = { action: 'transition', to: 'blocked', note: val, expect_revision: rev };
+      state.lastAction = { id: item.id, payload: payload };
+      return sendAction(item.id, payload);
     }
   });
 }
@@ -490,7 +502,9 @@ export function openCloseModal(item) {
     onSubmit: function () {
       var ta = $('action-input-close');
       var val = ta ? ta.value.trim() : '';
-      return sendAction(item.id, { action: 'close', note: val || undefined, expect_revision: rev });
+      var payload = { action: 'close', note: val || undefined, expect_revision: rev };
+      state.lastAction = { id: item.id, payload: payload };
+      return sendAction(item.id, payload);
     }
   });
 }

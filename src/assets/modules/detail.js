@@ -1,6 +1,6 @@
 import { state, find, itemStatus, itemType, kind, priority, tags, matches, updateShown } from './state.js';
 import { els } from './dom.js';
-import { sendAction } from './api.js';
+import { sendAction, ensureActionOk } from './api.js';
 import { node, text, clear, date, timeAgo, showToast } from './formatters.js';
 import { renderMarkdownSnippet, renderMarkdown } from './markdown.js';
 import { setRoute } from './router.js';
@@ -144,8 +144,8 @@ export function renderDependencies(item) {
     parentRm.addEventListener('click', function (e) {
       e.stopPropagation();
       sendAction(item.id, { action: 'unparent', expect_revision: item.revision })
-        .then(function (res) {
-          if (!res.ok) throw new Error('HTTP ' + res.status);
+        .then(ensureActionOk)
+        .then(function () {
           showToast('Parent removed', false);
           callbacks.refreshData();
         })
@@ -184,8 +184,8 @@ export function renderDependencies(item) {
       subRm.addEventListener('click', function (e) {
         e.stopPropagation();
         sendAction(sub.id, { action: 'unparent', expect_revision: sub.revision })
-          .then(function (res) {
-            if (!res.ok) throw new Error('HTTP ' + res.status);
+          .then(ensureActionOk)
+          .then(function () {
             showToast('Subtask unlinked', false);
             callbacks.refreshData();
           })
@@ -225,8 +225,8 @@ export function renderDependencies(item) {
       depRm.addEventListener('click', function (e) {
         e.stopPropagation();
         sendAction(item.id, { action: 'undepend', target: depId, expect_revision: item.revision })
-          .then(function (res) {
-            if (!res.ok) throw new Error('HTTP ' + res.status);
+          .then(ensureActionOk)
+          .then(function () {
             showToast('Prerequisite removed', false);
             callbacks.refreshData();
           })
@@ -300,9 +300,17 @@ export function renderDependencies(item) {
       relRm.setAttribute('aria-label', 'Remove relationship ' + relId);
       relRm.addEventListener('click', function (e) {
         e.stopPropagation();
-        sendAction(item.id, { action: 'unrelate', target: relId, expect_revision: item.revision })
-          .then(function (res) {
-            if (!res.ok) throw new Error('HTTP ' + res.status);
+        var isOutbound = Array.isArray(item.related) && item.related.indexOf(relId) !== -1;
+        var hasInbound = relItem && Array.isArray(relItem.related) && relItem.related.indexOf(item.id) !== -1;
+        var calls = [];
+        if (isOutbound || !hasInbound) {
+          calls.push(sendAction(item.id, { action: 'unrelate', target: relId, expect_revision: item.revision }).then(ensureActionOk));
+        }
+        if (hasInbound) {
+          calls.push(sendAction(relItem.id, { action: 'unrelate', target: item.id, expect_revision: relItem.revision }).then(ensureActionOk));
+        }
+        Promise.all(calls)
+          .then(function () {
             showToast('Relationship removed', false);
             callbacks.refreshData();
           })
@@ -373,7 +381,7 @@ export function renderDependencies(item) {
     inp.value = '';
   });
 
-  confirmBtn.addEventListener('click', function () {
+  function submitRelationship() {
     var raw = inp.value.trim();
     if (!raw) {
       showToast('Please specify an item ID', true);
@@ -385,17 +393,25 @@ export function renderDependencies(item) {
       return;
     }
     var actionType = sel.value;
+    confirmBtn.disabled = true;
     sendAction(item.id, { action: actionType, target: targetId, expect_revision: item.revision })
-      .then(function (res) {
-        if (!res.ok) {
-          return res.text().then(function (t) { throw new Error(t || ('HTTP ' + res.status)); });
-        }
+      .then(ensureActionOk)
+      .then(function () {
         showToast('Relationship added', false);
         callbacks.refreshData();
       })
       .catch(function (err) {
+        confirmBtn.disabled = false;
         showToast('Action failed: ' + err.message, true);
       });
+  }
+
+  confirmBtn.addEventListener('click', submitRelationship);
+  inp.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      submitRelationship();
+    }
   });
 
   var dl = document.getElementById('dep-items-datalist');
@@ -448,6 +464,7 @@ export function renderActions(item) {
     }
     btn('Move to Planned', item.type !== 'idea', function () {
       sendAction(item.id, { action: 'transition', to: 'planned', expect_revision: rev })
+        .then(ensureActionOk)
         .then(function () {
           showToast('Moved to Planned', false);
           callbacks.refreshData();
@@ -507,6 +524,7 @@ export function renderActions(item) {
   if (st === 'blocked') {
     btn('Unblock (Move to Planned)', true, function () {
       sendAction(item.id, { action: 'transition', to: 'planned', expect_revision: rev })
+        .then(ensureActionOk)
         .then(function () {
           showToast('Moved to Planned', false);
           callbacks.refreshData();
@@ -540,6 +558,7 @@ export function renderActions(item) {
     if (!item.archived_at) {
       btn('Archive Item', false, function () {
         sendAction(item.id, { action: 'archive', expect_revision: rev })
+          .then(ensureActionOk)
           .then(function () {
             showToast('Archived ' + (item.title || item.id), false);
             callbacks.refreshData();
@@ -549,6 +568,7 @@ export function renderActions(item) {
     }
     btn('Reopen to Planned', false, function () {
       sendAction(item.id, { action: 'transition', to: 'planned', expect_revision: rev })
+        .then(ensureActionOk)
         .then(function () {
           showToast('Reopened to Planned', false);
           callbacks.refreshData();
@@ -565,6 +585,7 @@ export function renderActions(item) {
   if (st === 'closed' && !item.archived_at) {
     btn('Archive Item', false, function () {
       sendAction(item.id, { action: 'archive', expect_revision: rev })
+        .then(ensureActionOk)
         .then(function () {
           showToast('Archived ' + (item.title || item.id), false);
           callbacks.refreshData();
@@ -576,6 +597,7 @@ export function renderActions(item) {
   if (item.archived_at) {
     btn('Unarchive Item', false, function () {
       sendAction(item.id, { action: 'unarchive', expect_revision: rev })
+        .then(ensureActionOk)
         .then(function () {
           showToast('Unarchived ' + (item.title || item.id), false);
           callbacks.refreshData();

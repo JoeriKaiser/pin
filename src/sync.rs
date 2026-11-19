@@ -89,15 +89,23 @@ pub fn query_gh_prs(repo_path: &Path) -> Option<Vec<GhPrInfo>> {
         return None;
     }
     const GH_TIMEOUT: Duration = Duration::from_secs(3);
+    query_gh_prs_with_command("gh", repo_path, GH_TIMEOUT)
+}
 
-    let mut child = Command::new("gh")
-        .arg("-C")
-        .arg(repo_path)
+fn query_gh_prs_with_command(
+    program: &str,
+    repo_path: &Path,
+    timeout: Duration,
+) -> Option<Vec<GhPrInfo>> {
+    let mut child = Command::new(program)
+        .current_dir(repo_path)
         .args([
             "pr",
             "list",
             "--state",
             "all",
+            "--limit",
+            "100",
             "--json",
             "number,headRefName,state,url",
         ])
@@ -107,26 +115,38 @@ pub fn query_gh_prs(repo_path: &Path) -> Option<Vec<GhPrInfo>> {
         .spawn()
         .ok()?;
 
-    let deadline = Instant::now() + GH_TIMEOUT;
+    // Drain stdout on a helper thread so outputs larger than the OS pipe buffer
+    // cannot block the child before try_wait sees it exit.
+    let mut stdout = child.stdout.take()?;
+    let reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        stdout.read_to_end(&mut buf).ok().map(|_| buf)
+    });
+
+    let deadline = Instant::now() + timeout;
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
             Ok(None) if Instant::now() >= deadline => {
                 let _ = child.kill();
                 let _ = child.wait();
+                let _ = reader.join();
                 return None;
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(50)),
-            Err(_) => return None,
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = reader.join();
+                return None;
+            }
         }
     };
 
+    let buf = reader.join().ok()??;
     if !status.success() {
         return None;
     }
-    let mut stdout = child.stdout.take()?;
-    let mut buf = Vec::new();
-    stdout.read_to_end(&mut buf).ok()?;
     serde_json::from_slice(&buf).ok()
 }
 
@@ -165,6 +185,35 @@ fn branch_exists(repo_path: &Path, branch_name: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn is_on_first_parent_chain(
+    repo_path: &Path,
+    branch_oid: &str,
+    branch: &str,
+    target: &str,
+) -> bool {
+    // When `branch` is a strict ancestor of `target`, walking `--first-parent`
+    // from `target` down to `^branch` stops at the child of `branch` if and
+    // only if `branch` sits on `target`'s first-parent lineage (e.g. an
+    // untouched worktree created before `target` moved ahead).
+    let range = format!("{branch}..{target}");
+    let Ok(out) = Command::new("git")
+        .arg("-C")
+        .arg(repo_path)
+        .args(["rev-list", "--first-parent", "--parents", &range])
+        .output()
+    else {
+        return false;
+    };
+    if !out.status.success() {
+        return false;
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let Some(oldest_line) = stdout.lines().rev().find(|l| !l.trim().is_empty()) else {
+        return false;
+    };
+    oldest_line.split_whitespace().nth(1) == Some(branch_oid)
+}
+
 fn is_ancestor_of_any(repo_path: &Path, branch: &str, targets: &[String]) -> bool {
     let branch_oid = get_branch_commit(repo_path, branch);
     let Some(b_oid) = branch_oid else {
@@ -183,7 +232,8 @@ fn is_ancestor_of_any(repo_path: &Path, branch: &str, targets: &[String]) -> boo
             .args(["merge-base", "--is-ancestor", branch, target])
             .output()
         {
-            if out.status.success() {
+            if out.status.success() && !is_on_first_parent_chain(repo_path, &b_oid, branch, target)
+            {
                 return true;
             }
         }
@@ -458,40 +508,269 @@ pub fn resolve_git_status(
     }
 }
 
+fn preload_pin_refs(repo_path: &Path) -> (HashMap<String, String>, HashMap<String, String>) {
+    let mut local = HashMap::new();
+    let mut remote = HashMap::new();
+    let Ok(out) = Command::new("git")
+        .arg("-C")
+        .arg(repo_path)
+        .args([
+            "for-each-ref",
+            "--format=%(refname) %(objectname)",
+            "refs/heads/pin/",
+            "refs/remotes/origin/pin/",
+        ])
+        .output()
+    else {
+        return (local, remote);
+    };
+    if !out.status.success() {
+        return (local, remote);
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    for line in stdout.lines() {
+        let Some((refname, oid)) = line.trim().split_once(' ') else {
+            continue;
+        };
+        if let Some(id) = refname.strip_prefix("refs/heads/pin/") {
+            local.insert(id.to_string(), oid.to_string());
+        } else if let Some(id) = refname.strip_prefix("refs/remotes/origin/pin/") {
+            remote.insert(id.to_string(), oid.to_string());
+        }
+    }
+    (local, remote)
+}
+
+fn current_head_branch(repo_path: &Path) -> Option<String> {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(repo_path)
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
+    }
+}
+
 pub struct GitStatusResolver {
     pub repo_path: PathBuf,
     pub targets: Vec<String>,
     pub prs: Option<Vec<GhPrInfo>>,
+    local_pin_refs: HashMap<String, String>,
+    remote_pin_refs: HashMap<String, String>,
+    current_branch: Option<String>,
+    target_oids: Vec<(String, Option<String>)>,
 }
 
 impl GitStatusResolver {
     pub fn new(repo_path: PathBuf) -> Self {
-        let targets = resolve_target_branches(&repo_path);
         let prs = query_gh_prs(&repo_path);
-        Self {
-            repo_path,
-            targets,
-            prs,
-        }
+        Self::with_prs(repo_path, prs)
     }
 
     pub fn with_prs(repo_path: PathBuf, prs: Option<Vec<GhPrInfo>>) -> Self {
         let targets = resolve_target_branches(&repo_path);
+        let (local_pin_refs, remote_pin_refs) = preload_pin_refs(&repo_path);
+        let current_branch = current_head_branch(&repo_path);
+        let target_oids = targets
+            .iter()
+            .map(|t| (t.clone(), get_branch_commit(&repo_path, t)))
+            .collect();
         Self {
             repo_path,
             targets,
             prs,
+            local_pin_refs,
+            remote_pin_refs,
+            current_branch,
+            target_oids,
+        }
+    }
+
+    fn is_ref_merged(&self, branch: &str, branch_oid: &str) -> bool {
+        for (target, t_oid_opt) in &self.target_oids {
+            if t_oid_opt.as_deref() == Some(branch_oid) {
+                continue;
+            }
+            if let Ok(out) = Command::new("git")
+                .arg("-C")
+                .arg(&self.repo_path)
+                .args(["merge-base", "--is-ancestor", branch, target])
+                .output()
+            {
+                if out.status.success()
+                    && !is_on_first_parent_chain(&self.repo_path, branch_oid, branch, target)
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn resolve_item_inner(&self, item_id: &str, check_squash: bool) -> GitItemInfo {
+        let branch_name = format!("pin/{item_id}");
+        let remote_branch = format!("origin/pin/{item_id}");
+        let worktree_dir = self.repo_path.join(".pin_worktrees").join(item_id);
+
+        let local_oid = self.local_pin_refs.get(item_id).cloned();
+        let remote_oid = self.remote_pin_refs.get(item_id).cloned();
+        let local_exists = local_oid.is_some();
+        let remote_exists = remote_oid.is_some();
+        let wt_exists = worktree_dir.exists();
+
+        let pr = self
+            .prs
+            .as_deref()
+            .and_then(|list| find_pr_for_item(list, item_id));
+        let pr_number = pr.map(|p| p.number);
+        let pr_url = pr.map(|p| p.url.clone());
+        let pr_state = pr.map(|p| p.state.as_str());
+
+        if pr_state == Some("MERGED") {
+            return GitItemInfo {
+                id: item_id.to_string(),
+                status: GitItemStatus::Merged,
+                pr_number,
+                pr_url,
+                commit_oid: None,
+                branch: local_exists.then_some(branch_name),
+                worktree_path: wt_exists.then_some(worktree_dir),
+            };
+        }
+
+        if let Some(ref b_oid) = local_oid {
+            if self.is_ref_merged(&branch_name, b_oid) {
+                return GitItemInfo {
+                    id: item_id.to_string(),
+                    status: GitItemStatus::Merged,
+                    pr_number,
+                    pr_url,
+                    commit_oid: Some(b_oid.clone()),
+                    branch: Some(branch_name),
+                    worktree_path: wt_exists.then_some(worktree_dir),
+                };
+            }
+        }
+        if let Some(ref r_oid) = remote_oid {
+            if self.is_ref_merged(&remote_branch, r_oid) {
+                return GitItemInfo {
+                    id: item_id.to_string(),
+                    status: GitItemStatus::Merged,
+                    pr_number,
+                    pr_url,
+                    commit_oid: Some(r_oid.clone()),
+                    branch: Some(branch_name),
+                    worktree_path: wt_exists.then_some(worktree_dir),
+                };
+            }
+        }
+
+        if check_squash {
+            if let Some(squash_oid) = find_squash_commit(&self.repo_path, item_id, &self.targets) {
+                return GitItemInfo {
+                    id: item_id.to_string(),
+                    status: GitItemStatus::Merged,
+                    pr_number,
+                    pr_url,
+                    commit_oid: Some(squash_oid),
+                    branch: local_exists.then_some(branch_name),
+                    worktree_path: wt_exists.then_some(worktree_dir),
+                };
+            }
+        }
+
+        if pr_state == Some("OPEN") {
+            return GitItemInfo {
+                id: item_id.to_string(),
+                status: GitItemStatus::PrOpen,
+                pr_number,
+                pr_url,
+                commit_oid: None,
+                branch: local_exists.then_some(branch_name),
+                worktree_path: wt_exists.then_some(worktree_dir),
+            };
+        }
+
+        if wt_exists && has_uncommitted_changes(&worktree_dir) {
+            return GitItemInfo {
+                id: item_id.to_string(),
+                status: GitItemStatus::ChangesPending,
+                pr_number,
+                pr_url,
+                commit_oid: None,
+                branch: local_exists.then_some(branch_name),
+                worktree_path: Some(worktree_dir),
+            };
+        }
+        if self.current_branch.as_deref() == Some(branch_name.as_str())
+            && has_uncommitted_changes(&self.repo_path)
+        {
+            return GitItemInfo {
+                id: item_id.to_string(),
+                status: GitItemStatus::ChangesPending,
+                pr_number,
+                pr_url,
+                commit_oid: None,
+                branch: Some(branch_name),
+                worktree_path: None,
+            };
+        }
+
+        let has_commits = (local_exists
+            && has_commits_ahead(&self.repo_path, &branch_name, &self.targets))
+            || (remote_exists && has_commits_ahead(&self.repo_path, &remote_branch, &self.targets));
+
+        if has_commits {
+            return GitItemInfo {
+                id: item_id.to_string(),
+                status: GitItemStatus::Committed,
+                pr_number,
+                pr_url,
+                commit_oid: local_oid.or(remote_oid),
+                branch: Some(branch_name),
+                worktree_path: wt_exists.then_some(worktree_dir),
+            };
+        }
+
+        GitItemInfo {
+            id: item_id.to_string(),
+            status: GitItemStatus::None,
+            pr_number,
+            pr_url,
+            commit_oid: None,
+            branch: local_exists.then_some(branch_name),
+            worktree_path: wt_exists.then_some(worktree_dir),
         }
     }
 
     pub fn resolve_item(&self, item_id: &str) -> GitItemInfo {
-        resolve_git_status(&self.repo_path, item_id, self.prs.as_deref(), &self.targets)
+        self.resolve_item_inner(item_id, true)
     }
 
     pub fn resolve_all(&self, items: &[IdeaMeta]) -> HashMap<String, GitItemInfo> {
-        let mut map = HashMap::new();
+        let mut map = HashMap::with_capacity(items.len());
         for item in items {
-            map.insert(item.id.clone(), self.resolve_item(&item.id));
+            let has_local_or_remote = self.local_pin_refs.contains_key(&item.id)
+                || self.remote_pin_refs.contains_key(&item.id);
+            let has_wt = self
+                .repo_path
+                .join(".pin_worktrees")
+                .join(&item.id)
+                .exists();
+            let check_squash =
+                item.current_status() == Status::Done || has_local_or_remote || has_wt;
+            map.insert(
+                item.id.clone(),
+                self.resolve_item_inner(&item.id, check_squash),
+            );
         }
         map
     }
@@ -506,7 +785,15 @@ pub fn reconcile_and_sync(
     force: bool,
     actor: Option<&str>,
 ) -> Result<Vec<SyncResult>, String> {
+    let resolved_target_file = match target_id {
+        Some(target) => {
+            Some(crate::vault::resolve_selector(vault_path, target).map_err(|e| e.to_string())?)
+        }
+        None => None,
+    };
+
     let all_items = collect_ideas(vault_path).map_err(|e| format!("Failed to read vault: {e}"))?;
+    let (local_pin_refs, _) = preload_pin_refs(repo_path);
 
     let candidates: Vec<&IdeaMeta> = all_items
         .iter()
@@ -516,13 +803,13 @@ pub fn reconcile_and_sync(
                     return false;
                 }
             }
-            if let Some(target) = target_id {
-                meta.id == target || meta.id.starts_with(target)
+            if let Some(ref target_file) = resolved_target_file {
+                meta.filename == *target_file
             } else {
                 // Completed work, or any work item that still has a stranded worktree or branch in this repo
                 meta.current_status() == Status::Done
                     || repo_path.join(".pin_worktrees").join(&meta.id).exists()
-                    || branch_exists(repo_path, &format!("pin/{}", meta.id))
+                    || local_pin_refs.contains_key(&meta.id)
             }
         })
         .collect();
@@ -537,13 +824,24 @@ pub fn reconcile_and_sync(
     for meta in candidates {
         let git_info = resolver.resolve_item(&meta.id);
         let is_merged = git_info.status == GitItemStatus::Merged;
-        let is_archived_or_closed = meta.archived_at.is_some()
+        let is_archived = meta.is_archived();
+        let is_archived_or_closed = is_archived
             || meta.current_status() == Status::Closed
             || meta.current_status() == Status::Cancelled;
 
         if !is_merged && !is_archived_or_closed {
             continue;
         }
+
+        let effective_resolution = if is_merged {
+            Resolution::Implemented
+        } else if let Some(res) = meta.resolution {
+            res
+        } else if meta.current_status() == Status::Cancelled {
+            Resolution::Rejected
+        } else {
+            Resolution::Implemented
+        };
 
         let resolution_note = if let Some(pr_num) = git_info.pr_number {
             format!("Merged in PR #{pr_num}")
@@ -553,19 +851,19 @@ pub fn reconcile_and_sync(
         } else if is_merged {
             "Merged into main".to_string()
         } else {
-            meta.resolution_note.clone().unwrap_or_else(|| {
-                format!(
-                    "Archived ({})",
-                    meta.resolution.map(|r| r.as_str()).unwrap_or("closed")
-                )
-            })
+            meta.resolution_note
+                .clone()
+                .unwrap_or_else(|| format!("Archived ({})", effective_resolution.as_str()))
         };
         let wt_path = repo_path.join(".pin_worktrees").join(&meta.id);
         let branch_name = format!("pin/{}", meta.id);
         let had_worktree = wt_path.exists();
         let had_branch = branch_exists(repo_path, &branch_name);
 
-        if meta.archived_at.is_some() && !had_worktree && !had_branch {
+        if is_archived && !had_worktree && !had_branch {
+            continue;
+        }
+        if !is_merged && !had_worktree && !had_branch {
             continue;
         }
 
@@ -587,13 +885,7 @@ pub fn reconcile_and_sync(
                 } else {
                     "skipped_dirty".to_string()
                 },
-                resolution: if is_merged {
-                    "implemented".to_string()
-                } else {
-                    meta.resolution
-                        .map(|r| r.as_str().to_string())
-                        .unwrap_or_else(|| "closed".to_string())
-                },
+                resolution: effective_resolution.as_str().to_string(),
                 resolution_note,
                 worktree_removed: false,
                 branch_deleted: false,
@@ -606,11 +898,11 @@ pub fn reconcile_and_sync(
         }
 
         if !dry_run {
-            if meta.archived_at.is_none() {
+            if !is_archived {
                 workflow::archive_item(
                     vault_path,
                     &meta.filename,
-                    Resolution::Implemented,
+                    effective_resolution,
                     actor,
                     Some(&resolution_note),
                     None,
@@ -657,18 +949,12 @@ pub fn reconcile_and_sync(
                 } else {
                     "archived".to_string()
                 },
-                action: if meta.archived_at.is_some() {
+                action: if is_archived {
                     "synced".to_string()
                 } else {
                     "archived".to_string()
                 },
-                resolution: if is_merged {
-                    "implemented".to_string()
-                } else {
-                    meta.resolution
-                        .map(|r| r.as_str().to_string())
-                        .unwrap_or_else(|| "closed".to_string())
-                },
+                resolution: effective_resolution.as_str().to_string(),
                 resolution_note: resolution_note.clone(),
                 worktree_removed,
                 branch_deleted,
@@ -687,13 +973,7 @@ pub fn reconcile_and_sync(
                     "archived".to_string()
                 },
                 action: "dry_run".to_string(),
-                resolution: if is_merged {
-                    "implemented".to_string()
-                } else {
-                    meta.resolution
-                        .map(|r| r.as_str().to_string())
-                        .unwrap_or_else(|| "closed".to_string())
-                },
+                resolution: effective_resolution.as_str().to_string(),
                 resolution_note,
                 worktree_removed: should_remove_worktree,
                 branch_deleted: had_branch && !worktree_preserved_dirty,
@@ -1287,5 +1567,176 @@ mod tests {
         assert!(res[0].branch_deleted);
         assert!(!wt.exists());
         assert!(!branch_exists(&repo, &format!("pin/{item_id}")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_query_gh_prs_uses_cwd_and_drains_large_stdout() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempdir().unwrap();
+        let repo = dir.path().join("repo");
+        fs::create_dir_all(&repo).unwrap();
+
+        let fake_gh = dir.path().join("fake-gh");
+        // Verify we never receive `-C`, verify cwd matches repo, and emit >128 KiB JSON
+        // to prove stdout draining does not deadlock the OS pipe buffer.
+        let script = r#"#!/bin/sh
+for arg in "$@"; do
+  if [ "$arg" = "-C" ]; then
+    echo "unexpected -C flag" >&2
+    exit 2
+  fi
+done
+if [ "$(pwd -P)" != "$(cd "$EXPECTED_CWD" && pwd -P)" ]; then
+  echo "wrong cwd" >&2
+  exit 3
+fi
+printf '['
+i=0
+while [ "$i" -lt 1200 ]; do
+  if [ "$i" -gt 0 ]; then printf ','; fi
+  printf '{"number":%d,"headRefName":"pin/item%08d","state":"OPEN","url":"https://github.com/org/repo/pull/%d/extra-padding-to-exceed-pipe-buffer-size"}' "$i" "$i" "$i"
+  i=$((i + 1))
+done
+printf ']'
+"#;
+        fs::write(&fake_gh, script).unwrap();
+        let mut perms = fs::metadata(&fake_gh).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&fake_gh, perms).unwrap();
+
+        // Pass EXPECTED_CWD via repo path check inside the script by embedding it
+        let script_with_path = script.replace(
+            "$EXPECTED_CWD",
+            &repo.to_string_lossy().replace('"', "\\\""),
+        );
+        fs::write(&fake_gh, script_with_path).unwrap();
+
+        let prs =
+            query_gh_prs_with_command(fake_gh.to_str().unwrap(), &repo, Duration::from_secs(3))
+                .expect("fake gh should return parsed PR list");
+        assert_eq!(prs.len(), 1200);
+        assert_eq!(prs[0].number, 0);
+        assert_eq!(prs[1199].head_ref_name, "pin/item00001199");
+    }
+
+    #[test]
+    fn test_untouched_worktree_not_marked_merged_when_main_advances() {
+        let dir = tempdir().unwrap();
+        let repo = dir.path().join("repo");
+        let vault = dir.path().join("vault");
+        fs::create_dir_all(&repo).unwrap();
+        fs::create_dir_all(&vault).unwrap();
+        setup_git_repo(&repo);
+
+        let item_id = "untouched123";
+        let file_path = vault.join(format!("{item_id}.md"));
+        let meta = IdeaMeta::new_work_item(
+            item_id.to_string(),
+            "test-proj".to_string(),
+            "Active task".to_string(),
+            "Body".to_string(),
+            crate::model::Kind::Technical,
+            crate::model::WorkType::Task,
+            Status::InProgress,
+            None,
+            None,
+            Some("human:tester".to_string()),
+        );
+        fs::write(&file_path, crate::frontmatter::render_full_document(&meta)).unwrap();
+
+        // Provision a fresh worktree at commit C1 (no commits on branch yet)
+        let wt = WorktreeManager::provision_worktree(&repo, item_id).unwrap();
+        assert!(wt.exists());
+
+        // Advance main to C2 while the worktree is untouched
+        fs::write(repo.join("unrelated.txt"), "main moved ahead").unwrap();
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["add", "."])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["commit", "-m", "unrelated commit on main"])
+            .output()
+            .unwrap();
+
+        let resolver = GitStatusResolver::with_prs(repo.clone(), None);
+        let status = resolver.resolve_item(item_id);
+        assert_eq!(status.status, GitItemStatus::None);
+
+        let res = reconcile_and_sync(&vault, &repo, None, None, false, false, Some("agent:sync"))
+            .unwrap();
+        assert!(
+            res.is_empty(),
+            "untouched active worktree must not be synced"
+        );
+        assert!(wt.exists(), "untouched active worktree must not be deleted");
+        assert!(branch_exists(&repo, &format!("pin/{item_id}")));
+        let disk = fs::read_to_string(&file_path).unwrap();
+        assert!(!disk.contains("archived_at:"));
+    }
+
+    #[test]
+    fn test_cancelled_item_sync_uses_rejected_resolution_and_supports_filename_selector() {
+        let dir = tempdir().unwrap();
+        let repo = dir.path().join("repo");
+        let vault = dir.path().join("vault");
+        fs::create_dir_all(&repo).unwrap();
+        fs::create_dir_all(&vault).unwrap();
+        setup_git_repo(&repo);
+
+        let item_id = "cancelwt1234";
+        let file_path = vault.join(format!("{item_id}.md"));
+        let meta = IdeaMeta::new_work_item(
+            item_id.to_string(),
+            "test-proj".to_string(),
+            "Cancelled Task".to_string(),
+            "Body".to_string(),
+            crate::model::Kind::Technical,
+            crate::model::WorkType::Task,
+            Status::Cancelled,
+            None,
+            None,
+            Some("human:tester".to_string()),
+        );
+        fs::write(&file_path, crate::frontmatter::render_full_document(&meta)).unwrap();
+
+        let wt = WorktreeManager::provision_worktree(&repo, item_id).unwrap();
+        assert!(wt.exists());
+
+        // Unknown selector must error instead of silently returning empty
+        assert!(reconcile_and_sync(
+            &vault,
+            &repo,
+            None,
+            Some("doesnotexist"),
+            false,
+            false,
+            Some("agent:sync"),
+        )
+        .is_err());
+
+        // Filename selector works and records rejected resolution on disk and in SyncResult
+        let res = reconcile_and_sync(
+            &vault,
+            &repo,
+            None,
+            Some(&format!("{item_id}.md")),
+            false,
+            false,
+            Some("agent:sync"),
+        )
+        .unwrap();
+        assert_eq!(res.len(), 1);
+        assert_eq!(res[0].resolution, "rejected");
+        assert!(res[0].worktree_removed);
+        assert!(res[0].branch_deleted);
+        let disk = fs::read_to_string(&file_path).unwrap();
+        assert!(disk.contains("resolution: \"rejected\""));
     }
 }

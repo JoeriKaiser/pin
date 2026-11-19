@@ -93,6 +93,7 @@ pub struct ViewSnapshot {
     pub filter_type: Option<WorkType>,
     pub acp_manager: Arc<crate::acp::AcpManager>,
     pub git_cache: Arc<Mutex<Option<(Instant, HashMap<String, crate::sync::GitItemInfo>)>>>,
+    pub git_generation: Arc<AtomicU64>,
     pub broadcaster: Arc<ViewerBroadcaster>,
 }
 
@@ -202,8 +203,7 @@ pub fn create_snapshot(
     filter_type: Option<WorkType>,
 ) -> ViewSnapshot {
     let token = generate_token();
-    let repo_path = std::env::current_dir()
-        .unwrap_or_else(|_| vault_path.parent().unwrap_or(&vault_path).to_path_buf());
+    let repo_path = crate::acp::WorktreeManager::resolve_repo_path(&vault_path);
     let acp_manager = Arc::new(crate::acp::AcpManager::new(
         vault_path.clone(),
         repo_path.clone(),
@@ -221,6 +221,7 @@ pub fn create_snapshot(
         filter_type,
         acp_manager,
         git_cache: Arc::new(Mutex::new(None)),
+        git_generation: Arc::new(AtomicU64::new(0)),
         broadcaster: Arc::new(ViewerBroadcaster::new()),
     }
 }
@@ -403,6 +404,31 @@ fn send_response(
     }
 }
 
+fn json_error_bytes(msg: impl Into<String>) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({ "error": msg.into() }))
+        .unwrap_or_else(|_| b"{\"error\":\"Internal error\"}".to_vec())
+}
+
+fn is_valid_csrf(origin_header: Option<&str>, port: u16, has_pin_action_header: bool) -> bool {
+    has_pin_action_header
+        && origin_header.is_some_and(|orig| {
+            orig == format!("http://127.0.0.1:{port}") || orig == format!("http://localhost:{port}")
+        })
+}
+
+fn send_forbidden(stream: &mut TcpStream) {
+    send_response(
+        stream,
+        403,
+        "Forbidden",
+        "application/json; charset=utf-8",
+        b"{\"error\":\"Forbidden request\"}",
+        false,
+        true,
+        None,
+    );
+}
+
 const ASSETS: &[(&str, &str, &str)] = &[
     ("app.css", "text/css; charset=utf-8", APP_CSS),
     ("app.js", "text/javascript; charset=utf-8", APP_JS),
@@ -514,8 +540,9 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
     let method = parts[0];
     let raw_path = parts[1];
 
-    // Read headers
-    let mut headers = Vec::new();
+    // Read headers (capped to prevent unbounded allocation on malformed clients)
+    const MAX_HEADERS: usize = 128;
+    let mut header_count = 0usize;
     let mut content_length = 0;
     let mut body_too_large = false;
     let mut has_pin_action_header = false;
@@ -523,10 +550,14 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
     let mut content_type_header = None;
     let mut if_none_match = None;
     loop {
+        if header_count >= MAX_HEADERS {
+            break;
+        }
         let mut line = String::new();
         if reader.read_line(&mut line).is_err() || line.trim().is_empty() {
             break;
         }
+        header_count += 1;
         let trimmed = line.trim();
         if trimmed.to_ascii_lowercase().starts_with("content-length:") {
             if let Some((_, val)) = trimmed.split_once(':') {
@@ -555,7 +586,6 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                 if_none_match = Some(val.trim().to_string());
             }
         }
-        headers.push(line);
     }
 
     if method == "GET" && (raw_path == "/healthz" || raw_path == "/health") {
@@ -621,22 +651,8 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
     // POST /runner/settings
     if method == "POST" {
         if subpath == "runner/settings" {
-            let valid_origin = origin_header.as_deref().is_some_and(|orig| {
-                orig == format!("http://127.0.0.1:{port}")
-                    || orig == format!("http://localhost:{port}")
-            });
-
-            if !valid_origin || !has_pin_action_header {
-                send_response(
-                    &mut stream,
-                    403,
-                    "Forbidden",
-                    "application/json; charset=utf-8",
-                    b"{\"error\":\"Forbidden request\"}",
-                    false,
-                    true,
-                    None,
-                );
+            if !is_valid_csrf(origin_header.as_deref(), port, has_pin_action_header) {
+                send_forbidden(&mut stream);
                 return;
             }
 
@@ -725,22 +741,8 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
         }
 
         if subpath == "screenshots" || subpath == "screenshots/upload" {
-            let valid_origin = origin_header.as_deref().is_some_and(|orig| {
-                orig == format!("http://127.0.0.1:{port}")
-                    || orig == format!("http://localhost:{port}")
-            });
-
-            if !valid_origin || !has_pin_action_header {
-                send_response(
-                    &mut stream,
-                    403,
-                    "Forbidden",
-                    "application/json; charset=utf-8",
-                    b"{\"error\":\"Forbidden request\"}",
-                    false,
-                    true,
-                    None,
-                );
+            if !is_valid_csrf(origin_header.as_deref(), port, has_pin_action_header) {
+                send_forbidden(&mut stream);
                 return;
             }
 
@@ -792,13 +794,13 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
 
             let dir = std::env::temp_dir().join("pin-screenshots");
             if let Err(e) = std::fs::create_dir_all(&dir) {
-                let msg = format!("{{\"error\":\"Failed to create screenshot directory: {e}\"}}");
+                let msg = json_error_bytes(format!("Failed to create screenshot directory: {e}"));
                 send_response(
                     &mut stream,
                     500,
                     "Internal Server Error",
                     "application/json; charset=utf-8",
-                    msg.as_bytes(),
+                    &msg,
                     false,
                     true,
                     None,
@@ -808,13 +810,13 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
 
             let file_path = dir.join(&filename);
             if let Err(e) = std::fs::write(&file_path, &body_bytes) {
-                let msg = format!("{{\"error\":\"Failed to write screenshot file: {e}\"}}");
+                let msg = json_error_bytes(format!("Failed to write screenshot file: {e}"));
                 send_response(
                     &mut stream,
                     500,
                     "Internal Server Error",
                     "application/json; charset=utf-8",
-                    msg.as_bytes(),
+                    &msg,
                     false,
                     true,
                     None,
@@ -842,22 +844,8 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
             return;
         }
         if subpath == "update" {
-            let valid_origin = origin_header.as_deref().is_some_and(|orig| {
-                orig == format!("http://127.0.0.1:{port}")
-                    || orig == format!("http://localhost:{port}")
-            });
-
-            if !valid_origin || !has_pin_action_header {
-                send_response(
-                    &mut stream,
-                    403,
-                    "Forbidden",
-                    "application/json; charset=utf-8",
-                    b"{\"error\":\"Forbidden request\"}",
-                    false,
-                    true,
-                    None,
-                );
+            if !is_valid_csrf(origin_header.as_deref(), port, has_pin_action_header) {
+                send_forbidden(&mut stream);
                 return;
             }
 
@@ -918,22 +906,8 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
         }
 
         if subpath == "sync" || subpath == "sync-git" {
-            let valid_origin = origin_header.as_deref().is_some_and(|orig| {
-                orig == format!("http://127.0.0.1:{port}")
-                    || orig == format!("http://localhost:{port}")
-            });
-
-            if !valid_origin || !has_pin_action_header {
-                send_response(
-                    &mut stream,
-                    403,
-                    "Forbidden",
-                    "application/json; charset=utf-8",
-                    b"{\"error\":\"Forbidden request\"}",
-                    false,
-                    true,
-                    None,
-                );
+            if !is_valid_csrf(origin_header.as_deref(), port, has_pin_action_header) {
+                send_forbidden(&mut stream);
                 return;
             }
 
@@ -955,6 +929,7 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
             if let Ok(mut cache_guard) = snapshot.git_cache.lock() {
                 *cache_guard = Some((Instant::now(), status_map));
             }
+            snapshot.git_generation.fetch_add(1, Ordering::Relaxed);
             snapshot.broadcaster.broadcast(serde_json::json!({
                 "type": "vault_changed"
             }));
@@ -985,13 +960,13 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                     );
                 }
                 Err(e) => {
-                    let err_msg = format!("{{\"error\":\"Failed to sync: {e}\"}}");
+                    let err_msg = json_error_bytes(format!("Failed to sync: {e}"));
                     send_response(
                         &mut stream,
                         500,
                         "Internal Server Error",
                         "application/json; charset=utf-8",
-                        err_msg.as_bytes(),
+                        &err_msg,
                         false,
                         true,
                         None,
@@ -1002,22 +977,8 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
         }
 
         if subpath == "items" || subpath == "items/create" {
-            let valid_origin = origin_header.as_deref().is_some_and(|orig| {
-                orig == format!("http://127.0.0.1:{port}")
-                    || orig == format!("http://localhost:{port}")
-            });
-
-            if !valid_origin || !has_pin_action_header {
-                send_response(
-                    &mut stream,
-                    403,
-                    "Forbidden",
-                    "application/json; charset=utf-8",
-                    b"{\"error\":\"Forbidden request\"}",
-                    false,
-                    true,
-                    None,
-                );
+            if !is_valid_csrf(origin_header.as_deref(), port, has_pin_action_header) {
+                send_forbidden(&mut stream);
                 return;
             }
 
@@ -1039,13 +1000,13 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
             let payload: CreateItemPayload = match serde_json::from_slice(&body_bytes) {
                 Ok(p) => p,
                 Err(e) => {
-                    let msg = format!("{{\"error\":\"Invalid JSON: {e}\"}}");
+                    let msg = json_error_bytes(format!("Invalid JSON: {e}"));
                     send_response(
                         &mut stream,
                         400,
                         "Bad Request",
                         "application/json; charset=utf-8",
-                        msg.as_bytes(),
+                        &msg,
                         false,
                         true,
                         None,
@@ -1124,19 +1085,25 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
             let file_path = snapshot.vault_path.join(format!("{id}.md"));
             let rendered = crate::frontmatter::render_full_document(&item);
             if let Err(e) = crate::vault::atomic_write(&file_path, &rendered) {
-                let msg = format!("{{\"error\":\"Failed to save item: {e}\"}}");
+                let msg = json_error_bytes(format!("Failed to save item: {e}"));
                 send_response(
                     &mut stream,
                     500,
                     "Internal Server Error",
                     "application/json; charset=utf-8",
-                    msg.as_bytes(),
+                    &msg,
                     false,
                     true,
                     None,
                 );
                 return;
             }
+
+            snapshot.broadcaster.broadcast(serde_json::json!({
+                "type": "vault_changed",
+                "id": id,
+                "action": "created"
+            }));
 
             let json_item = JsonIdeaOutput::from(&item);
             let body_str = serde_json::to_string(&json_item).unwrap_or_default();
@@ -1158,22 +1125,8 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                 let id = id_part.trim();
 
                 // CSRF verification: must have Origin matching server address and X-Pin-Action header
-                let valid_origin = origin_header.as_deref().is_some_and(|orig| {
-                    orig == format!("http://127.0.0.1:{port}")
-                        || orig == format!("http://localhost:{port}")
-                });
-
-                if !valid_origin || !has_pin_action_header {
-                    send_response(
-                        &mut stream,
-                        403,
-                        "Forbidden",
-                        "application/json; charset=utf-8",
-                        b"{\"error\":\"Forbidden request\"}",
-                        false,
-                        true,
-                        None,
-                    );
+                if !is_valid_csrf(origin_header.as_deref(), port, has_pin_action_header) {
+                    send_forbidden(&mut stream);
                     return;
                 }
 
@@ -1196,13 +1149,13 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                 let payload: ActionPayload = match serde_json::from_slice(&body_bytes) {
                     Ok(p) => p,
                     Err(e) => {
-                        let msg = format!("{{\"error\":\"Invalid JSON: {e}\"}}");
+                        let msg = json_error_bytes(format!("Invalid JSON: {e}"));
                         send_response(
                             &mut stream,
                             400,
                             "Bad Request",
                             "application/json; charset=utf-8",
-                            msg.as_bytes(),
+                            &msg,
                             false,
                             true,
                             None,
@@ -1214,13 +1167,13 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                 let filename = match resolve_selector(&snapshot.vault_path, id) {
                     Ok(f) => f,
                     Err(e) => {
-                        let msg = format!("{{\"error\":\"{e}\"}}");
+                        let msg = json_error_bytes(e.to_string());
                         send_response(
                             &mut stream,
                             404,
                             "Not Found",
                             "application/json; charset=utf-8",
-                            msg.as_bytes(),
+                            &msg,
                             false,
                             true,
                             None,
@@ -1235,25 +1188,26 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                 // Check if moving to in_progress or claiming requires worktree when primary is busy
                 let is_starting_run = payload.action == "claim"
                     || (payload.action == "transition" && payload.to == Some(Status::InProgress));
-                if is_starting_run
-                    && payload.use_worktree != Some(true)
-                    && snapshot.acp_manager.is_primary_busy().is_some()
-                {
-                    let busy_id = snapshot.acp_manager.is_primary_busy().unwrap();
-                    let msg = format!(
-                        "{{\"error\":\"Primary checkout is busy\",\"status\":\"primary_busy\",\"active_id\":\"{busy_id}\"}}"
-                    );
-                    send_response(
-                        &mut stream,
-                        409,
-                        "Conflict",
-                        "application/json; charset=utf-8",
-                        msg.as_bytes(),
-                        true,
-                        true,
-                        None,
-                    );
-                    return;
+                if let Some(busy_id) = snapshot.acp_manager.is_primary_busy() {
+                    if is_starting_run && payload.use_worktree != Some(true) {
+                        let msg = serde_json::to_vec(&serde_json::json!({
+                            "error": "Primary checkout is busy",
+                            "status": "primary_busy",
+                            "active_id": busy_id,
+                        }))
+                        .unwrap_or_default();
+                        send_response(
+                            &mut stream,
+                            409,
+                            "Conflict",
+                            "application/json; charset=utf-8",
+                            &msg,
+                            true,
+                            true,
+                            None,
+                        );
+                        return;
+                    }
                 }
 
                 let mutation_result = match payload.action.as_str() {
@@ -1345,6 +1299,7 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                                 if let Ok(mut cache_guard) = snapshot.git_cache.lock() {
                                     *cache_guard = None;
                                 }
+                                snapshot.git_generation.fetch_add(1, Ordering::Relaxed);
                                 send_response(
                                     &mut stream,
                                     200,
@@ -1523,13 +1478,13 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                             workflow::WorkflowError::PermissionDenied(_) => 403,
                             _ => 400,
                         };
-                        let msg = format!("{{\"error\":\"{err}\"}}");
+                        let msg = json_error_bytes(err.to_string());
                         send_response(
                             &mut stream,
                             status_code,
                             "Error",
                             "application/json; charset=utf-8",
-                            msg.as_bytes(),
+                            &msg,
                             true,
                             true,
                             None,
@@ -1539,6 +1494,10 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                 }
             }
             if let Some(id_part) = stripped.strip_suffix("/run") {
+                if !is_valid_csrf(origin_header.as_deref(), port, has_pin_action_header) {
+                    send_forbidden(&mut stream);
+                    return;
+                }
                 let id = id_part.trim();
 
                 let mut body_bytes = vec![0u8; content_length];
@@ -1560,13 +1519,13 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                     match serde_json::from_slice(&body_bytes) {
                         Ok(p) => p,
                         Err(e) => {
-                            let msg = format!("{{\"error\":\"Invalid JSON: {e}\"}}");
+                            let msg = json_error_bytes(format!("Invalid JSON: {e}"));
                             send_response(
                                 &mut stream,
                                 400,
                                 "Bad Request",
                                 "application/json; charset=utf-8",
-                                msg.as_bytes(),
+                                &msg,
                                 false,
                                 true,
                                 None,
@@ -1650,6 +1609,10 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                 .strip_suffix("/commit-pr")
                 .or_else(|| stripped.strip_suffix("/commit_pr"))
             {
+                if !is_valid_csrf(origin_header.as_deref(), port, has_pin_action_header) {
+                    send_forbidden(&mut stream);
+                    return;
+                }
                 let id = id_part.trim();
                 match snapshot.acp_manager.start_commit_pr_run(id) {
                     Ok(()) => {
@@ -1665,6 +1628,7 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                         if let Ok(mut cache_guard) = snapshot.git_cache.lock() {
                             *cache_guard = None;
                         }
+                        snapshot.git_generation.fetch_add(1, Ordering::Relaxed);
                         send_response(
                             &mut stream,
                             200,
@@ -1695,6 +1659,10 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
             }
 
             if let Some(id_part) = stripped.strip_suffix("/idea") {
+                if !is_valid_csrf(origin_header.as_deref(), port, has_pin_action_header) {
+                    send_forbidden(&mut stream);
+                    return;
+                }
                 let id = id_part.trim();
                 let mut body_bytes = vec![0u8; content_length];
                 if content_length > 0 && reader.read_exact(&mut body_bytes).is_err() {
@@ -1761,6 +1729,10 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                 .strip_suffix("/message")
                 .or_else(|| stripped.strip_suffix("/chat"))
             {
+                if !is_valid_csrf(origin_header.as_deref(), port, has_pin_action_header) {
+                    send_forbidden(&mut stream);
+                    return;
+                }
                 let id = id_part.trim();
                 let mut body_bytes = vec![0u8; content_length];
                 if content_length > 0 && reader.read_exact(&mut body_bytes).is_err() {
@@ -1780,13 +1752,13 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                 let payload: MessagePayload = match serde_json::from_slice(&body_bytes) {
                     Ok(p) => p,
                     Err(e) => {
-                        let msg = format!("{{\"error\":\"Invalid JSON: {e}\"}}");
+                        let msg = json_error_bytes(format!("Invalid JSON: {e}"));
                         send_response(
                             &mut stream,
                             400,
                             "Bad Request",
                             "application/json; charset=utf-8",
-                            msg.as_bytes(),
+                            &msg,
                             false,
                             true,
                             None,
@@ -1810,13 +1782,13 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                         return;
                     }
                     Err(err) => {
-                        let msg = format!("{{\"error\":\"{err}\"}}");
+                        let msg = json_error_bytes(err.to_string());
                         send_response(
                             &mut stream,
                             400,
                             "Bad Request",
                             "application/json; charset=utf-8",
-                            msg.as_bytes(),
+                            &msg,
                             false,
                             true,
                             None,
@@ -1827,6 +1799,10 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
             }
 
             if let Some(id_part) = stripped.strip_suffix("/finish") {
+                if !is_valid_csrf(origin_header.as_deref(), port, has_pin_action_header) {
+                    send_forbidden(&mut stream);
+                    return;
+                }
                 let id = id_part.trim();
                 match snapshot.acp_manager.finish_run(id) {
                     Ok(()) => {
@@ -1843,13 +1819,13 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                         return;
                     }
                     Err(err) => {
-                        let msg = format!("{{\"error\":\"{err}\"}}");
+                        let msg = json_error_bytes(err.to_string());
                         send_response(
                             &mut stream,
                             400,
                             "Bad Request",
                             "application/json; charset=utf-8",
-                            msg.as_bytes(),
+                            &msg,
                             false,
                             true,
                             None,
@@ -1860,6 +1836,10 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
             }
 
             if let Some(id_part) = stripped.strip_suffix("/cancel") {
+                if !is_valid_csrf(origin_header.as_deref(), port, has_pin_action_header) {
+                    send_forbidden(&mut stream);
+                    return;
+                }
                 let id = id_part.trim();
                 match snapshot.acp_manager.cancel_run(id) {
                     Ok(()) => {
@@ -1876,13 +1856,13 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                         );
                     }
                     Err(err) => {
-                        let msg = format!("{{\"error\":\"{err}\"}}");
+                        let msg = json_error_bytes(err.to_string());
                         send_response(
                             &mut stream,
                             400,
                             "Bad Request",
                             "application/json; charset=utf-8",
-                            msg.as_bytes(),
+                            &msg,
                             true,
                             true,
                             None,
@@ -1958,7 +1938,7 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                     "OK",
                     mime,
                     &bytes,
-                    false,
+                    true,
                     method == "GET",
                     None,
                 );
@@ -2104,10 +2084,36 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
     if let Some(stripped) = subpath.strip_prefix("items/") {
         if let Some(id_part) = stripped.strip_suffix("/log") {
             let id = id_part.trim();
+            if !crate::vault::validate_selector(id) {
+                send_response(
+                    &mut stream,
+                    400,
+                    "Bad Request",
+                    "text/plain; charset=utf-8",
+                    b"Invalid item selector",
+                    true,
+                    true,
+                    None,
+                );
+                return;
+            }
             let canonical_id = match crate::vault::resolve_selector(&snapshot.vault_path, id) {
                 Ok(f) => f.strip_suffix(".md").unwrap_or(&f).to_string(),
                 Err(_) => id.to_string(),
             };
+            if !crate::vault::validate_selector(&canonical_id) {
+                send_response(
+                    &mut stream,
+                    400,
+                    "Bad Request",
+                    "text/plain; charset=utf-8",
+                    b"Invalid item selector",
+                    true,
+                    true,
+                    None,
+                );
+                return;
+            }
             let log_path = snapshot
                 .vault_path
                 .join("runs")
@@ -2142,12 +2148,28 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
 
         if let Some(id) = stripped.strip_suffix("/stream") {
             let id = id.trim();
+            if !crate::vault::validate_selector(id) {
+                send_response(
+                    &mut stream,
+                    400,
+                    "Bad Request",
+                    "text/plain; charset=utf-8",
+                    b"Invalid item selector",
+                    true,
+                    true,
+                    None,
+                );
+                return;
+            }
             let _ = stream.set_read_timeout(None);
             let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(10)));
 
             let mut writer = BufWriter::new(stream);
-            let sse_headers = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\nAccess-Control-Allow-Origin: *\r\n\r\n";
+            let sse_headers = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\n\r\n";
             if writer.write_all(sse_headers.as_bytes()).is_err() || writer.flush().is_err() {
+                return;
+            }
+            if method == "HEAD" {
                 return;
             }
             let timing = snapshot.acp_manager.get_run_timing(id);
@@ -2162,26 +2184,18 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                 let _ = writer.write_all(frame.as_bytes());
             }
 
-            let buffered = snapshot.acp_manager.get_buffered_events(id);
-            let mut has_finished = false;
-            for event in &buffered {
-                if let Some(t) = event.get("type").and_then(|v| v.as_str()) {
-                    if t == "finished" || t == "error" {
-                        has_finished = true;
-                    }
-                }
-                let payload = serde_json::to_string(event).unwrap_or_default();
-                let frame = format!("data: {payload}\n\n");
-                if writer.write_all(frame.as_bytes()).is_err() {
-                    return;
-                }
-            }
+            let (event_count, has_finished, sub_rx) = match snapshot
+                .acp_manager
+                .stream_events_and_subscribe(id, &mut writer)
+            {
+                Ok(res) => res,
+                Err(_) => return,
+            };
             if writer.flush().is_err() {
                 return;
             }
 
-            let sub_rx = snapshot.acp_manager.subscribe(id);
-            if sub_rx.is_none() && !buffered.is_empty() {
+            if sub_rx.is_none() && event_count > 0 {
                 if !has_finished {
                     let finish_frame = serde_json::json!({
                         "type": "finished",
@@ -2196,11 +2210,27 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
             }
 
             if let Some(rx) = sub_rx {
-                while let Ok(event) = rx.recv() {
-                    let payload = serde_json::to_string(&event).unwrap_or_default();
-                    let frame = format!("data: {payload}\n\n");
-                    if writer.write_all(frame.as_bytes()).is_err() || writer.flush().is_err() {
-                        return;
+                loop {
+                    match rx.recv_timeout(std::time::Duration::from_secs(15)) {
+                        Ok(event) => {
+                            let payload = serde_json::to_string(&event).unwrap_or_default();
+                            let frame = format!("data: {payload}\n\n");
+                            if writer.write_all(frame.as_bytes()).is_err()
+                                || writer.flush().is_err()
+                            {
+                                return;
+                            }
+                        }
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                            if writer.write_all(b": keepalive\n\n").is_err()
+                                || writer.flush().is_err()
+                            {
+                                return;
+                            }
+                        }
+                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                            return;
+                        }
                     }
                 }
             }
@@ -2213,7 +2243,7 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
         let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(10)));
 
         let mut writer = BufWriter::new(stream);
-        let sse_headers = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\nAccess-Control-Allow-Origin: *\r\n\r\n";
+        let sse_headers = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\n\r\n";
         if writer.write_all(sse_headers.as_bytes()).is_err() || writer.flush().is_err() {
             return;
         }
@@ -2265,7 +2295,8 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
             })
             .unwrap_or(true);
 
-        let vault_etag = compute_vault_etag(&snapshot.vault_path);
+        let git_gen = snapshot.git_generation.load(Ordering::Relaxed);
+        let vault_etag = format!("{}-g{git_gen}", compute_vault_etag(&snapshot.vault_path));
 
         if !is_git_stale {
             if let Some(if_none) = &if_none_match {
@@ -2276,23 +2307,6 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
             }
         }
 
-        let git_statuses = if is_git_stale {
-            let resolver = crate::sync::GitStatusResolver::new(snapshot.repo_path.clone());
-            let fresh_map = collect_ideas(&snapshot.vault_path)
-                .map(|all_items| resolver.resolve_all(&all_items))
-                .unwrap_or_default();
-            if let Ok(mut cache_guard) = snapshot.git_cache.lock() {
-                *cache_guard = Some((Instant::now(), fresh_map.clone()));
-            }
-            fresh_map
-        } else {
-            snapshot
-                .git_cache
-                .lock()
-                .ok()
-                .and_then(|guard| guard.as_ref().map(|(_, map)| map.clone()))
-                .unwrap_or_default()
-        };
         let filter_project = if snapshot.scope_label == "all" {
             None
         } else {
@@ -2308,6 +2322,27 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
             ..Default::default()
         };
         let ideas = collect_ideas_with_filter(&snapshot.vault_path, &filter).unwrap_or_default();
+
+        let (git_statuses, response_etag) = if is_git_stale {
+            let resolver = crate::sync::GitStatusResolver::new(snapshot.repo_path.clone());
+            let fresh_map = resolver.resolve_all(&ideas);
+            let next_gen = snapshot.git_generation.fetch_add(1, Ordering::Relaxed) + 1;
+            if let Ok(mut cache_guard) = snapshot.git_cache.lock() {
+                *cache_guard = Some((Instant::now(), fresh_map.clone()));
+            }
+            (
+                fresh_map,
+                format!("{}-g{next_gen}", compute_vault_etag(&snapshot.vault_path)),
+            )
+        } else {
+            let cached = snapshot
+                .git_cache
+                .lock()
+                .ok()
+                .and_then(|guard| guard.as_ref().map(|(_, map)| map.clone()))
+                .unwrap_or_default();
+            (cached, vault_etag)
+        };
         let captured_at = Utc::now().to_rfc3339();
 
         let json_items: Vec<JsonIdeaOutput> = ideas
@@ -2368,7 +2403,7 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
             data_json.as_bytes(),
             true,
             method == "GET",
-            Some(&vault_etag),
+            Some(&response_etag),
         );
         return;
     }
@@ -2438,13 +2473,7 @@ pub fn serve_view(
     acp_actor: Option<String>,
     acp_model: Option<String>,
 ) -> io::Result<()> {
-    let repo_path = std::env::current_dir().unwrap_or_else(|_| {
-        snapshot
-            .vault_path
-            .parent()
-            .unwrap_or(&snapshot.vault_path)
-            .to_path_buf()
-    });
+    let repo_path = crate::acp::WorktreeManager::resolve_repo_path(&snapshot.vault_path);
     snapshot.repo_path = repo_path.clone();
     let runner = crate::acp::RunnerSettings::resolve(acp_command, acp_actor, acp_model);
     let acp_mgr = Arc::new(crate::acp::AcpManager::with_runner(
@@ -2514,6 +2543,7 @@ pub fn serve_view(
                     if let Ok(mut cache_guard) = watcher_snap.git_cache.lock() {
                         *cache_guard = None;
                     }
+                    watcher_snap.git_generation.fetch_add(1, Ordering::Relaxed);
                     b.broadcast(event);
                     b.broadcast(serde_json::json!({ "type": "git_updated" }));
                     b.broadcast(serde_json::json!({ "type": "vault_changed" }));
@@ -2826,5 +2856,110 @@ mod tests {
 
         assert!(response.starts_with("HTTP/1.1 307 Temporary Redirect\r\n"));
         assert!(response.contains(&format!("Location: /{token}/\r\n")));
+    }
+
+    #[test]
+    fn test_viewer_run_and_cancel_require_csrf() {
+        let dir = tempfile::tempdir().unwrap();
+        let snapshot = Arc::new(create_snapshot(
+            &[],
+            dir.path().to_path_buf(),
+            "test",
+            ArchiveFilter::Active,
+            None,
+            None,
+            None,
+            None,
+        ));
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let port = addr.port();
+        let token = snapshot.token.clone();
+
+        for suffix in ["run", "commit-pr", "idea", "message", "finish", "cancel"] {
+            let snap_clone = Arc::clone(&snapshot);
+            let listener_clone = listener.try_clone().unwrap();
+            let handle = std::thread::spawn(move || {
+                if let Ok((stream, _)) = listener_clone.accept() {
+                    handle_client(stream, &snap_clone, port);
+                }
+            });
+            let mut client = std::net::TcpStream::connect(addr).unwrap();
+            use std::io::{Read, Write};
+            let req = format!(
+                "POST /{token}/items/0123456789ab/{suffix} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Length: 2\r\n\r\n{{}}"
+            );
+            client.write_all(req.as_bytes()).unwrap();
+            let mut response = String::new();
+            client.read_to_string(&mut response).unwrap();
+            handle.join().unwrap();
+            assert!(
+                response.starts_with("HTTP/1.1 403 Forbidden\r\n"),
+                "expected 403 for /{suffix} without CSRF headers, got: {response}"
+            );
+        }
+
+        let encoded = json_error_bytes("bad \"quote\" and\nnewline");
+        let parsed: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(parsed["error"], "bad \"quote\" and\nnewline");
+    }
+
+    #[test]
+    fn test_viewer_rejects_log_path_traversal_and_handles_stream_head() {
+        let dir = tempfile::tempdir().unwrap();
+        let snapshot = Arc::new(create_snapshot(
+            &[],
+            dir.path().to_path_buf(),
+            "test",
+            ArchiveFilter::Active,
+            None,
+            None,
+            None,
+            None,
+        ));
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let port = addr.port();
+        let token = snapshot.token.clone();
+
+        // Path traversal attempt on /log must return 400
+        let snap1 = Arc::clone(&snapshot);
+        let l1 = listener.try_clone().unwrap();
+        let h1 = std::thread::spawn(move || {
+            if let Ok((stream, _)) = l1.accept() {
+                handle_client(stream, &snap1, port);
+            }
+        });
+        let mut c1 = std::net::TcpStream::connect(addr).unwrap();
+        use std::io::{Read, Write};
+        let req1 =
+            format!("GET /{token}/items/../../etc/passwd/log HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        c1.write_all(req1.as_bytes()).unwrap();
+        let mut resp1 = String::new();
+        c1.read_to_string(&mut resp1).unwrap();
+        h1.join().unwrap();
+        assert!(
+            resp1.starts_with("HTTP/1.1 400 Bad Request\r\n"),
+            "got: {resp1}"
+        );
+
+        // HEAD /items/{id}/stream returns headers only and terminates immediately
+        let snap2 = Arc::clone(&snapshot);
+        let l2 = listener.try_clone().unwrap();
+        let h2 = std::thread::spawn(move || {
+            if let Ok((stream, _)) = l2.accept() {
+                handle_client(stream, &snap2, port);
+            }
+        });
+        let mut c2 = std::net::TcpStream::connect(addr).unwrap();
+        let req2 =
+            format!("HEAD /{token}/items/0123456789ab/stream HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        c2.write_all(req2.as_bytes()).unwrap();
+        let mut resp2 = String::new();
+        c2.read_to_string(&mut resp2).unwrap();
+        h2.join().unwrap();
+        assert!(resp2.starts_with("HTTP/1.1 200 OK\r\n"), "got: {resp2}");
+        assert!(resp2.contains("Content-Type: text/event-stream"));
+        assert!(!resp2.contains("Access-Control-Allow-Origin: *"));
     }
 }

@@ -81,6 +81,40 @@ impl WorktreeManager {
         None
     }
 
+    /// Resolves the repository root for a vault, preferring the vault's own git
+    /// checkout and otherwise resolving the current working directory's git root.
+    pub fn resolve_repo_path(vault_path: &Path) -> PathBuf {
+        Self::repo_root(vault_path)
+            .or_else(|| {
+                std::env::current_dir()
+                    .ok()
+                    .and_then(|cwd| Self::repo_root(&cwd).or(Some(cwd)))
+            })
+            .unwrap_or_else(|| vault_path.parent().unwrap_or(vault_path).to_path_buf())
+    }
+
+    fn git_exclude_path(repo_path: &Path) -> PathBuf {
+        if let Ok(out) = Command::new("git")
+            .arg("-C")
+            .arg(repo_path)
+            .args(["rev-parse", "--git-path", "info/exclude"])
+            .output()
+        {
+            if out.status.success() {
+                let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if !raw.is_empty() {
+                    let path = PathBuf::from(raw);
+                    return if path.is_absolute() {
+                        path
+                    } else {
+                        repo_path.join(path)
+                    };
+                }
+            }
+        }
+        repo_path.join(".git").join("info").join("exclude")
+    }
+
     /// Attempts to fetch the remote origin tracking refs quietly to ensure
     /// remote branches are up to date before resolving default branch.
     #[allow(dead_code)]
@@ -187,7 +221,7 @@ impl WorktreeManager {
             fs::create_dir_all(&worktrees_dir)?;
         }
         // Ensure .pin_worktrees is excluded in git info exclude if present
-        let exclude_path = repo_path.join(".git").join("info").join("exclude");
+        let exclude_path = Self::git_exclude_path(repo_path);
         if exclude_path.exists() {
             if let Ok(content) = fs::read_to_string(&exclude_path) {
                 if !content.contains(".pin_worktrees") {
@@ -316,6 +350,16 @@ impl WorktreeManager {
             .arg(repo_path)
             .args(["worktree", "prune"])
             .output();
+
+        let worktrees_dir = Self::worktrees_root(repo_path);
+        if worktrees_dir.exists() {
+            let is_empty = fs::read_dir(&worktrees_dir)
+                .map(|mut entries| entries.next().is_none())
+                .unwrap_or(false);
+            if is_empty {
+                let _ = fs::remove_dir(&worktrees_dir);
+            }
+        }
 
         Ok(())
     }
@@ -453,6 +497,61 @@ mod tests {
         assert_eq!(
             WorktreeManager::worktree_path(repo, "task99"),
             repo.join(".pin_worktrees").join("task99")
+        );
+    }
+
+    #[test]
+    fn test_remove_worktree_prunes_empty_root_and_exclude_works_in_linked_wt() {
+        let dir = tempdir().unwrap();
+        let repo = dir.path().join("repo");
+        fs::create_dir_all(&repo).unwrap();
+
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["init", "-b", "main"])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["config", "user.name", "Test"])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["config", "user.email", "test@test.com"])
+            .output()
+            .unwrap();
+        fs::write(repo.join("README.md"), "# test").unwrap();
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["add", "."])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["commit", "-m", "init"])
+            .output()
+            .unwrap();
+
+        let wt = WorktreeManager::provision_worktree(&repo, "wtprune1").unwrap();
+        assert!(wt.exists());
+        // Linked worktree has a `.git` file, not directory; git_exclude_path must still find info/exclude
+        let exclude = WorktreeManager::git_exclude_path(&wt);
+        assert!(
+            exclude.exists(),
+            "exclude path should resolve from linked worktree"
+        );
+
+        WorktreeManager::remove_worktree(&repo, "wtprune1").unwrap();
+        assert!(!wt.exists());
+        assert!(
+            !WorktreeManager::worktrees_root(&repo).exists(),
+            "empty .pin_worktrees directory should be removed"
         );
     }
 }

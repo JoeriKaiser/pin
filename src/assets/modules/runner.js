@@ -202,7 +202,7 @@ export function loadRunnerSettings() {
     })
     .catch(function (err) {
       state.runner.error = err.message || 'Runner settings unavailable';
-      showToast(state.runner.error);
+      showToast(state.runner.error, true);
       renderRunner();
       return null;
     });
