@@ -2179,26 +2179,18 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                 let _ = writer.write_all(frame.as_bytes());
             }
 
-            let buffered = snapshot.acp_manager.get_buffered_events(id);
-            let mut has_finished = false;
-            for event in &buffered {
-                if let Some(t) = event.get("type").and_then(|v| v.as_str()) {
-                    if t == "finished" || t == "error" {
-                        has_finished = true;
-                    }
-                }
-                let payload = serde_json::to_string(event).unwrap_or_default();
-                let frame = format!("data: {payload}\n\n");
-                if writer.write_all(frame.as_bytes()).is_err() {
-                    return;
-                }
-            }
+            let (event_count, has_finished, sub_rx) = match snapshot
+                .acp_manager
+                .stream_events_and_subscribe(id, &mut writer)
+            {
+                Ok(res) => res,
+                Err(_) => return,
+            };
             if writer.flush().is_err() {
                 return;
             }
 
-            let sub_rx = snapshot.acp_manager.subscribe(id);
-            if sub_rx.is_none() && !buffered.is_empty() {
+            if sub_rx.is_none() && event_count > 0 {
                 if !has_finished {
                     let finish_frame = serde_json::json!({
                         "type": "finished",

@@ -411,6 +411,26 @@ impl AcpManager {
         }
     }
 
+    fn resolve_transcript_path(&self, item_id: &str) -> Option<PathBuf> {
+        let canonical_id = match crate::vault::resolve_selector(&self.vault_path, item_id) {
+            Ok(f) => f.strip_suffix(".md").unwrap_or(&f).to_string(),
+            Err(_) if crate::vault::validate_selector(item_id) => item_id.to_string(),
+            Err(_) => return None,
+        };
+        if !crate::vault::validate_selector(&canonical_id) {
+            return None;
+        }
+        let disk_path = self
+            .vault_path
+            .join("runs")
+            .join(format!("{canonical_id}.events.jsonl"));
+        if disk_path.is_file() {
+            Some(disk_path)
+        } else {
+            None
+        }
+    }
+
     pub fn get_run_timing(&self, item_id: &str) -> Option<(i64, Option<i64>)> {
         if let Ok(runs) = self.active_runs.lock() {
             if let Some(key) = resolve_run_key(&runs, item_id) {
@@ -429,44 +449,104 @@ impl AcpManager {
                 }
             }
         }
-        let canonical_id = match crate::vault::resolve_selector(&self.vault_path, item_id) {
-            Ok(f) => f.strip_suffix(".md").unwrap_or(&f).to_string(),
-            Err(_) if crate::vault::validate_selector(item_id) => item_id.to_string(),
-            Err(_) => return None,
-        };
-        if !crate::vault::validate_selector(&canonical_id) {
-            return None;
-        }
-        let disk_path = self
-            .vault_path
-            .join("runs")
-            .join(format!("{canonical_id}.events.jsonl"));
-        if disk_path.is_file() {
-            if let Ok(file) = std::fs::File::open(&disk_path) {
-                use std::io::BufRead;
-                let reader = std::io::BufReader::new(file);
-                let mut first_started: Option<i64> = None;
-                let mut last_finished: Option<i64> = None;
-                for line in reader.lines().map_while(Result::ok) {
-                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) {
-                        if first_started.is_none() {
-                            if let Some(st) = val.get("startedAt").and_then(|v| v.as_i64()) {
-                                first_started = Some(st);
-                            }
-                        }
-                        if let Some(ft) = val.get("finishedAt").and_then(|v| v.as_i64()) {
-                            last_finished = Some(ft);
-                        }
-                    }
-                }
-                if let Some(st) = first_started {
-                    return Some((st, last_finished));
-                }
-            }
-        }
-        None
+        let disk_path = self.resolve_transcript_path(item_id)?;
+        read_latest_timing_from_transcript(&disk_path)
     }
 
+    /// Streams buffered/persisted SSE frames directly to `writer` and atomically
+    /// subscribes to live updates when the item has an active run, closing the
+    /// replay-to-live gap and avoiding loading large append-only transcripts into memory.
+    pub fn stream_events_and_subscribe<W: std::io::Write>(
+        &self,
+        item_id: &str,
+        writer: &mut W,
+    ) -> std::io::Result<(usize, bool, Option<Receiver<serde_json::Value>>)> {
+        // 1. Active run: snapshot buffer and subscribe atomically before releasing locks.
+        let active_snapshot = if let Ok(runs) = self.active_runs.lock() {
+            if let Some(key) = resolve_run_key(&runs, item_id) {
+                if let Some(run) = runs.get(&key) {
+                    let buffered = run
+                        .event_buffer
+                        .lock()
+                        .map(|buf| buf.clone())
+                        .unwrap_or_default();
+                    let (tx, rx) = mpsc::channel();
+                    if let Ok(mut subs) = run.subscribers.lock() {
+                        subs.push(tx);
+                    }
+                    Some((buffered, rx))
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        if let Some((buffered, rx)) = active_snapshot {
+            let (count, has_finished) = write_value_events_as_sse(&buffered, writer)?;
+            return Ok((count, has_finished, Some(rx)));
+        }
+
+        // 2. Recently completed run in memory.
+        let completed_snapshot = if let Ok(comp) = self.completed_runs.lock() {
+            comp.iter()
+                .rev()
+                .find(|run| {
+                    run.item_id == item_id
+                        || run.item_id.starts_with(item_id)
+                        || item_id.starts_with(&run.item_id)
+                })
+                .map(|run| run.events.clone())
+        } else {
+            None
+        };
+
+        if let Some(events) = completed_snapshot {
+            let (count, has_finished) = write_value_events_as_sse(&events, writer)?;
+            return Ok((count, has_finished, None));
+        }
+
+        // 3. Append-only transcript on disk: stream line-by-line without DOM parsing.
+        if let Some(disk_path) = self.resolve_transcript_path(item_id) {
+            if let Ok(file) = std::fs::File::open(&disk_path) {
+                use std::io::BufRead;
+                let mut reader = std::io::BufReader::new(file);
+                let mut line = String::new();
+                let mut count = 0usize;
+                let mut has_finished = false;
+                loop {
+                    line.clear();
+                    let n = reader.read_line(&mut line)?;
+                    if n == 0 {
+                        break;
+                    }
+                    let trimmed = line.trim();
+                    if !trimmed.starts_with('{') || !trimmed.ends_with('}') {
+                        continue;
+                    }
+                    if trimmed.contains("\"type\":\"finished\"")
+                        || trimmed.contains("\"type\": \"finished\"")
+                        || trimmed.contains("\"type\":\"error\"")
+                        || trimmed.contains("\"type\": \"error\"")
+                    {
+                        has_finished = true;
+                    }
+                    writer.write_all(b"data: ")?;
+                    writer.write_all(trimmed.as_bytes())?;
+                    writer.write_all(b"\n\n")?;
+                    count += 1;
+                }
+                return Ok((count, has_finished, None));
+            }
+        }
+
+        Ok((0, false, None))
+    }
+
+    #[allow(dead_code)]
     pub fn get_buffered_events(&self, item_id: &str) -> Vec<serde_json::Value> {
         if let Ok(runs) = self.active_runs.lock() {
             if let Some(key) = resolve_run_key(&runs, item_id) {
@@ -489,36 +569,26 @@ impl AcpManager {
                 }
             }
         }
-        let canonical_id = match crate::vault::resolve_selector(&self.vault_path, item_id) {
-            Ok(f) => f.strip_suffix(".md").unwrap_or(&f).to_string(),
-            Err(_) if crate::vault::validate_selector(item_id) => item_id.to_string(),
-            Err(_) => return Vec::new(),
-        };
-        if !crate::vault::validate_selector(&canonical_id) {
+        let Some(disk_path) = self.resolve_transcript_path(item_id) else {
             return Vec::new();
-        }
-        let disk_path = self
-            .vault_path
-            .join("runs")
-            .join(format!("{canonical_id}.events.jsonl"));
-        if disk_path.is_file() {
-            if let Ok(file) = std::fs::File::open(&disk_path) {
-                use std::io::BufRead;
-                let reader = std::io::BufReader::new(file);
-                let mut events = Vec::new();
-                for line in reader.lines().map_while(Result::ok) {
-                    if let Ok(val) = serde_json::from_str(&line) {
-                        events.push(val);
-                    }
+        };
+        if let Ok(file) = std::fs::File::open(&disk_path) {
+            use std::io::BufRead;
+            let reader = std::io::BufReader::new(file);
+            let mut events = Vec::new();
+            for line in reader.lines().map_while(Result::ok) {
+                if let Ok(val) = serde_json::from_str(&line) {
+                    events.push(val);
                 }
-                if !events.is_empty() {
-                    return events;
-                }
+            }
+            if !events.is_empty() {
+                return events;
             }
         }
         Vec::new()
     }
 
+    #[allow(dead_code)]
     pub fn subscribe(&self, item_id: &str) -> Option<Receiver<serde_json::Value>> {
         let runs = self.active_runs.lock().ok()?;
         let key = resolve_run_key(&runs, item_id)?;
@@ -1355,6 +1425,81 @@ fn resolve_run_key(runs: &HashMap<String, ActiveRun>, id: &str) -> Option<String
     }
     None
 }
+fn write_value_events_as_sse<W: std::io::Write>(
+    events: &[serde_json::Value],
+    writer: &mut W,
+) -> std::io::Result<(usize, bool)> {
+    let mut has_finished = false;
+    for event in events {
+        if let Some(t) = event.get("type").and_then(|v| v.as_str()) {
+            if t == "finished" || t == "error" {
+                has_finished = true;
+            }
+        }
+        let payload = serde_json::to_string(event).unwrap_or_default();
+        writer.write_all(b"data: ")?;
+        writer.write_all(payload.as_bytes())?;
+        writer.write_all(b"\n\n")?;
+    }
+    Ok((events.len(), has_finished))
+}
+
+fn read_latest_timing_from_transcript(path: &Path) -> Option<(i64, Option<i64>)> {
+    use std::io::{BufRead, Read, Seek, SeekFrom};
+
+    let mut file = std::fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+
+    // Fast path: terminal events carrying startedAt/finishedAt sit at the end
+    // of the append-only transcript, so inspect a 64 KiB tail window first.
+    const TAIL_BYTES: u64 = 64 * 1024;
+    let start = len.saturating_sub(TAIL_BYTES);
+    if file.seek(SeekFrom::Start(start)).is_ok() {
+        let mut tail = Vec::new();
+        if file.read_to_end(&mut tail).is_ok() {
+            let text = String::from_utf8_lossy(&tail);
+            let lines: Vec<&str> = text.lines().collect();
+            let skip_first = usize::from(start > 0 && lines.len() > 1);
+            for line in lines[skip_first..].iter().rev() {
+                if !line.contains("\"startedAt\"") {
+                    continue;
+                }
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
+                    if let Some(st) = val.get("startedAt").and_then(|v| v.as_i64()) {
+                        let ft = val.get("finishedAt").and_then(|v| v.as_i64());
+                        return Some((st, ft));
+                    }
+                }
+            }
+        }
+    }
+
+    if start == 0 {
+        return None;
+    }
+
+    // Fallback when no timing line appeared in the tail window: stream forward
+    // and only parse lines mentioning startedAt or finishedAt.
+    file.seek(SeekFrom::Start(0)).ok()?;
+    let reader = std::io::BufReader::new(file);
+    let mut latest_started: Option<i64> = None;
+    let mut latest_finished: Option<i64> = None;
+    for line in reader.lines().map_while(Result::ok) {
+        if !line.contains("\"startedAt\"") && !line.contains("\"finishedAt\"") {
+            continue;
+        }
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) {
+            if let Some(st) = val.get("startedAt").and_then(|v| v.as_i64()) {
+                latest_started = Some(st);
+                latest_finished = val.get("finishedAt").and_then(|v| v.as_i64());
+            } else if let Some(ft) = val.get("finishedAt").and_then(|v| v.as_i64()) {
+                latest_finished = Some(ft);
+            }
+        }
+    }
+    latest_started.map(|st| (st, latest_finished))
+}
+
 fn push_event(
     event_buffer: &Arc<Mutex<Vec<serde_json::Value>>>,
     subscribers: &Arc<Mutex<Vec<Sender<serde_json::Value>>>>,
@@ -2031,5 +2176,47 @@ mod tests {
         let (summary, evidence) = extract_summary_and_evidence(&events);
         assert_eq!(summary, "Fixed encoding.");
         assert_eq!(evidence, "cargo test passed.");
+    }
+
+    #[test]
+    fn test_stream_events_and_tail_timing_from_append_only_transcript() {
+        let vault_dir = tempfile::tempdir().unwrap();
+        let repo_dir = tempfile::tempdir().unwrap();
+        let runs_dir = vault_dir.path().join("runs");
+        fs::create_dir_all(&runs_dir).unwrap();
+
+        let item_id = "stream012345";
+        let transcript = runs_dir.join(format!("{item_id}.events.jsonl"));
+        let mut content = String::new();
+        // Earlier run followed by >70 KiB of streamed chunks, then a newer run's terminal event
+        content.push_str("{\"type\":\"finished\",\"startedAt\":1000,\"finishedAt\":1050}\n");
+        for i in 0..800 {
+            content.push_str(&format!(
+                "{{\"type\":\"session/update\",\"chunk\":{i},\"pad\":\"{}\"}}\n",
+                "x".repeat(90)
+            ));
+        }
+        content.push_str("{\"type\":\"finished\",\"startedAt\":2000,\"finishedAt\":2120}\n");
+        fs::write(&transcript, &content).unwrap();
+
+        let mgr = AcpManager::new(
+            vault_dir.path().to_path_buf(),
+            repo_dir.path().to_path_buf(),
+            None,
+        );
+
+        // Tail reader must return the latest run's timestamps rather than mixing run 1 and run 2
+        assert_eq!(mgr.get_run_timing(item_id), Some((2000, Some(2120))));
+
+        // Streaming replay emits every JSONL event as an SSE data frame without modifying the file
+        let mut out = Vec::new();
+        let (count, has_finished, sub) =
+            mgr.stream_events_and_subscribe(item_id, &mut out).unwrap();
+        assert_eq!(count, 802);
+        assert!(has_finished);
+        assert!(sub.is_none());
+        let sse = String::from_utf8(out).unwrap();
+        assert!(sse
+            .contains("data: {\"type\":\"finished\",\"startedAt\":2000,\"finishedAt\":2120}\n\n"));
     }
 }
