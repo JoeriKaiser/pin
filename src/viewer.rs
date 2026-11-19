@@ -202,8 +202,7 @@ pub fn create_snapshot(
     filter_type: Option<WorkType>,
 ) -> ViewSnapshot {
     let token = generate_token();
-    let repo_path = std::env::current_dir()
-        .unwrap_or_else(|_| vault_path.parent().unwrap_or(&vault_path).to_path_buf());
+    let repo_path = crate::acp::WorktreeManager::resolve_repo_path(&vault_path);
     let acp_manager = Arc::new(crate::acp::AcpManager::new(
         vault_path.clone(),
         repo_path.clone(),
@@ -2438,13 +2437,7 @@ pub fn serve_view(
     acp_actor: Option<String>,
     acp_model: Option<String>,
 ) -> io::Result<()> {
-    let repo_path = std::env::current_dir().unwrap_or_else(|_| {
-        snapshot
-            .vault_path
-            .parent()
-            .unwrap_or(&snapshot.vault_path)
-            .to_path_buf()
-    });
+    let repo_path = crate::acp::WorktreeManager::resolve_repo_path(&snapshot.vault_path);
     snapshot.repo_path = repo_path.clone();
     let runner = crate::acp::RunnerSettings::resolve(acp_command, acp_actor, acp_model);
     let acp_mgr = Arc::new(crate::acp::AcpManager::with_runner(

@@ -85,9 +85,7 @@ pub fn transition(args: &[String], command: &str, vault_path: &Path) -> CliResul
     ) {
         Ok(meta) => {
             let worktree_path = if worktree {
-                let repo_path = crate::acp::WorktreeManager::repo_root(vault_path)
-                    .or_else(|| std::env::current_dir().ok())
-                    .unwrap_or_else(|| vault_path.parent().unwrap_or(vault_path).to_path_buf());
+                let repo_path = crate::acp::WorktreeManager::resolve_repo_path(vault_path);
                 let wt = crate::acp::WorktreeManager::provision_worktree(&repo_path, &meta.id)
                     .map_err(|e| CliError::usage(format!("Failed to provision worktree: {e}")))?;
                 Some(wt)
@@ -146,9 +144,7 @@ pub fn claim(args: &[String], command: &str, vault_path: &Path) -> CliResult<()>
     ) {
         Ok(meta) => {
             let worktree_path = if worktree {
-                let repo_path = crate::acp::WorktreeManager::repo_root(vault_path)
-                    .or_else(|| std::env::current_dir().ok())
-                    .unwrap_or_else(|| vault_path.parent().unwrap_or(vault_path).to_path_buf());
+                let repo_path = crate::acp::WorktreeManager::resolve_repo_path(vault_path);
                 let wt = crate::acp::WorktreeManager::provision_worktree(&repo_path, &meta.id)
                     .map_err(|e| CliError::usage(format!("Failed to provision worktree: {e}")))?;
                 Some(wt)

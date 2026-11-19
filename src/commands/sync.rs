@@ -1,9 +1,8 @@
 use crate::acp::WorktreeManager;
-use crate::cli::{ArgReader, CliError, CliResult};
+use crate::cli::{resolve_actor, ArgReader, CliError, CliResult};
 use crate::model::OutputFormat;
 use crate::output::default_format;
 use crate::sync::reconcile_and_sync;
-use std::env;
 use std::path::Path;
 
 pub fn sync(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> {
@@ -34,11 +33,8 @@ pub fn sync(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> 
         reader.idx += 1;
     }
 
-    let repo_path = WorktreeManager::repo_root(vault_path)
-        .or_else(|| env::current_dir().ok())
-        .unwrap_or_else(|| vault_path.parent().unwrap_or(vault_path).to_path_buf());
-
-    let actor = env::var("PIN_ACTOR").ok();
+    let repo_path = WorktreeManager::resolve_repo_path(vault_path);
+    let actor = resolve_actor(None);
     let filter_project = project.as_deref();
     let target_id = selector.as_deref();
 
@@ -49,7 +45,7 @@ pub fn sync(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> 
         target_id,
         dry_run,
         force,
-        actor.as_deref(),
+        Some(&actor),
     )
     .map_err(|e| CliError::usage(e.to_string()))?;
 
