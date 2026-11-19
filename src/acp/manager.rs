@@ -586,37 +586,16 @@ impl AcpManager {
         // run uses the same command, actor, and model.
         let runner = self.runner_settings();
 
-        // Determine working directory
-        let (work_dir, worktree_path, is_primary) = match mode {
-            RunMode::Implement { use_worktree } | RunMode::Idea { use_worktree } => {
-                if use_worktree {
-                    let wt = WorktreeManager::provision_worktree(&self.repo_path, item_id)
-                        .map_err(|e| AcpManagerError::Worktree(e.to_string()))?;
-                    (wt.clone(), Some(wt), false)
-                } else {
-                    (self.repo_path.clone(), None, true)
-                }
-            }
+        let will_use_primary = match mode {
+            RunMode::Implement { use_worktree } | RunMode::Idea { use_worktree } => !use_worktree,
             RunMode::CommitPr => {
-                let expected_wt = WorktreeManager::worktree_path(&self.repo_path, item_id);
-                if expected_wt.exists() {
-                    (expected_wt.clone(), Some(expected_wt), false)
-                } else if WorktreeManager::is_git_repo(&self.repo_path) {
-                    match WorktreeManager::provision_worktree(&self.repo_path, item_id) {
-                        Ok(wt) => (wt.clone(), Some(wt), false),
-                        Err(_) => (self.repo_path.clone(), None, true),
-                    }
-                } else {
-                    (self.repo_path.clone(), None, true)
-                }
+                !WorktreeManager::worktree_path(&self.repo_path, &canonical_id).exists()
+                    && !WorktreeManager::is_git_repo(&self.repo_path)
             }
         };
-        let is_new_worktree = matches!(
-            mode,
-            RunMode::Implement { use_worktree: true } | RunMode::Idea { use_worktree: true }
-        );
 
-        // 1. Reject if canonical_id or item_id is already running
+        // 1. Reject if canonical_id is already running or primary checkout is busy
+        //    before creating any worktree on disk.
         {
             let runs = self
                 .active_runs
@@ -626,30 +605,66 @@ impl AcpManager {
                 return Err(AcpManagerError::AlreadyRunning(canonical_id));
             }
 
-            // 2. If primary checkout is used and busy, return PrimaryBusy
-            if is_primary {
+            if will_use_primary {
                 if let Some(busy_run) = runs.values().find(|r| r.is_primary_worktree) {
                     return Err(AcpManagerError::PrimaryBusy(busy_run.item_id.clone()));
                 }
             }
         }
 
-        // Attribute the item in the vault to this run
-        match mode {
-            RunMode::Implement { .. } | RunMode::Idea { .. } => {
-                if let Err(e) =
-                    crate::workflow::begin_agent_run(&self.vault_path, &filename, &runner.actor)
-                {
-                    return Err(AcpManagerError::Workflow(e.to_string()));
+        // Determine working directory using canonical_id so short prefixes match logs/worktrees.
+        let expected_wt = WorktreeManager::worktree_path(&self.repo_path, &canonical_id);
+        let wt_existed_before = expected_wt.exists();
+        let (work_dir, worktree_path, is_primary) = match mode {
+            RunMode::Implement { use_worktree } | RunMode::Idea { use_worktree } => {
+                if use_worktree {
+                    let wt = WorktreeManager::provision_worktree(&self.repo_path, &canonical_id)
+                        .map_err(|e| AcpManagerError::Worktree(e.to_string()))?;
+                    (wt.clone(), Some(wt), false)
+                } else {
+                    (self.repo_path.clone(), None, true)
                 }
             }
             RunMode::CommitPr => {
-                if let Err(e) =
-                    crate::workflow::begin_commit_pr_run(&self.vault_path, &filename, &runner.actor)
-                {
-                    return Err(AcpManagerError::Workflow(e.to_string()));
+                if wt_existed_before {
+                    (expected_wt.clone(), Some(expected_wt), false)
+                } else if WorktreeManager::is_git_repo(&self.repo_path) {
+                    match WorktreeManager::provision_worktree(&self.repo_path, &canonical_id) {
+                        Ok(wt) => (wt.clone(), Some(wt), false),
+                        Err(_) => (self.repo_path.clone(), None, true),
+                    }
+                } else {
+                    (self.repo_path.clone(), None, true)
                 }
             }
+        };
+        let is_new_worktree = worktree_path.is_some() && !wt_existed_before;
+
+        // If CommitPr fell back to primary checkout, ensure primary is still free.
+        if is_primary && !will_use_primary {
+            let runs = self
+                .active_runs
+                .lock()
+                .map_err(|_| AcpManagerError::Io("Lock poisoned on active_runs".to_string()))?;
+            if let Some(busy_run) = runs.values().find(|r| r.is_primary_worktree) {
+                return Err(AcpManagerError::PrimaryBusy(busy_run.item_id.clone()));
+            }
+        }
+
+        // Attribute the item in the vault to this run
+        let begin_result = match mode {
+            RunMode::Implement { .. } | RunMode::Idea { .. } => {
+                crate::workflow::begin_agent_run(&self.vault_path, &filename, &runner.actor)
+            }
+            RunMode::CommitPr => {
+                crate::workflow::begin_commit_pr_run(&self.vault_path, &filename, &runner.actor)
+            }
+        };
+        if let Err(e) = begin_result {
+            if is_new_worktree {
+                let _ = WorktreeManager::remove_worktree(&self.repo_path, &canonical_id);
+            }
+            return Err(AcpManagerError::Workflow(e.to_string()));
         }
 
         // 6. Read item content from vault to build prompt
@@ -665,7 +680,7 @@ impl AcpManager {
                     None,
                 );
                 if is_new_worktree {
-                    let _ = WorktreeManager::remove_worktree(&self.repo_path, item_id);
+                    let _ = WorktreeManager::remove_worktree(&self.repo_path, &canonical_id);
                 }
                 return Err(AcpManagerError::Io(format!(
                     "Failed to read item file {}: {e}",
@@ -714,7 +729,7 @@ impl AcpManager {
         let prompt_text = match mode {
             RunMode::Implement { .. } => build_session_prompt(
                 title,
-                &item_id,
+                &canonical_id,
                 &kind.to_string(),
                 priority,
                 acceptance_criteria.as_deref(),
@@ -722,7 +737,7 @@ impl AcpManager {
             ),
             RunMode::CommitPr => build_commit_pr_prompt(
                 title,
-                &item_id,
+                &canonical_id,
                 &kind.to_string(),
                 priority,
                 acceptance_criteria.as_deref(),
@@ -730,7 +745,7 @@ impl AcpManager {
             ),
             RunMode::Idea { .. } => build_idea_prompt(
                 title,
-                item_id,
+                &canonical_id,
                 kind,
                 priority,
                 acceptance_criteria.as_deref(),
@@ -738,7 +753,7 @@ impl AcpManager {
             ),
         };
 
-        // 7. Prepare log path: self.vault_path.join("runs").join(format!("{item_id}.log"))
+        // 7. Prepare log path: self.vault_path.join("runs").join(format!("{canonical_id}.log"))
         let log_dir = self.vault_path.join("runs");
         if let Err(e) = fs::create_dir_all(&log_dir) {
             let _ = crate::workflow::release_item(
@@ -749,11 +764,11 @@ impl AcpManager {
                 None,
             );
             if is_new_worktree {
-                let _ = WorktreeManager::remove_worktree(&self.repo_path, item_id);
+                let _ = WorktreeManager::remove_worktree(&self.repo_path, &canonical_id);
             }
             return Err(AcpManagerError::Io(e.to_string()));
         }
-        let log_path = log_dir.join(format!("{item_id}.log"));
+        let log_path = log_dir.join(format!("{canonical_id}.log"));
 
         // Spawn ACP client
         let client = match AcpClient::spawn(&runner.command, &work_dir, &log_path) {
@@ -767,7 +782,7 @@ impl AcpManager {
                     None,
                 );
                 if is_new_worktree {
-                    let _ = WorktreeManager::remove_worktree(&self.repo_path, item_id);
+                    let _ = WorktreeManager::remove_worktree(&self.repo_path, &canonical_id);
                 }
                 return Err(AcpManagerError::Client(e.to_string()));
             }
@@ -958,6 +973,10 @@ impl AcpManager {
                             Some(&disk_events_path),
                             waiting_event,
                         );
+                    }
+
+                    if worker_cancel.load(Ordering::SeqCst) {
+                        return Err("Run cancelled by user".to_string());
                     }
 
                     return Ok(last_stop_reason);
@@ -1405,7 +1424,7 @@ fn extract_text_from_value(val: &serde_json::Value, out: &mut Vec<String>) {
 
 fn clean_header_prefix(text: &str, prefixes: &[&str]) -> String {
     let mut trimmed = text.trim();
-    let lower = trimmed.to_lowercase();
+    let lower = trimmed.to_ascii_lowercase();
     for prefix in prefixes {
         if lower.starts_with(prefix) {
             trimmed = trimmed[prefix.len()..].trim();
@@ -1471,7 +1490,7 @@ fn extract_summary_and_evidence(events: &[serde_json::Value]) -> (String, String
         return (DEFAULT_SUMMARY.to_string(), DEFAULT_EVIDENCE.to_string());
     }
 
-    let lower = full_text.to_lowercase();
+    let lower = full_text.to_ascii_lowercase();
 
     let summary_start = lower
         .find("## summary")
@@ -1551,7 +1570,7 @@ fn extract_summary_and_evidence(events: &[serde_json::Value]) -> (String, String
 }
 
 fn extract_acceptance_criteria_from_body(body: &str) -> Option<String> {
-    let lower = body.to_lowercase();
+    let lower = body.to_ascii_lowercase();
     let keywords = [
         "## acceptance criteria",
         "### acceptance criteria",
@@ -1988,5 +2007,29 @@ mod tests {
         assert!(mgr
             .update_runner_settings(None, Some("".to_string()), None)
             .is_err());
+    }
+
+    #[test]
+    fn test_extract_handles_multibyte_case_expanding_utf8() {
+        // Turkish capital I with dot (\u{0130}) expands from 2 bytes to 3 bytes
+        // under Unicode to_lowercase(), which previously panicked when slicing.
+        let body = "\u{0130}stanbul note\n\n## Acceptance Criteria\n- [ ] Works cleanly\n";
+        let criteria = extract_acceptance_criteria_from_body(body).unwrap();
+        assert_eq!(criteria, "- [ ] Works cleanly");
+
+        let events = vec![serde_json::json!({
+            "params": {
+                "update": {
+                    "sessionUpdate": "agent_message_chunk",
+                    "content": {
+                        "type": "text",
+                        "text": "\u{0130}\u{0130}\n## Summary\nFixed encoding.\n## Verification\ncargo test passed."
+                    }
+                }
+            }
+        })];
+        let (summary, evidence) = extract_summary_and_evidence(&events);
+        assert_eq!(summary, "Fixed encoding.");
+        assert_eq!(evidence, "cargo test passed.");
     }
 }

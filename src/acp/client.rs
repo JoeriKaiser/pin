@@ -10,10 +10,10 @@ use std::thread;
 use std::time::Duration;
 
 use crate::acp::protocol::{
-    ClientInfo, ContentBlock, InitializeParams, InitializeResult, JsonRpcRequest, JsonRpcResponse,
-    RequestPermissionOutcome, RequestPermissionParams, RequestPermissionResult,
-    SessionCancelParams, SessionNewParams, SessionNewResult, SessionPromptParams,
-    SessionPromptResult, SessionSetConfigOptionParams,
+    ClientInfo, ContentBlock, InitializeParams, InitializeResult, JsonRpcNotification,
+    JsonRpcRequest, JsonRpcResponse, RequestPermissionOutcome, RequestPermissionParams,
+    RequestPermissionResult, SessionCancelParams, SessionNewParams, SessionNewResult,
+    SessionPromptParams, SessionPromptResult, SessionSetConfigOptionParams,
 };
 use crate::cli::split_shell_words;
 
@@ -390,12 +390,8 @@ impl AcpClient {
             session_id: session_id.to_string(),
         };
 
-        let req = JsonRpcRequest::new(
-            self.next_id.fetch_add(1, Ordering::SeqCst),
-            "session/cancel",
-            params,
-        );
-        let serialized = serde_json::to_string(&req)?;
+        let notif = JsonRpcNotification::new("session/cancel", params);
+        let serialized = serde_json::to_string(&notif)?;
         self.write_json(&serialized)
     }
 
@@ -405,6 +401,21 @@ impl AcpClient {
             .lock()
             .map_err(|_| AcpError::Protocol("Lock poisoned on child".to_string()))?;
         if let Some(mut child) = guard.take() {
+            #[cfg(unix)]
+            {
+                extern "C" {
+                    fn kill(pid: i32, sig: i32) -> i32;
+                }
+                if let Ok(pgid) = i32::try_from(child.id()) {
+                    if pgid > 0 {
+                        // Signal the whole process group started via process_group(0)
+                        // so child test runners and tools do not outlive a cancelled run.
+                        unsafe {
+                            kill(-pgid, 9);
+                        }
+                    }
+                }
+            }
             let _ = child.kill();
             let _ = child.wait();
         }
