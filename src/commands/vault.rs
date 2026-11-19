@@ -80,13 +80,13 @@ pub fn doctor(args: &[String], command: &str, vault_path: &Path) -> CliResult<()
         reader.idx += 1;
     }
 
-    let repaired_count = if upgrade {
-        upgrade_vault(&vault_path)
-    } else if repair {
-        repair_vault(&vault_path)
-    } else {
-        0
-    };
+    let mut repaired_count = 0;
+    if upgrade {
+        repaired_count += upgrade_vault(vault_path);
+    }
+    if repair {
+        repaired_count += repair_vault(vault_path);
+    }
 
     let scan = scan_vault(&vault_path);
     let fmt = format.unwrap_or_else(|| default_format(OutputFormat::Plain));

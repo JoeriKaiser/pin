@@ -463,14 +463,21 @@ pub fn upgrade_vault(vault_path: &Path) -> usize {
             let mut issues = Vec::new();
             if let Some(mut meta) = parse_front_matter_detailed(&filename, &content, &mut issues) {
                 let mut needs_upgrade = false;
+                let inferred_type = meta.work_type();
+                let inferred_status = meta.current_status();
 
-                if meta.schema != Some(2) {
-                    meta.schema = Some(2);
+                if meta.item_type.is_none() {
+                    meta.item_type = Some(inferred_type);
                     needs_upgrade = true;
                 }
 
                 if meta.status.is_none() {
-                    meta.status = Some(crate::model::Status::Created);
+                    meta.status = Some(inferred_status);
+                    needs_upgrade = true;
+                }
+
+                if meta.schema != Some(2) {
+                    meta.schema = Some(2);
                     needs_upgrade = true;
                 }
 
@@ -1014,5 +1021,48 @@ related:
         assert_eq!(repaired_meta.parent_id, None);
         assert_eq!(repaired_meta.depends_on, vec!["111111111111".to_string()]);
         assert!(repaired_meta.related.is_empty());
+    }
+
+    #[test]
+    fn test_upgrade_preserves_legacy_idea_type_and_archived_status() {
+        let dir = tempdir().unwrap();
+        let legacy_idea = r#"---
+schema: 1
+id: "aaaa11112222"
+project: "test"
+kind: "product"
+timestamp: 1700000000
+title: "Legacy untyped idea"
+---
+# Legacy untyped idea
+"#;
+        let legacy_archived = r#"---
+schema: 1
+id: "bbbb11112222"
+project: "test"
+kind: "technical"
+timestamp: 1700000001
+title: "Legacy rejected idea"
+archived_at: 1700000100
+resolution: "rejected"
+---
+# Legacy rejected idea
+"#;
+        fs::write(dir.path().join("aaaa11112222.md"), legacy_idea).unwrap();
+        fs::write(dir.path().join("bbbb11112222.md"), legacy_archived).unwrap();
+
+        let upgraded = upgrade_vault(dir.path());
+        assert_eq!(upgraded, 2);
+
+        let scan = scan_vault(dir.path());
+        let idea = scan.metas.iter().find(|m| m.id == "aaaa11112222").unwrap();
+        assert_eq!(idea.schema, Some(2));
+        assert_eq!(idea.item_type, Some(crate::model::WorkType::Idea));
+        assert_eq!(idea.status, Some(crate::model::Status::Created));
+
+        let archived = scan.metas.iter().find(|m| m.id == "bbbb11112222").unwrap();
+        assert_eq!(archived.schema, Some(2));
+        assert_eq!(archived.item_type, Some(crate::model::WorkType::Idea));
+        assert_eq!(archived.status, Some(crate::model::Status::Cancelled));
     }
 }
