@@ -93,6 +93,7 @@ pub struct ViewSnapshot {
     pub filter_type: Option<WorkType>,
     pub acp_manager: Arc<crate::acp::AcpManager>,
     pub git_cache: Arc<Mutex<Option<(Instant, HashMap<String, crate::sync::GitItemInfo>)>>>,
+    pub git_generation: Arc<AtomicU64>,
     pub broadcaster: Arc<ViewerBroadcaster>,
 }
 
@@ -220,6 +221,7 @@ pub fn create_snapshot(
         filter_type,
         acp_manager,
         git_cache: Arc::new(Mutex::new(None)),
+        git_generation: Arc::new(AtomicU64::new(0)),
         broadcaster: Arc::new(ViewerBroadcaster::new()),
     }
 }
@@ -927,6 +929,7 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
             if let Ok(mut cache_guard) = snapshot.git_cache.lock() {
                 *cache_guard = Some((Instant::now(), status_map));
             }
+            snapshot.git_generation.fetch_add(1, Ordering::Relaxed);
             snapshot.broadcaster.broadcast(serde_json::json!({
                 "type": "vault_changed"
             }));
@@ -1296,6 +1299,7 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                                 if let Ok(mut cache_guard) = snapshot.git_cache.lock() {
                                     *cache_guard = None;
                                 }
+                                snapshot.git_generation.fetch_add(1, Ordering::Relaxed);
                                 send_response(
                                     &mut stream,
                                     200,
@@ -1624,6 +1628,7 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                         if let Ok(mut cache_guard) = snapshot.git_cache.lock() {
                             *cache_guard = None;
                         }
+                        snapshot.git_generation.fetch_add(1, Ordering::Relaxed);
                         send_response(
                             &mut stream,
                             200,
@@ -2290,7 +2295,8 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
             })
             .unwrap_or(true);
 
-        let vault_etag = compute_vault_etag(&snapshot.vault_path);
+        let git_gen = snapshot.git_generation.load(Ordering::Relaxed);
+        let vault_etag = format!("{}-g{git_gen}", compute_vault_etag(&snapshot.vault_path));
 
         if !is_git_stale {
             if let Some(if_none) = &if_none_match {
@@ -2301,23 +2307,6 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
             }
         }
 
-        let git_statuses = if is_git_stale {
-            let resolver = crate::sync::GitStatusResolver::new(snapshot.repo_path.clone());
-            let fresh_map = collect_ideas(&snapshot.vault_path)
-                .map(|all_items| resolver.resolve_all(&all_items))
-                .unwrap_or_default();
-            if let Ok(mut cache_guard) = snapshot.git_cache.lock() {
-                *cache_guard = Some((Instant::now(), fresh_map.clone()));
-            }
-            fresh_map
-        } else {
-            snapshot
-                .git_cache
-                .lock()
-                .ok()
-                .and_then(|guard| guard.as_ref().map(|(_, map)| map.clone()))
-                .unwrap_or_default()
-        };
         let filter_project = if snapshot.scope_label == "all" {
             None
         } else {
@@ -2333,6 +2322,27 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
             ..Default::default()
         };
         let ideas = collect_ideas_with_filter(&snapshot.vault_path, &filter).unwrap_or_default();
+
+        let (git_statuses, response_etag) = if is_git_stale {
+            let resolver = crate::sync::GitStatusResolver::new(snapshot.repo_path.clone());
+            let fresh_map = resolver.resolve_all(&ideas);
+            let next_gen = snapshot.git_generation.fetch_add(1, Ordering::Relaxed) + 1;
+            if let Ok(mut cache_guard) = snapshot.git_cache.lock() {
+                *cache_guard = Some((Instant::now(), fresh_map.clone()));
+            }
+            (
+                fresh_map,
+                format!("{}-g{next_gen}", compute_vault_etag(&snapshot.vault_path)),
+            )
+        } else {
+            let cached = snapshot
+                .git_cache
+                .lock()
+                .ok()
+                .and_then(|guard| guard.as_ref().map(|(_, map)| map.clone()))
+                .unwrap_or_default();
+            (cached, vault_etag)
+        };
         let captured_at = Utc::now().to_rfc3339();
 
         let json_items: Vec<JsonIdeaOutput> = ideas
@@ -2393,7 +2403,7 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
             data_json.as_bytes(),
             true,
             method == "GET",
-            Some(&vault_etag),
+            Some(&response_etag),
         );
         return;
     }
@@ -2533,6 +2543,7 @@ pub fn serve_view(
                     if let Ok(mut cache_guard) = watcher_snap.git_cache.lock() {
                         *cache_guard = None;
                     }
+                    watcher_snap.git_generation.fetch_add(1, Ordering::Relaxed);
                     b.broadcast(event);
                     b.broadcast(serde_json::json!({ "type": "git_updated" }));
                     b.broadcast(serde_json::json!({ "type": "vault_changed" }));

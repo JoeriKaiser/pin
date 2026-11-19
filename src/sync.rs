@@ -508,40 +508,269 @@ pub fn resolve_git_status(
     }
 }
 
+fn preload_pin_refs(repo_path: &Path) -> (HashMap<String, String>, HashMap<String, String>) {
+    let mut local = HashMap::new();
+    let mut remote = HashMap::new();
+    let Ok(out) = Command::new("git")
+        .arg("-C")
+        .arg(repo_path)
+        .args([
+            "for-each-ref",
+            "--format=%(refname) %(objectname)",
+            "refs/heads/pin/",
+            "refs/remotes/origin/pin/",
+        ])
+        .output()
+    else {
+        return (local, remote);
+    };
+    if !out.status.success() {
+        return (local, remote);
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    for line in stdout.lines() {
+        let Some((refname, oid)) = line.trim().split_once(' ') else {
+            continue;
+        };
+        if let Some(id) = refname.strip_prefix("refs/heads/pin/") {
+            local.insert(id.to_string(), oid.to_string());
+        } else if let Some(id) = refname.strip_prefix("refs/remotes/origin/pin/") {
+            remote.insert(id.to_string(), oid.to_string());
+        }
+    }
+    (local, remote)
+}
+
+fn current_head_branch(repo_path: &Path) -> Option<String> {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(repo_path)
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
+    }
+}
+
 pub struct GitStatusResolver {
     pub repo_path: PathBuf,
     pub targets: Vec<String>,
     pub prs: Option<Vec<GhPrInfo>>,
+    local_pin_refs: HashMap<String, String>,
+    remote_pin_refs: HashMap<String, String>,
+    current_branch: Option<String>,
+    target_oids: Vec<(String, Option<String>)>,
 }
 
 impl GitStatusResolver {
     pub fn new(repo_path: PathBuf) -> Self {
-        let targets = resolve_target_branches(&repo_path);
         let prs = query_gh_prs(&repo_path);
-        Self {
-            repo_path,
-            targets,
-            prs,
-        }
+        Self::with_prs(repo_path, prs)
     }
 
     pub fn with_prs(repo_path: PathBuf, prs: Option<Vec<GhPrInfo>>) -> Self {
         let targets = resolve_target_branches(&repo_path);
+        let (local_pin_refs, remote_pin_refs) = preload_pin_refs(&repo_path);
+        let current_branch = current_head_branch(&repo_path);
+        let target_oids = targets
+            .iter()
+            .map(|t| (t.clone(), get_branch_commit(&repo_path, t)))
+            .collect();
         Self {
             repo_path,
             targets,
             prs,
+            local_pin_refs,
+            remote_pin_refs,
+            current_branch,
+            target_oids,
+        }
+    }
+
+    fn is_ref_merged(&self, branch: &str, branch_oid: &str) -> bool {
+        for (target, t_oid_opt) in &self.target_oids {
+            if t_oid_opt.as_deref() == Some(branch_oid) {
+                continue;
+            }
+            if let Ok(out) = Command::new("git")
+                .arg("-C")
+                .arg(&self.repo_path)
+                .args(["merge-base", "--is-ancestor", branch, target])
+                .output()
+            {
+                if out.status.success()
+                    && !is_on_first_parent_chain(&self.repo_path, branch_oid, branch, target)
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn resolve_item_inner(&self, item_id: &str, check_squash: bool) -> GitItemInfo {
+        let branch_name = format!("pin/{item_id}");
+        let remote_branch = format!("origin/pin/{item_id}");
+        let worktree_dir = self.repo_path.join(".pin_worktrees").join(item_id);
+
+        let local_oid = self.local_pin_refs.get(item_id).cloned();
+        let remote_oid = self.remote_pin_refs.get(item_id).cloned();
+        let local_exists = local_oid.is_some();
+        let remote_exists = remote_oid.is_some();
+        let wt_exists = worktree_dir.exists();
+
+        let pr = self
+            .prs
+            .as_deref()
+            .and_then(|list| find_pr_for_item(list, item_id));
+        let pr_number = pr.map(|p| p.number);
+        let pr_url = pr.map(|p| p.url.clone());
+        let pr_state = pr.map(|p| p.state.as_str());
+
+        if pr_state == Some("MERGED") {
+            return GitItemInfo {
+                id: item_id.to_string(),
+                status: GitItemStatus::Merged,
+                pr_number,
+                pr_url,
+                commit_oid: None,
+                branch: local_exists.then_some(branch_name),
+                worktree_path: wt_exists.then_some(worktree_dir),
+            };
+        }
+
+        if let Some(ref b_oid) = local_oid {
+            if self.is_ref_merged(&branch_name, b_oid) {
+                return GitItemInfo {
+                    id: item_id.to_string(),
+                    status: GitItemStatus::Merged,
+                    pr_number,
+                    pr_url,
+                    commit_oid: Some(b_oid.clone()),
+                    branch: Some(branch_name),
+                    worktree_path: wt_exists.then_some(worktree_dir),
+                };
+            }
+        }
+        if let Some(ref r_oid) = remote_oid {
+            if self.is_ref_merged(&remote_branch, r_oid) {
+                return GitItemInfo {
+                    id: item_id.to_string(),
+                    status: GitItemStatus::Merged,
+                    pr_number,
+                    pr_url,
+                    commit_oid: Some(r_oid.clone()),
+                    branch: Some(branch_name),
+                    worktree_path: wt_exists.then_some(worktree_dir),
+                };
+            }
+        }
+
+        if check_squash {
+            if let Some(squash_oid) = find_squash_commit(&self.repo_path, item_id, &self.targets) {
+                return GitItemInfo {
+                    id: item_id.to_string(),
+                    status: GitItemStatus::Merged,
+                    pr_number,
+                    pr_url,
+                    commit_oid: Some(squash_oid),
+                    branch: local_exists.then_some(branch_name),
+                    worktree_path: wt_exists.then_some(worktree_dir),
+                };
+            }
+        }
+
+        if pr_state == Some("OPEN") {
+            return GitItemInfo {
+                id: item_id.to_string(),
+                status: GitItemStatus::PrOpen,
+                pr_number,
+                pr_url,
+                commit_oid: None,
+                branch: local_exists.then_some(branch_name),
+                worktree_path: wt_exists.then_some(worktree_dir),
+            };
+        }
+
+        if wt_exists && has_uncommitted_changes(&worktree_dir) {
+            return GitItemInfo {
+                id: item_id.to_string(),
+                status: GitItemStatus::ChangesPending,
+                pr_number,
+                pr_url,
+                commit_oid: None,
+                branch: local_exists.then_some(branch_name),
+                worktree_path: Some(worktree_dir),
+            };
+        }
+        if self.current_branch.as_deref() == Some(branch_name.as_str())
+            && has_uncommitted_changes(&self.repo_path)
+        {
+            return GitItemInfo {
+                id: item_id.to_string(),
+                status: GitItemStatus::ChangesPending,
+                pr_number,
+                pr_url,
+                commit_oid: None,
+                branch: Some(branch_name),
+                worktree_path: None,
+            };
+        }
+
+        let has_commits = (local_exists
+            && has_commits_ahead(&self.repo_path, &branch_name, &self.targets))
+            || (remote_exists && has_commits_ahead(&self.repo_path, &remote_branch, &self.targets));
+
+        if has_commits {
+            return GitItemInfo {
+                id: item_id.to_string(),
+                status: GitItemStatus::Committed,
+                pr_number,
+                pr_url,
+                commit_oid: local_oid.or(remote_oid),
+                branch: Some(branch_name),
+                worktree_path: wt_exists.then_some(worktree_dir),
+            };
+        }
+
+        GitItemInfo {
+            id: item_id.to_string(),
+            status: GitItemStatus::None,
+            pr_number,
+            pr_url,
+            commit_oid: None,
+            branch: local_exists.then_some(branch_name),
+            worktree_path: wt_exists.then_some(worktree_dir),
         }
     }
 
     pub fn resolve_item(&self, item_id: &str) -> GitItemInfo {
-        resolve_git_status(&self.repo_path, item_id, self.prs.as_deref(), &self.targets)
+        self.resolve_item_inner(item_id, true)
     }
 
     pub fn resolve_all(&self, items: &[IdeaMeta]) -> HashMap<String, GitItemInfo> {
-        let mut map = HashMap::new();
+        let mut map = HashMap::with_capacity(items.len());
         for item in items {
-            map.insert(item.id.clone(), self.resolve_item(&item.id));
+            let has_local_or_remote = self.local_pin_refs.contains_key(&item.id)
+                || self.remote_pin_refs.contains_key(&item.id);
+            let has_wt = self
+                .repo_path
+                .join(".pin_worktrees")
+                .join(&item.id)
+                .exists();
+            let check_squash =
+                item.current_status() == Status::Done || has_local_or_remote || has_wt;
+            map.insert(
+                item.id.clone(),
+                self.resolve_item_inner(&item.id, check_squash),
+            );
         }
         map
     }
@@ -564,6 +793,7 @@ pub fn reconcile_and_sync(
     };
 
     let all_items = collect_ideas(vault_path).map_err(|e| format!("Failed to read vault: {e}"))?;
+    let (local_pin_refs, _) = preload_pin_refs(repo_path);
 
     let candidates: Vec<&IdeaMeta> = all_items
         .iter()
@@ -579,7 +809,7 @@ pub fn reconcile_and_sync(
                 // Completed work, or any work item that still has a stranded worktree or branch in this repo
                 meta.current_status() == Status::Done
                     || repo_path.join(".pin_worktrees").join(&meta.id).exists()
-                    || branch_exists(repo_path, &format!("pin/{}", meta.id))
+                    || local_pin_refs.contains_key(&meta.id)
             }
         })
         .collect();
