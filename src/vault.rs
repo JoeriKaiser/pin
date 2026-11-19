@@ -189,6 +189,7 @@ pub fn collect_ideas_with_filter(
     }
 
     let mut ideas = Vec::new();
+    let mut all_items_for_ready = if filter.ready { Some(Vec::new()) } else { None };
     let entries = fs::read_dir(vault_path)?;
 
     for entry in entries {
@@ -206,6 +207,9 @@ pub fn collect_ideas_with_filter(
             if let Ok(content) = fs::read_to_string(&path) {
                 let mut issues = Vec::new();
                 if let Some(meta) = parse_front_matter_detailed(&filename, &content, &mut issues) {
+                    if let Some(ref mut all) = all_items_for_ready {
+                        all.push(meta.clone());
+                    }
                     if !meta.matches_archive_filter(filter.archive_filter) {
                         continue;
                     }
@@ -269,16 +273,20 @@ pub fn collect_ideas_with_filter(
         }
     }
 
-    if filter.ready {
+    if let Some(ref all_vault_items) = all_items_for_ready {
         let now = chrono::Utc::now().timestamp();
-        let all_vault_items = collect_ideas(vault_path).unwrap_or_default();
         let map: std::collections::HashMap<String, &IdeaMeta> =
             all_vault_items.iter().map(|i| (i.id.clone(), i)).collect();
         ideas.retain(|item| crate::workflow::is_item_ready(item, &map, now));
     }
 
-    // Sort by timestamp descending by default
-    ideas.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+    // Sort by timestamp descending with deterministic tie-breakers
+    ideas.sort_by(|a, b| {
+        b.timestamp
+            .cmp(&a.timestamp)
+            .then_with(|| b.created_at_ns.cmp(&a.created_at_ns))
+            .then_with(|| a.id.cmp(&b.id))
+    });
     Ok(ideas)
 }
 
@@ -312,20 +320,32 @@ pub fn resolve_selector(vault_path: &Path, selector: &str) -> Result<String, Vau
         if direct_path.is_file() {
             return Ok(selector.to_string());
         }
+    } else {
+        // Fast path: probe `<id>.md` directly before scanning the whole vault.
+        let lower_file = format!("{}.md", selector.to_ascii_lowercase());
+        let direct_path = vault_path.join(&lower_file);
+        if direct_path.is_file() {
+            if let Ok(content) = fs::read_to_string(&direct_path) {
+                let mut issues = Vec::new();
+                if let Some(meta) = parse_front_matter_detailed(&lower_file, &content, &mut issues)
+                {
+                    if meta.id.eq_ignore_ascii_case(selector) {
+                        return Ok(lower_file);
+                    }
+                }
+            }
+        }
     }
 
     let all_ideas = collect_ideas(vault_path).map_err(VaultError::Io)?;
+    let selector_lower = selector.to_ascii_lowercase();
     let mut prefix_match: Option<String> = None;
 
     for meta in all_ideas {
         if meta.id.eq_ignore_ascii_case(selector) {
             return Ok(meta.filename);
         }
-        if meta
-            .id
-            .to_ascii_lowercase()
-            .starts_with(&selector.to_ascii_lowercase())
-        {
+        if meta.id.to_ascii_lowercase().starts_with(&selector_lower) {
             if prefix_match.is_some() {
                 return Err(VaultError::AmbiguousSelector(selector.to_string()));
             }
