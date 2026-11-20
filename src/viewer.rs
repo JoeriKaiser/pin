@@ -103,6 +103,8 @@ struct ActionPayload {
     #[serde(default, alias = "confirm_worktree", alias = "worktree")]
     pub use_worktree: Option<bool>,
     #[serde(default)]
+    pub interactive: Option<bool>,
+    #[serde(default)]
     to: Option<Status>,
     #[serde(default)]
     actor: Option<String>,
@@ -146,6 +148,8 @@ struct RunPayload {
     pub use_worktree: Option<bool>,
     #[serde(default)]
     pub mode: Option<String>,
+    #[serde(default)]
+    pub interactive: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -1423,10 +1427,11 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                 match mutation_result {
                     Ok(updated_meta) => {
                         if is_starting_run {
-                            if let Err(err) = snapshot
-                                .acp_manager
-                                .start_run(id, payload.use_worktree.unwrap_or(false))
-                            {
+                            if let Err(err) = snapshot.acp_manager.start_run_interactive(
+                                id,
+                                payload.use_worktree.unwrap_or(false),
+                                payload.interactive.unwrap_or(false),
+                            ) {
                                 // The mutation already moved the item. A run
                                 // that never launched must not strand it.
                                 rollback_failed_start(&snapshot, &filename, &updated_meta);
@@ -1537,6 +1542,7 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                     RunPayload {
                         use_worktree: None,
                         mode: None,
+                        interactive: None,
                     }
                 };
 
@@ -1568,9 +1574,11 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                             .acp_manager
                             .start_idea_run(id, payload.use_worktree.unwrap_or(false))
                     } else {
-                        snapshot
-                            .acp_manager
-                            .start_run(id, payload.use_worktree.unwrap_or(false))
+                        snapshot.acp_manager.start_run_interactive(
+                            id,
+                            payload.use_worktree.unwrap_or(false),
+                            payload.interactive.unwrap_or(false),
+                        )
                     }
                 };
                 match run_result {
@@ -1683,11 +1691,13 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                     serde_json::from_slice(&body_bytes).unwrap_or(RunPayload {
                         use_worktree: None,
                         mode: Some("idea".to_string()),
+                        interactive: Some(true),
                     })
                 } else {
                     RunPayload {
                         use_worktree: None,
                         mode: Some("idea".to_string()),
+                        interactive: Some(true),
                     }
                 };
 
@@ -2741,6 +2751,12 @@ mod tests {
         let payload: RunPayload = serde_json::from_str(json).unwrap();
         assert_eq!(payload.mode.as_deref(), Some("idea"));
         assert_eq!(payload.use_worktree, Some(true));
+        assert_eq!(payload.interactive, None);
+
+        let json_interactive = r#"{"use_worktree":false,"interactive":true}"#;
+        let payload_int: RunPayload = serde_json::from_str(json_interactive).unwrap();
+        assert_eq!(payload_int.use_worktree, Some(false));
+        assert_eq!(payload_int.interactive, Some(true));
     }
     #[test]
     fn test_runs_output_serialization() {

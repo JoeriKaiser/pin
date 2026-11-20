@@ -30,11 +30,12 @@ export function setBindCallbacks(cbs) {
   if (cbs) Object.assign(bootCallbacks, cbs);
 }
 
-export function sendRunItem(id, useWorktree, errorPrefix, optMode) {
+export function sendRunItem(id, useWorktree, errorPrefix, optMode, interactive) {
   var mode = (optMode === 'idea' || (typeof errorPrefix === 'string' && errorPrefix.indexOf('Idea') !== -1)) ? 'idea' : undefined;
-  showToast(mode === 'idea' ? 'Starting Idea agent...' : 'Starting agent...', false);
+  showToast(mode === 'idea' ? 'Starting Idea agent...' : (interactive ? 'Starting interactive agent...' : 'Starting agent...'), false);
   var payload = useWorktree ? { use_worktree: true } : {};
   if (mode) payload.mode = mode;
+  if (interactive) payload.interactive = true;
   return sendRun(id, payload)
     .then(function (res) {
       if (!res.ok) {
@@ -385,18 +386,29 @@ export function bindForms() {
   if (els.btnShortcuts) els.btnShortcuts.addEventListener('click', openShortcutsModal);
   if (els.shortcutsModalCloseBtn) els.shortcutsModalCloseBtn.addEventListener('click', closeShortcutsModal);
   if (els.btnThemeToggle) els.btnThemeToggle.addEventListener('click', toggleTheme);
+  if (els.worktreeInteractiveCheckbox) {
+    els.worktreeInteractiveCheckbox.addEventListener('change', function () {
+      try {
+        if (typeof localStorage !== 'undefined' && localStorage && typeof localStorage.setItem === 'function') {
+          localStorage.setItem('pin-interactive-default', String(!!els.worktreeInteractiveCheckbox.checked));
+        }
+      } catch (_) {}
+    });
+  }
   if (els.btnWorktreePrimary) {
     els.btnWorktreePrimary.addEventListener('click', function () {
       var item = state.pendingWorktreeItem;
+      var interactive = !!(els.worktreeInteractiveCheckbox && els.worktreeInteractiveCheckbox.checked);
       closeWorktreeModal();
-      if (item) sendRunItem(item.id, false);
+      if (item) sendRunItem(item.id, false, undefined, undefined, interactive);
     });
   }
   if (els.btnWorktreeConfirm) {
     els.btnWorktreeConfirm.addEventListener('click', function () {
       var item = state.pendingWorktreeItem;
+      var interactive = !!(els.worktreeInteractiveCheckbox && els.worktreeInteractiveCheckbox.checked);
       closeWorktreeModal();
-      if (item) sendRunItem(item.id, true, 'Worktree start failed: ');
+      if (item) sendRunItem(item.id, true, 'Worktree start failed: ', undefined, interactive);
     });
   }
 }

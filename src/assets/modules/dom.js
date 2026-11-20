@@ -152,6 +152,7 @@ export var els = {
   worktreeBusyId: $('worktree-busy-id'),
   worktreeTargetId: $('worktree-target-id'),
   worktreePromptTargetId: $('worktree-prompt-target-id'),
+  worktreeInteractiveCheckbox: $('worktree-interactive-checkbox'),
   worktreeRunnerSummary: $('worktree-runner-summary'),
   btnWorktreeCancel: $('btn-worktree-cancel'),
   btnWorktreeClose: $('btn-worktree-close'),

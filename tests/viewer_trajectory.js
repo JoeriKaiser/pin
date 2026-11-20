@@ -2096,6 +2096,34 @@ async function runHarness() {
   global.fetch = origFetch17;
   console.log('PASS: Deep links, multi-term search, renderKey invalidation, and HTTP error handling verified');
 
+  console.log('\n--- 18. Testing Interactive Implement Run Option ---');
+  const wtCheckbox = document.getElementById('worktree-interactive-checkbox');
+  localStorageMock.setItem('pin-interactive-default', 'true');
+  openWorktreeModal({ id: 'item-int-1', title: 'Interactive Implement' }, null);
+  assert.strictEqual(wtCheckbox.checked, true, 'worktree modal restores persisted interactive preference');
+  let capturedRunBody = null;
+  const origFetch18 = fetchStub;
+  fetchStub = function (url, opts) {
+    if (url.includes('items/item-int-1/run')) {
+      capturedRunBody = JSON.parse(opts.body);
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        headers: { get: () => null },
+        json: () => Promise.resolve({ status: 'started' })
+      });
+    }
+    return Promise.resolve({ ok: true, status: 200, headers: { get: () => null }, json: () => Promise.resolve({ running: [], runs: [] }) });
+  };
+  document.getElementById('btn-worktree-confirm').click();
+  await new Promise(r => setTimeout(r, 20));
+  assert.ok(capturedRunBody, 'confirming worktree modal dispatches /run');
+  assert.strictEqual(capturedRunBody.use_worktree, true, 'worktree flag sent');
+  assert.strictEqual(capturedRunBody.interactive, true, 'interactive flag sent when checked');
+  fetchStub = origFetch18;
+  localStorageMock.removeItem('pin-interactive-default');
+  console.log('PASS: Interactive implement run option verified');
+
   console.log('\n========================================');
   console.log('ALL VIEWER TRAJECTORY TESTS PASSED (0)');
   console.log('========================================');

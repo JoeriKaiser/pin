@@ -104,9 +104,14 @@ impl std::error::Error for AcpManagerError {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunMode {
-    Implement { use_worktree: bool },
+    Implement {
+        use_worktree: bool,
+        interactive: bool,
+    },
     CommitPr,
-    Idea { use_worktree: bool },
+    Idea {
+        use_worktree: bool,
+    },
 }
 
 impl From<std::io::Error> for AcpManagerError {
@@ -627,7 +632,22 @@ impl AcpManager {
     }
 
     pub fn start_run(&self, item_id: &str, use_worktree: bool) -> Result<(), AcpManagerError> {
-        self.start_run_mode(item_id, RunMode::Implement { use_worktree })
+        self.start_run_interactive(item_id, use_worktree, false)
+    }
+
+    pub fn start_run_interactive(
+        &self,
+        item_id: &str,
+        use_worktree: bool,
+        interactive: bool,
+    ) -> Result<(), AcpManagerError> {
+        self.start_run_mode(
+            item_id,
+            RunMode::Implement {
+                use_worktree,
+                interactive,
+            },
+        )
     }
 
     pub fn start_commit_pr_run(&self, item_id: &str) -> Result<(), AcpManagerError> {
@@ -680,7 +700,9 @@ impl AcpManager {
         let runner = self.runner_settings();
 
         let will_use_primary = match mode {
-            RunMode::Implement { use_worktree } | RunMode::Idea { use_worktree } => !use_worktree,
+            RunMode::Implement { use_worktree, .. } | RunMode::Idea { use_worktree } => {
+                !use_worktree
+            }
             RunMode::CommitPr => {
                 !WorktreeManager::worktree_path(&self.repo_path, &canonical_id).exists()
                     && !WorktreeManager::is_git_repo(&self.repo_path)
@@ -709,7 +731,7 @@ impl AcpManager {
         let expected_wt = WorktreeManager::worktree_path(&self.repo_path, &canonical_id);
         let wt_existed_before = expected_wt.exists();
         let (work_dir, worktree_path, is_primary) = match mode {
-            RunMode::Implement { use_worktree } | RunMode::Idea { use_worktree } => {
+            RunMode::Implement { use_worktree, .. } | RunMode::Idea { use_worktree } => {
                 if use_worktree {
                     let wt = WorktreeManager::provision_worktree(&self.repo_path, &canonical_id)
                         .map_err(|e| AcpManagerError::Worktree(e.to_string()))?;
@@ -820,14 +842,20 @@ impl AcpManager {
         }
 
         let prompt_text = match mode {
-            RunMode::Implement { .. } => build_session_prompt(
-                title,
-                &canonical_id,
-                &kind.to_string(),
-                priority,
-                acceptance_criteria.as_deref(),
-                body,
-            ),
+            RunMode::Implement { interactive, .. } => {
+                let mut prompt = build_session_prompt(
+                    title,
+                    &canonical_id,
+                    &kind.to_string(),
+                    priority,
+                    acceptance_criteria.as_deref(),
+                    body,
+                );
+                if interactive {
+                    prompt.push_str("\n\n## Interactive Session\nThis run is interactive. If requirements, tradeoffs, or scope are ambiguous, ask focused clarifying questions and pause for the user's reply before changing code. After implementing and verifying, summarize your changes under '## Summary' and '## Verification' and pause so the user can review or ask for follow-ups before completing the run.");
+                }
+                prompt
+            }
             RunMode::CommitPr => build_commit_pr_prompt(
                 title,
                 &canonical_id,
@@ -889,9 +917,18 @@ impl AcpManager {
 
         // 8. Insert ActiveRun into active_runs
         let (prompt_tx, prompt_rx) = mpsc::channel::<String>();
-        let prompt_sender = match mode {
-            RunMode::Idea { .. } => Some(prompt_tx),
-            _ => None,
+        let is_interactive = matches!(
+            mode,
+            RunMode::Idea { .. }
+                | RunMode::Implement {
+                    interactive: true,
+                    ..
+                }
+        );
+        let prompt_sender = if is_interactive {
+            Some(prompt_tx)
+        } else {
+            None
         };
 
         let active_run = ActiveRun {
@@ -1009,7 +1046,7 @@ impl AcpManager {
                     return Err("Run cancelled during prompt".to_string());
                 }
 
-                if matches!(mode, RunMode::Idea { .. }) {
+                if is_interactive {
                     let mut last_stop_reason = prompt_res
                         .stop_reason
                         .unwrap_or_else(|| "end_turn".to_string());
@@ -2476,6 +2513,86 @@ done
             }
         }
         assert!(saw_finished, "expected run_finished global event");
+    }
+
+    #[test]
+    fn test_interactive_implement_run_pauses_until_finished() {
+        let vault_dir = tempfile::tempdir().unwrap();
+        let repo_dir = tempfile::tempdir().unwrap();
+        let item_id = "0123456789ac";
+        let item_body = "---\nschema: 2\nid: \"0123456789ac\"\ntitle: \"Interactive Task\"\ntype: \"task\"\nstatus: \"planned\"\n---\n# Interactive Task\n";
+        fs::write(vault_dir.path().join(format!("{item_id}.md")), item_body).unwrap();
+
+        let script_path = repo_dir.path().join("mock_impl_interactive.sh");
+        let script = r###"#!/bin/sh
+while IFS= read -r line; do
+  req_id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  case "$line" in
+    *initialize*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentCapabilities":{}}}\n' "$req_id"
+      ;;
+    *session/new*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"sess-impl-1"}}\n' "$req_id"
+      ;;
+    *session/prompt*)
+      printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess-impl-1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Need your confirmation before editing."}}}}\n'
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "$req_id"
+      ;;
+    *session/cancel*)
+      exit 0
+      ;;
+  esac
+done
+"###;
+        fs::write(&script_path, script).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        let mgr = AcpManager::new(
+            vault_dir.path().to_path_buf(),
+            repo_dir.path().to_path_buf(),
+            Some(script_path.to_string_lossy().to_string()),
+        );
+        let (global_tx, global_rx) = mpsc::channel();
+        mgr.add_global_listener(global_tx);
+
+        mgr.start_run_interactive(item_id, false, true).unwrap();
+
+        let mut saw_waiting = false;
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            if let Ok(evt) = global_rx.recv_timeout(Duration::from_millis(200)) {
+                if evt.get("type").and_then(|v| v.as_str()) == Some("run_waiting") {
+                    assert_eq!(evt["mode"], "implement");
+                    saw_waiting = true;
+                    break;
+                }
+            }
+        }
+        assert!(
+            saw_waiting,
+            "interactive implement run should pause with run_waiting"
+        );
+        let info = mgr.get_active_run_info(item_id).unwrap();
+        assert_eq!(info.mode, "implement");
+        assert!(info.interactive);
+        assert!(info.waiting_for_user);
+
+        mgr.finish_run(item_id).unwrap();
+        let mut saw_finished = false;
+        let deadline2 = std::time::Instant::now() + Duration::from_secs(5);
+        while std::time::Instant::now() < deadline2 {
+            if let Ok(evt) = global_rx.recv_timeout(Duration::from_millis(200)) {
+                if evt.get("type").and_then(|v| v.as_str()) == Some("run_finished") {
+                    saw_finished = true;
+                    break;
+                }
+            }
+        }
+        assert!(saw_finished);
     }
 
     #[test]

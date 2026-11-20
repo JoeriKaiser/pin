@@ -404,6 +404,10 @@
     <div class="dialog-body">
       <p id="worktree-busy-msg">The primary repository is already running task <span id="worktree-busy-id" class="agent-badge-id"></span>. Start this task in an isolated Git worktree under .pin_worktrees/<span id="worktree-target-id" class="agent-badge-id"></span>?</p>
       <p id="worktree-prompt-msg" hidden>Start this task inside an isolated Git worktree based off the up-to-date main branch under .pin_worktrees/<span id="worktree-prompt-target-id" class="agent-badge-id"></span>, or run in the primary checkout?</p>
+      <label class="worktree-interactive-toggle">
+        <input id="worktree-interactive-checkbox" type="checkbox">
+        <span>Interactive session (pause for replies before completing)</span>
+      </label>
       <p id="worktree-runner-summary" class="worktree-runner-summary"></p>
     </div>
     <div class="dialog-footer">
