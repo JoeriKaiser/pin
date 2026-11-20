@@ -21,6 +21,10 @@ import {
 } from './agent.js';
 import { bindRunnerUi, closeRunnerDialog } from './runner.js';
 import { bindAlertsUi, setAlertCallbacks, closeAlertsDialog } from './alerts.js';
+import {
+  bindReplyInboxUi, setReplyInboxCallbacks, openReplyModal, closeReplyModal,
+  submitReplyModal, isReplyModalOpen
+} from './reply-inbox.js';
 
 var bootCallbacks = {
   refreshData: function () {},
@@ -501,6 +505,11 @@ export function bindGlobalShortcuts() {
       }
       return;
     }
+    if (isReplyModalOpen()) {
+      if (event.key === 'Escape') { event.preventDefault(); closeReplyModal(); }
+      else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) { event.preventDefault(); submitReplyModal(); }
+      return;
+    }
     if (els.alertsDialog && (els.alertsDialog.open || els.alertsDialog.hasAttribute('open'))) {
       if (event.key === 'Escape') { event.preventDefault(); closeAlertsDialog(); }
       return;
@@ -570,6 +579,7 @@ export function bindGlobalShortcuts() {
     }
     if (input || event.metaKey || event.ctrlKey || event.altKey) return;
     if (event.key === 'n' || event.key === 'c') { event.preventDefault(); openSpecModal(); return; }
+    if (event.key === 'r') { event.preventDefault(); openReplyModal(); return; }
     if (event.key === '?' || (event.key === '/' && event.shiftKey)) { event.preventDefault(); openShortcutsModal(); return; }
     if (event.key === 't') { event.preventDefault(); toggleTheme(); return; }
     if (event.key !== 'j' && event.key !== 'k' && event.key !== 'Enter') return;
@@ -683,8 +693,16 @@ export function bind(options) {
   });
 
   setAlertCallbacks({
-    openReplyForItem: function (itemId) { openAgentDrawer(itemId); },
+    openReplyForItem: openReplyModal,
     openAgentDrawer: openAgentDrawer,
+    renderBoard: renderBoard,
+    renderDetail: renderDetail,
+    renderAgentsTable: renderAgentsTable
+  });
+
+  setReplyInboxCallbacks({
+    openAgentDrawer: openAgentDrawer,
+    updateActiveRuns: updateActiveRuns,
     renderBoard: renderBoard,
     renderDetail: renderDetail,
     renderAgentsTable: renderAgentsTable
@@ -711,5 +729,6 @@ export function bind(options) {
   bindAgent();
   bindRunnerUi();
   bindAlertsUi();
+  bindReplyInboxUi();
   bindGlobalShortcuts();
 }

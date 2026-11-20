@@ -509,6 +509,11 @@ const ASSETS: &[(&str, &str, &str)] = &[
         MODULES_ALERTS_JS,
     ),
     (
+        "modules/reply-inbox.js",
+        "text/javascript; charset=utf-8",
+        MODULES_REPLY_INBOX_JS,
+    ),
+    (
         "modules/bind.js",
         "text/javascript; charset=utf-8",
         MODULES_BIND_JS,

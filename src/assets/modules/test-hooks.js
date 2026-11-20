@@ -44,6 +44,11 @@ import {
   getAlertPrefs, setAlertPrefs, openAlertsDialog, closeAlertsDialog,
   summarizeQuestionPreview, resetAlertStateForTests
 } from './alerts.js';
+import {
+  extractNumberedQuestions, buildNumberedScaffold, openReplyModal,
+  closeReplyModal, submitReplyModal, finishFromReplyModal,
+  isReplyModalOpen, getActiveReplyItemId
+} from './reply-inbox.js';
 
 if (typeof window !== 'undefined') {
   window._test = {
@@ -134,5 +139,13 @@ if (typeof window !== 'undefined') {
     closeAlertsDialog: closeAlertsDialog,
     summarizeQuestionPreview: summarizeQuestionPreview,
     resetAlertStateForTests: resetAlertStateForTests,
+    extractNumberedQuestions: extractNumberedQuestions,
+    buildNumberedScaffold: buildNumberedScaffold,
+    openReplyModal: openReplyModal,
+    closeReplyModal: closeReplyModal,
+    submitReplyModal: submitReplyModal,
+    finishFromReplyModal: finishFromReplyModal,
+    isReplyModalOpen: isReplyModalOpen,
+    getActiveReplyItemId: getActiveReplyItemId,
   };
 }

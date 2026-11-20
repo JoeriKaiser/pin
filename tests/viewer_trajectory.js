@@ -2237,6 +2237,91 @@ async function runHarness() {
   testExports.state.activeRunsInfo = [];
   console.log('PASS: Global needs-reply alerts, title, favicon, and desktop notifications verified');
 
+  console.log('\n--- 22. Testing Quick-Reply Inbox Modal and Numbered-Question Helpers ---');
+  const parsedQs = testExports.extractNumberedQuestions(
+    'Before proceeding:\n1. Should we use SSE?\n2. Keep default sound on?\n3. Auto-advance queue?'
+  );
+  assert.strictEqual(parsedQs.length, 3, 'extracts 3 numbered questions');
+  assert.strictEqual(testExports.buildNumberedScaffold(parsedQs), '1. \n2. \n3. ', 'builds numbered scaffold');
+  assert.strictEqual(testExports.extractNumberedQuestions('Just one sentence.').length, 0, 'ignores non-numbered prose');
+
+  testExports.state.items = [
+    { id: 'q-item-1', title: 'First Waiting Prompt', status: 'in_progress', type: 'idea', revision: 1 },
+    { id: 'q-item-2', title: 'Second Waiting Prompt', status: 'in_progress', type: 'task', revision: 1 }
+  ];
+  testExports.state.activeRuns = new Set(['q-item-1', 'q-item-2']);
+  testExports.state.activeRunsInfo = [
+    {
+      item_id: 'q-item-1',
+      mode: 'idea',
+      interactive: true,
+      waiting_for_user: true,
+      waiting_since: 100,
+      last_message: '1. Active only?\n2. Quick table?'
+    },
+    {
+      item_id: 'q-item-2',
+      mode: 'implement',
+      interactive: true,
+      waiting_for_user: true,
+      waiting_since: 200,
+      last_message: 'Ready to commit changes?'
+    }
+  ];
+  testExports.syncWaitingAlerts({ notify: false });
+
+  // Press 'r' shortcut to open Quick-Reply modal for oldest waiting item
+  documentMock.dispatchEvent({
+    type: 'keydown',
+    key: 'r',
+    target: documentMock.body,
+    preventDefault() {}
+  });
+  assert.strictEqual(testExports.isReplyModalOpen(), true, 'r shortcut opens Quick-Reply modal');
+  assert.strictEqual(testExports.getActiveReplyItemId(), 'q-item-1', 'opens oldest waiting item first');
+  const queueEl22 = documentMock.getElementById('reply-modal-queue');
+  assert.strictEqual(queueEl22.hidden, false, 'queue bar visible when 2 prompts wait');
+  assert.strictEqual(queueEl22.children.length, 2, 'queue lists both waiting prompts');
+
+  // Click scaffold button -> fills 1. \n2.
+  const helpersEl22 = documentMock.getElementById('reply-modal-helpers');
+  const scaffoldBtn22 = helpersEl22.children.find(c => c.textContent.includes('Scaffold 2 answers'));
+  assert.ok(scaffoldBtn22, 'scaffold button offered for numbered questions');
+  scaffoldBtn22.click();
+  const replyInput22 = documentMock.getElementById('reply-modal-input');
+  assert.strictEqual(replyInput22.value, '1. \n2. ', 'scaffold populates reply textarea');
+
+  // Send reply to q-item-1 -> should send POST /message and auto-advance to q-item-2
+  replyInput22.value = '1. Yes\n2. Quick table';
+  let sentReplies22 = [];
+  const origFetch22 = fetchStub;
+  fetchStub = function (url, opts) {
+    if (url.includes('/message')) {
+      sentReplies22.push({ url, body: JSON.parse(opts.body) });
+      return Promise.resolve({ ok: true, status: 200, headers: { get: () => null }, json: () => Promise.resolve({ status: 'sent' }) });
+    }
+    return Promise.resolve({ ok: true, status: 200, headers: { get: () => null }, json: () => Promise.resolve({ running: ['q-item-1', 'q-item-2'], waiting: ['q-item-2'], runs: testExports.state.activeRunsInfo }) });
+  };
+  await testExports.submitReplyModal();
+  assert.strictEqual(sentReplies22.length, 1, 'POST /message sent for first item');
+  assert.ok(sentReplies22[0].url.includes('q-item-1/message'), 'sent to q-item-1');
+  assert.strictEqual(sentReplies22[0].body.message, '1. Yes\n2. Quick table');
+  assert.strictEqual(testExports.isReplyModalOpen(), true, 'modal stays open for next waiting prompt');
+  assert.strictEqual(testExports.getActiveReplyItemId(), 'q-item-2', 'auto-advanced to second waiting prompt');
+  assert.strictEqual(documentMock.getElementById('btn-reply-finish').textContent, 'Finish & Complete', 'finish button reflects implement mode');
+
+  // Reply to second item -> modal closes cleanly
+  replyInput22.value = 'Yes, go ahead';
+  await testExports.submitReplyModal();
+  assert.strictEqual(sentReplies22.length, 2, 'POST /message sent for second item');
+  assert.strictEqual(testExports.isReplyModalOpen(), false, 'modal closes when waiting queue is empty');
+
+  fetchStub = origFetch22;
+  testExports.state.activeRuns = new Set();
+  testExports.state.activeRunsInfo = [];
+  testExports.syncWaitingAlerts({ notify: false });
+  console.log('PASS: Quick-Reply inbox modal and numbered-question helpers verified');
+
   console.log('\n========================================');
   console.log('ALL VIEWER TRAJECTORY TESTS PASSED (0)');
   console.log('========================================');
