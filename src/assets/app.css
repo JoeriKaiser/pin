@@ -836,7 +836,7 @@ a:hover {
 }
 
 .reply-modal-content {
-  max-height: 86vh;
+  max-height: 86dvh;
   display: flex;
   flex-direction: column;
 }
@@ -1379,7 +1379,7 @@ a:hover {
   border-radius: var(--radius-md);
   display: flex;
   flex-direction: column;
-  max-height: calc(100vh - var(--top) - 5rem);
+  max-height: calc(100dvh - var(--top) - 5rem);
   overflow: hidden;
   box-shadow: var(--shadow-xs);
 }
@@ -3656,7 +3656,7 @@ a:hover {
 }
 
 .runner-dialog .dialog-content {
-  max-height: 92vh;
+  max-height: 92dvh;
 }
 
 .runner-dialog .dialog-body {
@@ -3794,7 +3794,7 @@ a:hover {
 .spec-modal-content {
   display: flex;
   flex-direction: column;
-  max-height: 90vh;
+  max-height: 90dvh;
 }
 
 .spec-modal-body {
@@ -4131,9 +4131,13 @@ footer {
 
 @media (max-width: 1200px) {
   .topbar {
-    grid-template-columns: auto minmax(8rem, 14rem) 1fr;
+    grid-template-columns: auto minmax(7rem, 12rem) 1fr;
     gap: var(--space-2);
     padding: 0 var(--space-3);
+  }
+
+  .identity span {
+    display: none;
   }
 
   .control {
@@ -4141,17 +4145,34 @@ footer {
   }
 }
 
+@media (max-width: 1020px) {
+  .topbar {
+    height: auto;
+    grid-template-columns: auto minmax(8rem, 1fr);
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+  }
+
+  .topbar-actions {
+    grid-column: 1 / -1;
+    justify-self: stretch;
+    flex-wrap: wrap;
+    gap: var(--space-1-5);
+  }
+}
+
 @media (max-width: 799.98px) {
   :root {
     --top: auto;
+    --control-height: 1.875rem;
   }
 
   .topbar {
     position: static;
     height: auto;
-    grid-template-columns: 1fr auto;
-    gap: var(--space-2-5);
-    padding: var(--space-3);
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
   }
 
   .identity span {
@@ -4159,8 +4180,8 @@ footer {
   }
 
   .search {
-    grid-column: 1 / -1;
-    grid-row: 3;
+    grid-column: 2;
+    grid-row: 1;
   }
 
   .topbar-actions {
@@ -4168,12 +4189,13 @@ footer {
     grid-row: 2;
     justify-self: stretch;
     flex-wrap: wrap;
+    gap: var(--space-1-5);
   }
 
   .filters {
     position: static;
     flex-wrap: wrap;
-    padding: var(--space-3);
+    padding: var(--space-2-5) var(--space-3);
   }
 
   .filters label {
@@ -4197,12 +4219,12 @@ footer {
   }
 
   .reply-modal {
-    width: calc(100vw - 1rem);
-    max-width: calc(100vw - 1rem);
+    width: calc(100% - 1rem);
+    max-width: calc(100% - 1rem);
   }
 
   .reply-modal-content {
-    max-height: 92vh;
+    max-height: 92dvh;
   }
 
   .reply-modal-title-group h2 {
@@ -4222,34 +4244,44 @@ footer {
     display: none;
   }
 
-  .workspace {
+  .workspace.mode-detail {
     display: block;
     min-height: 0;
   }
 
-  .index {
-    position: static;
-    height: auto;
-    min-height: calc(100vh - 9rem);
+  .workspace.mode-detail #index {
+    display: block;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
     border-right: 0;
   }
 
-  .reader {
+  .workspace.mode-detail #reader {
     display: none;
-    min-height: calc(100vh - 9rem);
-    padding: var(--space-4) var(--space-3-5) var(--space-8);
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    padding: 0;
   }
 
-  body.detail-open .index {
+  body.detail-open .workspace.mode-detail #index {
     display: none;
   }
 
-  body.detail-open .reader {
+  body.detail-open .workspace.mode-detail #reader {
     display: block;
   }
 
   .back {
     display: inline-flex;
+    margin: var(--space-3) var(--space-3) var(--space-2);
+  }
+
+  .reader-tabs {
+    padding: 0 var(--space-3);
+    gap: var(--space-3);
+    overflow-x: auto;
   }
 
   #proposal-title {
@@ -4257,17 +4289,31 @@ footer {
   }
 
   .split-detail {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     gap: var(--space-5);
-    padding: var(--space-4);
+    padding: var(--space-3);
   }
 
   .inspector-rail {
     position: static;
   }
 
+  .board-view {
+    padding: var(--space-3);
+  }
+
   .board-columns {
-    grid-template-columns: repeat(5, minmax(14rem, 1fr));
+    grid-template-columns: repeat(5, minmax(min(18rem, 84vw), 1fr));
+    scroll-snap-type: x proximity;
+  }
+
+  .board-col {
+    scroll-snap-align: start;
+    max-height: calc(100dvh - 8rem);
+  }
+
+  .agents-view {
+    padding: var(--space-3);
   }
 
   footer {
