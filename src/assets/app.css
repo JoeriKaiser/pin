@@ -375,6 +375,17 @@ button {
   background: none;
   border: 0;
   padding: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.ui-icon {
+  display: block;
+  flex-shrink: 0;
+}
+
+.control.icon-control {
+  width: var(--control-height);
+  padding: 0;
 }
 
 a {
@@ -384,8 +395,10 @@ a {
   text-underline-offset: 0.16em;
 }
 
-a:hover {
-  text-decoration: underline;
+@media (hover: hover) {
+  a:hover {
+    text-decoration: underline;
+  }
 }
 
 :focus {
@@ -452,9 +465,11 @@ a:hover {
   transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
-.control:hover {
-  background: var(--soft);
-  border-color: var(--line-strong);
+@media (hover: hover) {
+  .control:hover {
+    background: var(--soft);
+    border-color: var(--line-strong);
+  }
 }
 
 .action-btn {
@@ -476,10 +491,12 @@ a:hover {
   transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast), transform var(--transition-fast);
 }
 
-.action-btn:hover {
-  background: var(--soft);
-  border-color: var(--line-strong);
-  text-decoration: none;
+@media (hover: hover) {
+  .action-btn:hover {
+    background: var(--soft);
+    border-color: var(--line-strong);
+    text-decoration: none;
+  }
 }
 
 .action-btn:active {
@@ -495,10 +512,12 @@ a:hover {
   box-shadow: var(--shadow-xs);
 }
 
-.action-btn.primary:hover,
-.action-btn-accent:hover {
-  background: var(--accent-solid-hover);
-  border-color: var(--accent-solid-hover);
+@media (hover: hover) {
+  .action-btn.primary:hover,
+  .action-btn-accent:hover {
+    background: var(--accent-solid-hover);
+    border-color: var(--accent-solid-hover);
+  }
 }
 
 .action-btn-update {
@@ -510,9 +529,11 @@ a:hover {
   cursor: pointer;
 }
 
-.action-btn-update:hover {
-  filter: brightness(0.96);
-  border-color: var(--success-ink);
+@media (hover: hover) {
+  .action-btn-update:hover {
+    filter: brightness(0.96);
+    border-color: var(--success-ink);
+  }
 }
 
 .action-btn-update.updating {
@@ -532,9 +553,11 @@ a:hover {
   border-color: var(--danger-border);
 }
 
-.action-btn.danger:hover {
-  filter: brightness(0.96);
-  border-color: var(--danger-ink);
+@media (hover: hover) {
+  .action-btn.danger:hover {
+    filter: brightness(0.96);
+    border-color: var(--danger-ink);
+  }
 }
 
 .action-btn:disabled,
@@ -561,9 +584,11 @@ a:hover {
   gap: var(--space-1);
 }
 
-.action-btn-small:hover {
-  background: var(--soft);
-  border-color: var(--line-strong);
+@media (hover: hover) {
+  .action-btn-small:hover {
+    background: var(--soft);
+    border-color: var(--line-strong);
+  }
 }
 
 .text-button {
@@ -580,9 +605,11 @@ a:hover {
   transition: color var(--transition-fast);
 }
 
-.text-button:hover {
-  color: var(--ink);
-  text-decoration: none;
+@media (hover: hover) {
+  .text-button:hover {
+    color: var(--ink);
+    text-decoration: none;
+  }
 }
 
 .icon-btn {
@@ -602,10 +629,12 @@ a:hover {
   transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
 }
 
-.icon-btn:hover {
-  background: var(--soft);
-  color: var(--ink);
-  border-color: var(--line-strong);
+@media (hover: hover) {
+  .icon-btn:hover {
+    background: var(--soft);
+    color: var(--ink);
+    border-color: var(--line-strong);
+  }
 }
 
 /* --------------------------------------------------------------------------
@@ -717,10 +746,12 @@ a:hover {
   font-weight: var(--weight-semibold);
 }
 
-.needs-reply-btn:hover {
-  filter: brightness(0.96);
-  border-color: var(--warning-ink);
-  background: var(--warning);
+@media (hover: hover) {
+  .needs-reply-btn:hover {
+    filter: brightness(0.96);
+    border-color: var(--warning-ink);
+    background: var(--warning);
+  }
 }
 
 .needs-reply-dot {
@@ -900,9 +931,11 @@ a:hover {
   max-width: 16rem;
 }
 
-.reply-queue-pill:hover {
-  border-color: var(--line-strong);
-  color: var(--ink);
+@media (hover: hover) {
+  .reply-queue-pill:hover {
+    border-color: var(--line-strong);
+    color: var(--ink);
+  }
 }
 
 .reply-queue-pill.active {
@@ -1048,7 +1081,7 @@ a:hover {
 }
 
 .view-btn {
-  border: 0;
+  border: 1px solid transparent;
   border-radius: calc(var(--radius-sm) - 2px);
   min-height: calc(var(--control-height) - 6px);
   padding: 0 var(--space-3);
@@ -1059,8 +1092,10 @@ a:hover {
   transition: background var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
-.view-btn:hover {
-  color: var(--ink);
+@media (hover: hover) {
+  .view-btn:hover {
+    color: var(--ink);
+  }
 }
 
 .view-btn[aria-pressed="true"] {
@@ -1247,8 +1282,10 @@ a:hover {
   border-bottom: none;
 }
 
-.agents-table tbody tr:hover td {
-  background: var(--soft);
+@media (hover: hover) {
+  .agents-table tbody tr:hover td {
+    background: var(--soft);
+  }
 }
 
 .agent-col-item {
@@ -1270,8 +1307,10 @@ a:hover {
   gap: var(--space-2);
 }
 
-.agent-item-link:hover {
-  color: var(--accent);
+@media (hover: hover) {
+  .agent-item-link:hover {
+    color: var(--accent);
+  }
 }
 
 .agent-item-id {
@@ -1386,7 +1425,7 @@ a:hover {
 .board-col {
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   display: flex;
   flex-direction: column;
   max-height: calc(100dvh - var(--top) - 5rem);
@@ -1479,10 +1518,12 @@ a:hover {
   border-color: var(--focus);
 }
 
-.board-card:hover {
-  border-color: var(--line-strong);
-  box-shadow: var(--shadow-sm);
-  transform: translateY(-1px);
+@media (hover: hover) {
+  .board-card:hover {
+    border-color: var(--line-strong);
+    box-shadow: var(--shadow-sm);
+    transform: translateY(-1px);
+  }
 }
 
 .board-card.dragging {
@@ -1519,10 +1560,12 @@ a:hover {
   transition: border-color var(--transition-fast), color var(--transition-fast), background var(--transition-fast);
 }
 
-.card-move-select:hover {
-  border-color: var(--control-border);
-  background: var(--soft);
-  color: var(--ink);
+@media (hover: hover) {
+  .card-move-select:hover {
+    border-color: var(--control-border);
+    background: var(--soft);
+    color: var(--ink);
+  }
 }
 
 .card-move-select:focus-visible {
@@ -1734,8 +1777,10 @@ a:hover {
   background: var(--surface);
 }
 
-.board-card.is-locked:hover {
-  opacity: 0.95;
+@media (hover: hover) {
+  .board-card.is-locked:hover {
+    opacity: 0.95;
+  }
 }
 
 /* Pulsing Running Agent Indicator */
@@ -1779,8 +1824,10 @@ a:hover {
   transition: background var(--transition-fast);
 }
 
-.btn-reply-card:hover {
-  background: var(--accent-solid-hover);
+@media (hover: hover) {
+  .btn-reply-card:hover {
+    background: var(--accent-solid-hover);
+  }
 }
 
 .agent-row-waiting td {
@@ -1848,12 +1895,14 @@ a:hover {
   transition: background var(--transition-fast), color var(--transition-fast);
 }
 
-.btn-view-run:hover,
-.btn-commit-pr:hover,
-.btn-pr-link:hover {
-  background: var(--accent-solid);
-  border-color: var(--accent-solid);
-  color: var(--accent-ink);
+@media (hover: hover) {
+  .btn-view-run:hover,
+  .btn-commit-pr:hover,
+  .btn-pr-link:hover {
+    background: var(--accent-solid);
+    border-color: var(--accent-solid);
+    color: var(--accent-ink);
+  }
 }
 
 .indicator-merged {
@@ -1887,10 +1936,12 @@ a:hover {
   transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
 }
 
-.btn-archive:hover {
-  background: var(--soft);
-  color: var(--ink);
-  border-color: var(--line-strong);
+@media (hover: hover) {
+  .btn-archive:hover {
+    background: var(--soft);
+    color: var(--ink);
+    border-color: var(--line-strong);
+  }
 }
 
 .btn-archive:disabled {
@@ -1936,10 +1987,12 @@ a:hover {
   transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
 }
 
-.quick-add-trigger:hover {
-  background: var(--soft);
-  border-color: var(--accent);
-  color: var(--ink);
+@media (hover: hover) {
+  .quick-add-trigger:hover {
+    background: var(--soft);
+    border-color: var(--accent);
+    color: var(--ink);
+  }
 }
 
 .quick-idea-btn {
@@ -1950,10 +2003,12 @@ a:hover {
   justify-content: center;
 }
 
-.quick-idea-btn:hover {
-  background: var(--soft);
-  border-color: var(--accent);
-  color: var(--accent);
+@media (hover: hover) {
+  .quick-idea-btn:hover {
+    background: var(--soft);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
 }
 
 .quick-add-form {
@@ -2043,10 +2098,12 @@ a:hover {
   transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
 }
 
-.snippet-btn:hover {
-  background: var(--selected);
-  color: var(--ink);
-  border-color: var(--line-strong);
+@media (hover: hover) {
+  .snippet-btn:hover {
+    background: var(--selected);
+    color: var(--ink);
+    border-color: var(--line-strong);
+  }
 }
 
 .quick-add-meta {
@@ -2121,8 +2178,10 @@ a:hover {
   transition: color var(--transition-fast);
 }
 
-.board-drawer-summary:hover {
-  color: var(--ink);
+@media (hover: hover) {
+  .board-drawer-summary:hover {
+    color: var(--ink);
+  }
 }
 
 .board-drawer-content {
@@ -2167,8 +2226,10 @@ a:hover {
   transition: background var(--transition-fast), border-left-color var(--transition-fast);
 }
 
-.proposal-item:hover {
-  background: var(--soft);
+@media (hover: hover) {
+  .proposal-item:hover {
+    background: var(--soft);
+  }
 }
 
 .proposal-item[aria-current="true"] {
@@ -2365,9 +2426,11 @@ a:hover {
   cursor: pointer;
 }
 
-.dependency-link:hover {
-  color: var(--accent);
-  text-decoration: underline;
+@media (hover: hover) {
+  .dependency-link:hover {
+    color: var(--accent);
+    text-decoration: underline;
+  }
 }
 
 .dep-indicator {
@@ -2399,9 +2462,11 @@ a:hover {
   transition: background var(--transition-fast), color var(--transition-fast);
 }
 
-.dep-remove-btn:hover {
-  background: var(--danger);
-  color: var(--danger-ink);
+@media (hover: hover) {
+  .dep-remove-btn:hover {
+    background: var(--danger);
+    color: var(--danger-ink);
+  }
 }
 
 .dep-add-btn {
@@ -2419,10 +2484,12 @@ a:hover {
   transition: border-color var(--transition-fast), color var(--transition-fast), background var(--transition-fast);
 }
 
-.dep-add-btn:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-  background: var(--soft);
+@media (hover: hover) {
+  .dep-add-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: var(--soft);
+  }
 }
 
 .dep-add-form {
@@ -2520,10 +2587,12 @@ a:hover {
   transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
 }
 
-.btn-copy-id:hover {
-  color: var(--ink);
-  border-color: var(--line-strong);
-  background: var(--soft);
+@media (hover: hover) {
+  .btn-copy-id:hover {
+    color: var(--ink);
+    border-color: var(--line-strong);
+    background: var(--soft);
+  }
 }
 
 #proposal-title {
@@ -2973,8 +3042,10 @@ a:hover {
   transition: color var(--transition-fast), border-color var(--transition-fast);
 }
 
-.reader-tab:hover {
-  color: var(--ink);
+@media (hover: hover) {
+  .reader-tab:hover {
+    color: var(--ink);
+  }
 }
 
 .reader-tab.active {
@@ -3380,8 +3451,10 @@ a:hover {
   transition: background var(--transition-fast);
 }
 
-.trajectory-row:hover {
-  background: var(--soft);
+@media (hover: hover) {
+  .trajectory-row:hover {
+    background: var(--soft);
+  }
 }
 
 .trajectory-row-tool,
@@ -3761,15 +3834,23 @@ a:hover {
   border: 0;
   color: var(--muted);
   cursor: pointer;
-  padding: var(--space-1);
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font-size: var(--text-md);
   border-radius: var(--radius-sm);
+  flex-shrink: 0;
   transition: color var(--transition-fast), background var(--transition-fast);
 }
 
-.dialog-close:hover {
-  color: var(--ink);
-  background: var(--soft);
+@media (hover: hover) {
+  .dialog-close:hover {
+    color: var(--ink);
+    background: var(--soft);
+  }
 }
 
 .dialog-body {
@@ -4065,7 +4146,7 @@ a:hover {
 }
 
 .tab-btn {
-  border: 0;
+  border: 1px solid transparent;
   border-radius: calc(var(--radius-sm) - 2px);
   min-height: calc(var(--control-height-sm) - 4px);
   padding: 0 var(--space-3);
@@ -4076,8 +4157,10 @@ a:hover {
   transition: background var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
-.tab-btn:hover {
-  color: var(--ink);
+@media (hover: hover) {
+  .tab-btn:hover {
+    color: var(--ink);
+  }
 }
 
 .tab-btn.active {
@@ -4224,8 +4307,10 @@ a:hover {
   text-decoration: none;
 }
 
-.screenshot-ref a:hover code {
-  text-decoration: underline;
+@media (hover: hover) {
+  .screenshot-ref a:hover code {
+    text-decoration: underline;
+  }
 }
 
 /* --------------------------------------------------------------------------

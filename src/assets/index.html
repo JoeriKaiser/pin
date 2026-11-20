@@ -19,8 +19,8 @@
     <button id="btn-sync-git" class="control" type="button" title="Sync Git merge status">Sync Git</button>
     <button id="btn-update" class="control action-btn-update" type="button" title="Update pin" hidden>Update to <span id="update-version"></span></button>
     <button id="btn-new-ticket" class="control action-btn-accent" type="button" title="New spec ticket (n)">+ New Task</button>
-    <button id="btn-shortcuts" class="control" type="button" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts"><span aria-hidden="true">?</span></button>
-    <button id="btn-theme-toggle" class="control" type="button" title="Toggle theme (t)" aria-label="Toggle theme"><span aria-hidden="true">◐</span></button>
+    <button id="btn-shortcuts" class="control icon-control" type="button" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts"><svg class="ui-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="6.25"/><path d="M6.25 6.25a1.85 1.85 0 0 1 3.4.95c0 1.15-1.65 1.4-1.65 2.3"/><circle cx="8" cy="11.75" r="0.6" fill="currentColor" stroke="none"/></svg></button>
+    <button id="btn-theme-toggle" class="control icon-control" type="button" title="Toggle theme (t)" aria-label="Toggle theme"><svg class="ui-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="5.75"/><path d="M8 2.25v11.5A5.75 5.75 0 0 0 8 2.25Z" fill="currentColor" stroke="none"/></svg></button>
     <div class="view-switch" role="group" aria-label="View mode">
       <button id="view-board-btn" class="control view-btn" type="button" aria-pressed="true">Board</button>
       <button id="view-detail-btn" class="control view-btn" type="button" aria-pressed="false">Detail</button>
@@ -73,8 +73,8 @@
             <div class="quick-add-header">
               <input id="quick-add-input" class="quick-add-input" type="text" placeholder="Task or spec title…" aria-label="Task title" autocomplete="off" required>
               <div class="quick-add-header-actions">
-                <button id="quick-add-expand-btn" class="control icon-btn" type="button" title="Open in full modal editor" aria-label="Open in full modal editor"><span aria-hidden="true">⤢</span></button>
-                <button id="quick-add-close-btn" class="control icon-btn" type="button" title="Collapse editor" aria-label="Collapse quick add"><span aria-hidden="true">✕</span></button>
+                <button id="quick-add-expand-btn" class="control icon-btn" type="button" title="Open in full modal editor" aria-label="Open in full modal editor"><svg class="ui-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.5 2.5h4v4M6.5 13.5h-4v-4M13.5 2.5l-4.5 4.5M2.5 13.5l4.5-4.5"/></svg></button>
+                <button id="quick-add-close-btn" class="control icon-btn" type="button" title="Collapse editor" aria-label="Collapse quick add"><svg class="ui-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
               </div>
             </div>
             <div class="quick-add-editor-wrap">
@@ -202,7 +202,7 @@
         </div>
         <div class="agent-drawer-actions">
           <button id="btn-cancel-agent" class="action-btn danger" type="button">Cancel Agent</button>
-          <button id="btn-close-agent-drawer" class="dialog-close" type="button" aria-label="Close drawer">✕</button>
+          <button id="btn-close-agent-drawer" class="dialog-close" type="button" aria-label="Close drawer"><svg class="ui-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
         </div>
       </div>
       <div id="agent-status-announcer" class="visually-hidden" aria-live="polite" aria-atomic="true"></div>
@@ -228,7 +228,7 @@
               <span id="inspector-title" class="inspector-title">Tool Call Details</span>
               <span id="inspector-status" class="inspector-status"></span>
             </div>
-            <button id="btn-close-inspector" class="dialog-close" type="button" aria-label="Close inspector">✕</button>
+            <button id="btn-close-inspector" class="dialog-close" type="button" aria-label="Close inspector"><svg class="ui-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
           </div>
           <div class="inspector-body">
             <div class="inspector-section">
@@ -292,7 +292,7 @@
   <div id="action-form" class="dialog-content">
     <div class="dialog-header">
       <h2 id="dialog-title">Action</h2>
-      <button id="dialog-close-btn" class="dialog-close" type="button" aria-label="Close">✕</button>
+      <button id="dialog-close-btn" class="dialog-close" type="button" aria-label="Close"><svg class="ui-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
     </div>
     <div id="dialog-error" class="dialog-error" role="alert" hidden></div>
     <div id="dialog-body" class="dialog-body"></div>
@@ -307,7 +307,7 @@
   <form id="spec-modal-form" class="dialog-content spec-modal-content">
     <div class="dialog-header">
       <h2 id="spec-modal-title-heading">New Spec Ticket</h2>
-      <button id="spec-modal-close-btn" class="dialog-close" type="button" aria-label="Close">✕</button>
+      <button id="spec-modal-close-btn" class="dialog-close" type="button" aria-label="Close"><svg class="ui-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
     </div>
     <div id="spec-modal-error" class="dialog-error" role="alert" hidden></div>
     <div class="dialog-body spec-modal-body">
@@ -379,7 +379,7 @@
   <div class="dialog-content">
     <div class="dialog-header">
       <h2 id="runner-dialog-title">Agent Runner</h2>
-      <button id="btn-runner-close" class="dialog-close" type="button" aria-label="Close">✕</button>
+      <button id="btn-runner-close" class="dialog-close" type="button" aria-label="Close"><svg class="ui-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
     </div>
     <div id="runner-dialog-error" class="dialog-error" role="alert" hidden></div>
     <div class="dialog-body">
@@ -425,7 +425,7 @@
         <span id="reply-modal-mode" class="badge badge-mode-idea">Idea</span>
         <span id="reply-modal-waiting" class="reply-modal-waiting">Waiting</span>
       </div>
-      <button id="btn-reply-close" class="dialog-close" type="button" aria-label="Close">✕</button>
+      <button id="btn-reply-close" class="dialog-close" type="button" aria-label="Close"><svg class="ui-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
     </div>
     <div id="reply-modal-queue" class="reply-modal-queue" role="tablist" aria-label="Waiting prompts" hidden></div>
     <div id="reply-modal-error" class="dialog-error" role="alert" hidden></div>
@@ -457,7 +457,7 @@
   <div class="dialog-content">
     <div class="dialog-header">
       <h2 id="alerts-dialog-title">Prompt Alerts</h2>
-      <button id="btn-alerts-close" class="dialog-close" type="button" aria-label="Close">✕</button>
+      <button id="btn-alerts-close" class="dialog-close" type="button" aria-label="Close"><svg class="ui-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
     </div>
     <div class="dialog-body">
       <p class="runner-hint">Choose how pin alerts you when an interactive agent pauses for your reply.</p>
@@ -485,7 +485,7 @@
   <div class="dialog-content">
     <div class="dialog-header">
       <h2 id="worktree-modal-title">Primary Working Tree Busy</h2>
-      <button id="btn-worktree-close" class="dialog-close" type="button" aria-label="Close">✕</button>
+      <button id="btn-worktree-close" class="dialog-close" type="button" aria-label="Close"><svg class="ui-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
     </div>
     <div class="dialog-body">
       <p id="worktree-busy-msg">The primary repository is already running task <span id="worktree-busy-id" class="agent-badge-id"></span>. Start this task in an isolated Git worktree under .pin_worktrees/<span id="worktree-target-id" class="agent-badge-id"></span>?</p>
@@ -508,7 +508,7 @@
   <div class="dialog-content shortcuts-modal-content">
     <div class="dialog-header">
       <h2 id="shortcuts-modal-title">Keyboard Shortcuts</h2>
-      <button id="shortcuts-modal-close-btn" class="dialog-close" type="button" aria-label="Close">✕</button>
+      <button id="shortcuts-modal-close-btn" class="dialog-close" type="button" aria-label="Close"><svg class="ui-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
     </div>
     <div class="dialog-body shortcuts-modal-body">
       <div class="shortcuts-section">
