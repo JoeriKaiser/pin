@@ -7,6 +7,7 @@ import { renderMarkdownSnippet } from './markdown.js';
 import { setViewMode } from './board.js';
 import { setRoute } from './router.js';
 import { syncWaitingAlerts } from './alerts.js';
+import { renderQuickHelpersInto } from './reply-inbox.js';
 var callbacks = { refreshData: function () {}, renderBoard: function () {}, renderDetail: function () {}, renderAgentsTable: function () {} };
 export function setAgentCallbacks(cbs) { if (cbs) Object.assign(callbacks, cbs); }
 
@@ -24,10 +25,11 @@ function setStatusPill(status, cls) {
   }
 }
 
-export function syncAgentChatControls(itemId, interactive, waiting, mode, restoreDraft) {
+export function syncAgentChatControls(itemId, interactive, waiting, mode, restoreDraft, lastMessage) {
   if (!els.agentChatContainer) return;
   if (!interactive) {
     els.agentChatContainer.hidden = true;
+    if (els.agentChatHelpers) els.agentChatHelpers.hidden = true;
     return;
   }
   els.agentChatContainer.hidden = false;
@@ -46,6 +48,21 @@ export function syncAgentChatControls(itemId, interactive, waiting, mode, restor
   if (els.btnAgentFinishIdea) {
     els.btnAgentFinishIdea.disabled = false;
     text(els.btnAgentFinishIdea, mode === 'implement' ? 'Finish & Complete' : 'Finish Discussion');
+  }
+  if (els.agentChatHelpers) {
+    if (waiting) {
+      var runInfo = getRunInfo(itemId);
+      var msgForHelpers = lastMessage || (runInfo && runInfo.last_message) || '';
+      renderQuickHelpersInto(els.agentChatHelpers, els.agentChatInput, msgForHelpers, function () {
+        if (itemId && els.agentChatInput) {
+          state.chatDrafts = state.chatDrafts || {};
+          state.chatDrafts[itemId] = els.agentChatInput.value;
+        }
+      });
+      els.agentChatHelpers.hidden = false;
+    } else {
+      els.agentChatHelpers.hidden = true;
+    }
   }
 }
 
@@ -415,7 +432,7 @@ export function handleAgentStreamEvent(data) {
   if (data.type === 'run_state') {
     var rsInteractive = !!(data.interactive || data.mode === 'idea');
     var rsWaiting = !!data.waiting_for_user;
-    syncAgentChatControls(state.currentStreamingId, rsInteractive, rsWaiting, data.mode, false);
+    syncAgentChatControls(state.currentStreamingId, rsInteractive, rsWaiting, data.mode, false, data.last_message);
     if (rsWaiting) {
       setStatusPill('Waiting for reply', 'status-waiting');
     } else if (state.activeRuns && state.currentStreamingId && state.activeRuns.has(state.currentStreamingId)) {
@@ -426,7 +443,7 @@ export function handleAgentStreamEvent(data) {
   if (data.type === 'waiting_for_user') {
     resetActiveAssistantRow();
     var activeInfo = getRunInfo(state.currentStreamingId);
-    syncAgentChatControls(state.currentStreamingId, true, true, activeInfo && activeInfo.mode, false);
+    syncAgentChatControls(state.currentStreamingId, true, true, activeInfo && activeInfo.mode, false, data.message);
     if (els.agentChatInput && typeof els.agentChatInput.focus === 'function') {
       els.agentChatInput.focus();
     }

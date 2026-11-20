@@ -2372,6 +2372,59 @@ async function runHarness() {
   testExports.syncWaitingAlerts({ notify: false });
   console.log('PASS: Waiting prompt visibility across board, agents table, and detail view verified');
 
+  console.log('\n--- 24. Testing Live Quick-Reply Queue Sync and Trajectory Reply Helpers ---');
+  testExports.state.items = [
+    { id: 'sync-q-1', title: 'Prompt One', status: 'in_progress', type: 'idea', revision: 1 },
+    { id: 'sync-q-2', title: 'Prompt Two', status: 'in_progress', type: 'task', revision: 1 }
+  ];
+  testExports.state.activeRuns = new Set(['sync-q-1']);
+  testExports.state.activeRunsInfo = [
+    { item_id: 'sync-q-1', mode: 'idea', interactive: true, waiting_for_user: true, waiting_since: 100, last_message: '1. Option A?\n2. Option B?' }
+  ];
+  testExports.syncWaitingAlerts({ notify: false });
+  testExports.openReplyModal('sync-q-1');
+  const replyInput24 = documentMock.getElementById('reply-modal-input');
+  replyInput24.value = 'Draft for prompt one';
+
+  // Second prompt starts waiting while modal is open -> queue updates without clobbering draft
+  testExports.handleGlobalWaitingEvent({
+    type: 'run_waiting',
+    id: 'sync-q-2',
+    title: 'Prompt Two',
+    mode: 'implement',
+    waiting_since: 200,
+    message: 'Confirm migration?'
+  });
+  assert.strictEqual(documentMock.getElementById('reply-modal-queue').hidden, false, 'queue bar appears live when second prompt waits');
+  assert.strictEqual(documentMock.getElementById('reply-modal-queue').children.length, 2, 'queue lists both items');
+  assert.strictEqual(replyInput24.value, 'Draft for prompt one', 'live queue sync preserves unsent draft');
+
+  // Alt+ArrowRight steps to second prompt in queue
+  documentMock.dispatchEvent({
+    type: 'keydown',
+    key: 'ArrowRight',
+    altKey: true,
+    target: replyInput24,
+    preventDefault() {}
+  });
+  assert.strictEqual(testExports.getActiveReplyItemId(), 'sync-q-2', 'Alt+ArrowRight advances to second waiting prompt');
+  testExports.closeReplyModal();
+
+  // Trajectory drawer shows numbered-question scaffold helper when waiting
+  openAgentDrawer('sync-q-1');
+  handleAgentStreamEvent({ type: 'waiting_for_user', message: '1. Option A?\n2. Option B?' });
+  const chatHelpers24 = documentMock.getElementById('agent-chat-helpers');
+  assert.strictEqual(chatHelpers24.hidden, false, 'trajectory chat helpers shown when waiting');
+  assert.ok(chatHelpers24.textContent.includes('Scaffold 2 answers'), 'trajectory chat helpers offer numbered scaffold');
+  handleAgentStreamEvent({ type: 'user_message', update: { content: '1. A\n2. B' } });
+  assert.strictEqual(chatHelpers24.hidden, true, 'trajectory chat helpers hide once user replies');
+  closeAgentDrawer();
+
+  testExports.state.activeRuns = new Set();
+  testExports.state.activeRunsInfo = [];
+  testExports.syncWaitingAlerts({ notify: false });
+  console.log('PASS: Live quick-reply queue sync and trajectory reply helpers verified');
+
   console.log('\n========================================');
   console.log('ALL VIEWER TRAJECTORY TESTS PASSED (0)');
   console.log('========================================');

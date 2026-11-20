@@ -162,6 +162,7 @@ export var els = {
   agentLogInfo: $('agent-log-info'),
   trajectoryStream: $('agent-trajectory-stream'),
   agentChatContainer: $('agent-chat-container'),
+  agentChatHelpers: $('agent-chat-helpers'),
   agentChatInput: $('agent-chat-input'),
   btnAgentChatSend: $('btn-agent-chat-send'),
   btnAgentFinishIdea: $('btn-agent-finish-idea'),

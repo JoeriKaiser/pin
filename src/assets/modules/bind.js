@@ -23,7 +23,7 @@ import { bindRunnerUi, closeRunnerDialog } from './runner.js';
 import { bindAlertsUi, setAlertCallbacks, closeAlertsDialog } from './alerts.js';
 import {
   bindReplyInboxUi, setReplyInboxCallbacks, openReplyModal, closeReplyModal,
-  submitReplyModal, isReplyModalOpen
+  submitReplyModal, isReplyModalOpen, syncReplyModalIfOpen, stepReplyQueue
 } from './reply-inbox.js';
 
 var bootCallbacks = {
@@ -485,7 +485,10 @@ export function bindAgent() {
   if (els.btnCopyToolOutput) els.btnCopyToolOutput.addEventListener('click', copyToolOutput);
 }
 
+var globalShortcutsBound = false;
 export function bindGlobalShortcuts() {
+  if (globalShortcutsBound) return;
+  globalShortcutsBound = true;
   document.addEventListener('keydown', function (event) {
     if (els.specModal && (els.specModal.open || els.specModal.hasAttribute('open'))) {
       if (event.key === 'Escape') { event.preventDefault(); closeSpecModal(); }
@@ -508,6 +511,8 @@ export function bindGlobalShortcuts() {
     if (isReplyModalOpen()) {
       if (event.key === 'Escape') { event.preventDefault(); closeReplyModal(); }
       else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) { event.preventDefault(); submitReplyModal(); }
+      else if (event.altKey && event.key === 'ArrowRight') { event.preventDefault(); stepReplyQueue(1); }
+      else if (event.altKey && event.key === 'ArrowLeft') { event.preventDefault(); stepReplyQueue(-1); }
       return;
     }
     if (els.alertsDialog && (els.alertsDialog.open || els.alertsDialog.hasAttribute('open'))) {
@@ -698,6 +703,7 @@ export function bind(options) {
   setAlertCallbacks({
     openReplyForItem: openReplyModal,
     openAgentDrawer: openAgentDrawer,
+    onWaitingUpdated: syncReplyModalIfOpen,
     renderBoard: renderBoard,
     renderDetail: renderDetail,
     renderAgentsTable: renderAgentsTable

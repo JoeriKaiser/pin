@@ -10,6 +10,7 @@ var initialSyncDone = false;
 var callbacks = {
   openReplyForItem: function () {},
   openAgentDrawer: function () {},
+  onWaitingUpdated: function () {},
   renderBoard: function () {},
   renderDetail: function () {},
   renderAgentsTable: function () {}
@@ -345,6 +346,7 @@ export function syncWaitingAlerts(options) {
   updateDocumentAttention(waitingRuns.length);
   renderNeedsReplyControls(waitingRuns);
   renderAlertsButton();
+  if (callbacks.onWaitingUpdated) callbacks.onWaitingUpdated(waitingRuns);
   return waitingRuns;
 }
 

@@ -114,27 +114,27 @@ function renderReplyQueue(waitingRuns) {
   });
 }
 
-function renderQuickHelpers(messageText) {
-  if (!els.replyModalHelpers) return;
-  clear(els.replyModalHelpers);
+export function renderQuickHelpersInto(container, inputEl, messageText, onDraftChange) {
+  if (!container) return;
+  clear(container);
   var questions = extractNumberedQuestions(messageText);
 
   if (questions.length >= 2) {
     var scaffoldBtn = node('button', 'snippet-btn reply-helper-chip', 'Scaffold ' + questions.length + ' answers');
     scaffoldBtn.type = 'button';
     scaffoldBtn.addEventListener('click', function () {
-      if (!els.replyModalInput) return;
+      if (!inputEl || inputEl.disabled) return;
       var scaffold = buildNumberedScaffold(questions);
-      var current = els.replyModalInput.value.trim();
-      els.replyModalInput.value = current ? (current + '\n\n' + scaffold) : scaffold;
-      saveCurrentDraft();
-      if (typeof els.replyModalInput.focus === 'function') els.replyModalInput.focus();
-      if (typeof els.replyModalInput.setSelectionRange === 'function') {
+      var current = inputEl.value.trim();
+      inputEl.value = current ? (current + '\n\n' + scaffold) : scaffold;
+      if (onDraftChange) onDraftChange();
+      if (typeof inputEl.focus === 'function') inputEl.focus();
+      if (typeof inputEl.setSelectionRange === 'function') {
         var pos = current ? (current.length + 2 + 3) : 3;
-        els.replyModalInput.setSelectionRange(pos, pos);
+        inputEl.setSelectionRange(pos, pos);
       }
     });
-    els.replyModalHelpers.appendChild(scaffoldBtn);
+    container.appendChild(scaffoldBtn);
   }
 
   var quickChoices = [
@@ -146,14 +146,18 @@ function renderQuickHelpers(messageText) {
     var chip = node('button', 'snippet-btn reply-helper-chip', choice.label);
     chip.type = 'button';
     chip.addEventListener('click', function () {
-      if (!els.replyModalInput) return;
-      var cur = els.replyModalInput.value.trim();
-      els.replyModalInput.value = cur ? (cur + '\n' + choice.text) : choice.text;
-      saveCurrentDraft();
-      if (typeof els.replyModalInput.focus === 'function') els.replyModalInput.focus();
+      if (!inputEl || inputEl.disabled) return;
+      var cur = inputEl.value.trim();
+      inputEl.value = cur ? (cur + '\n' + choice.text) : choice.text;
+      if (onDraftChange) onDraftChange();
+      if (typeof inputEl.focus === 'function') inputEl.focus();
     });
-    els.replyModalHelpers.appendChild(chip);
+    container.appendChild(chip);
   });
+}
+
+function renderQuickHelpers(messageText) {
+  renderQuickHelpersInto(els.replyModalHelpers, els.replyModalInput, messageText, saveCurrentDraft);
 }
 
 export function renderReplyModalForItem(itemId) {
@@ -214,6 +218,35 @@ export function renderReplyModalForItem(itemId) {
 
 export function isReplyModalOpen() {
   return !!(els.replyModal && (els.replyModal.open || els.replyModal.hasAttribute('open')));
+}
+
+export function stepReplyQueue(delta) {
+  if (!isReplyModalOpen()) return false;
+  var waitingRuns = getWaitingRuns();
+  if (waitingRuns.length <= 1) return false;
+  var idx = waitingRuns.findIndex(function (r) { return r.item_id === activeReplyItemId; });
+  if (idx < 0) idx = 0;
+  var nextIdx = (idx + delta + waitingRuns.length) % waitingRuns.length;
+  saveCurrentDraft();
+  renderReplyModalForItem(waitingRuns[nextIdx].item_id);
+  return true;
+}
+
+export function syncReplyModalIfOpen() {
+  if (!isReplyModalOpen()) return;
+  var waitingRuns = getWaitingRuns();
+  if (waitingRuns.length === 0) {
+    closeReplyModal();
+    return;
+  }
+  var stillWaiting = waitingRuns.some(function (r) { return r.item_id === activeReplyItemId; });
+  if (!stillWaiting) {
+    renderReplyModalForItem(waitingRuns[0].item_id);
+    return;
+  }
+  // Keep current draft and focus untouched; only refresh queue pills and duration.
+  renderReplyQueue(waitingRuns);
+  updateWaitingDurationLabel();
 }
 
 export function openReplyModal(itemId) {

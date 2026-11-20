@@ -3314,6 +3314,14 @@ a:hover {
   flex-shrink: 0;
 }
 
+.agent-chat-helpers {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-2);
+}
+
 .agent-chat-input-row {
   display: flex;
   flex-direction: column;
