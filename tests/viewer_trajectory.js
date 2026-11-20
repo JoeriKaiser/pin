@@ -863,14 +863,18 @@ async function runHarness() {
   colBCards.appendChild(cardB);
 
   let focusedCard = null;
-  cardB.focus = function () { focusedCard = 'cardB'; };
-  cardA.focus = function () { focusedCard = 'cardA'; };
+  const openBtnA = cardA.querySelector('.board-card-open');
+  const openBtnB = cardB.querySelector('.board-card-open');
+  assert.strictEqual(cardA.tagName, 'ARTICLE', 'Board card uses semantic article element instead of nested button');
+  assert.ok(openBtnA && openBtnA.tagName === 'BUTTON', 'Board card exposes native button inside heading');
+  openBtnB.focus = function () { focusedCard = 'cardB'; };
+  openBtnA.focus = function () { focusedCard = 'cardA'; };
 
   let rightPrevented = false;
   document.dispatchEvent({
     type: 'keydown',
     key: 'ArrowRight',
-    target: cardA,
+    target: openBtnA,
     preventDefault() { rightPrevented = true; }
   });
   assert.strictEqual(rightPrevented, true, 'ArrowRight calls preventDefault');
@@ -880,7 +884,7 @@ async function runHarness() {
   document.dispatchEvent({
     type: 'keydown',
     key: 'ArrowLeft',
-    target: cardB,
+    target: openBtnB,
     preventDefault() { leftPrevented = true; }
   });
   assert.strictEqual(leftPrevented, true, 'ArrowLeft calls preventDefault');
@@ -2425,6 +2429,368 @@ async function runHarness() {
   testExports.state.activeRunsInfo = [];
   testExports.syncWaitingAlerts({ notify: false });
   console.log('PASS: Live quick-reply queue sync and trajectory reply helpers verified');
+
+  console.log('\n--- 25. Testing CSS Token Integrity and WCAG 2.2 AA Contrast ---');
+  {
+    const cssSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'assets', 'app.css'), 'utf8');
+    const definedVars = new Set([...cssSrc.matchAll(/(--[a-z0-9-]+)\s*:/g)].map(m => m[1]));
+    const usedVars = [...cssSrc.matchAll(/var\(\s*(--[a-z0-9-]+)/g)].map(m => m[1]);
+    const undefinedVars = [...new Set(usedVars.filter(v => !definedVars.has(v)))];
+    assert.deepStrictEqual(undefinedVars, [], 'app.css must not reference undefined CSS variables');
+
+    const oklchToLinearRgb = (L, C, hDeg) => {
+      const h = hDeg * Math.PI / 180;
+      const a = C * Math.cos(h);
+      const b = C * Math.sin(h);
+      const l_ = L + 0.3963377774 * a + 0.2158037573 * b;
+      const m_ = L - 0.1055613458 * a - 0.0638541728 * b;
+      const s_ = L - 0.0894841775 * a - 1.2914855480 * b;
+      const l = l_ * l_ * l_, m = m_ * m_ * m_, s = s_ * s_ * s_;
+      const r = +4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s;
+      const g = -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s;
+      const bl = -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s;
+      return {
+        r: Math.min(1, Math.max(0, r)),
+        g: Math.min(1, Math.max(0, g)),
+        b: Math.min(1, Math.max(0, bl)),
+        inGamut: r >= -1e-4 && r <= 1.0001 && g >= -1e-4 && g <= 1.0001 && bl >= -1e-4 && bl <= 1.0001
+      };
+    };
+    const parseColor = (str) => {
+      const s = str.trim();
+      if (s === '#ffffff') return { r: 1, g: 1, b: 1, inGamut: true };
+      const m = s.match(/oklch\(\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)(?:\s*\/\s*([\d.]+))?\s*\)/);
+      if (!m) return null;
+      return oklchToLinearRgb(+m[1], +m[2], +m[3]);
+    };
+    const contrastRatio = (c1, c2) => {
+      const l1 = 0.2126 * c1.r + 0.7152 * c1.g + 0.0722 * c1.b;
+      const l2 = 0.2126 * c2.r + 0.7152 * c2.g + 0.0722 * c2.b;
+      return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+    };
+    const extractTokens = (block) => {
+      const out = {};
+      for (const m of block.matchAll(/(--[a-z0-9-]+)\s*:\s*([^;]+);/g)) out[m[1]] = m[2].trim();
+      return out;
+    };
+    const lightTokens = extractTokens(cssSrc.slice(cssSrc.indexOf(':root {'), cssSrc.indexOf('/* Dark Theme Palette')));
+    const darkTokens = extractTokens(cssSrc.slice(cssSrc.indexOf(':root[data-theme="dark"] {'), cssSrc.indexOf('@media (prefers-color-scheme: dark)')));
+    const requiredPairs = [
+      ['--ink', '--bg', 4.5], ['--muted', '--surface', 4.5], ['--faint', '--soft', 4.5],
+      ['--accent', '--surface', 4.5], ['--accent', '--accent-subtle', 4.5],
+      ['--accent-ink', '--accent-solid', 4.5], ['--accent-ink', '--accent-solid-hover', 4.5],
+      ['--focus', '--surface', 3.0], ['--control-border', '--surface', 3.0],
+      ['--priority-high', '--status-blocked-bg', 4.5], ['--priority-low', '--status-created-bg', 4.5],
+      ['--role-tool', '--bg', 4.5]
+    ];
+    for (const [themeName, tokens] of [['light', lightTokens], ['dark', darkTokens]]) {
+      for (const [k, v] of Object.entries(tokens)) {
+        const parsed = parseColor(v);
+        if (parsed) assert.ok(parsed.inGamut, `${themeName} token ${k} (${v}) must be in sRGB gamut`);
+      }
+      for (const [fg, bg, minRatio] of requiredPairs) {
+        const cr = contrastRatio(parseColor(tokens[fg]), parseColor(tokens[bg]));
+        assert.ok(cr >= minRatio, `${themeName} ${fg} on ${bg} contrast ${cr.toFixed(2)}:1 < ${minRatio}:1`);
+      }
+    }
+    console.log('PASS: CSS token integrity and WCAG 2.2 AA contrast verified');
+  }
+
+  console.log('\n--- 26. Testing Board Card Semantics, Priority Labels, and Accessible Names ---');
+  {
+    const doneCard26 = testExports.buildBoardCard({
+      id: 'a11y-done-1',
+      title: 'Accessible Done Card',
+      status: 'done',
+      type: 'task',
+      priority: 'high',
+      timestamp: Date.now()
+    });
+    assert.strictEqual(doneCard26.tagName, 'ARTICLE', 'Board card is an article, not a button');
+    const titleHeading26 = doneCard26.querySelector('.board-card-title');
+    assert.strictEqual(titleHeading26.tagName, 'H3', 'Board card heading is h3 under column h2');
+    const prioPill26 = doneCard26.querySelector('.priority-pill');
+    assert.ok(prioPill26 && prioPill26.textContent.includes('High'), 'Board card priority includes text label, not color alone');
+    const commitBtn26 = doneCard26.querySelector('.btn-commit-pr');
+    assert.ok(commitBtn26 && commitBtn26.getAttribute('aria-label').startsWith('Commit + PR'), 'Commit + PR aria-label starts with visible text');
+
+    testExports.renderActions({
+      id: 'a11y-pr-1',
+      title: 'PR Detail Item',
+      status: 'done',
+      type: 'task',
+      git_status: 'pr_open',
+      pr_url: 'https://github.com/example/repo/pull/7',
+      pr_number: 7
+    });
+    const detailPrLink26 = documentMock.getElementById('proposal-actions').children.find(el => el.tagName === 'A');
+    assert.ok(detailPrLink26, 'Detail View PR action renders as native anchor link');
+    assert.strictEqual(detailPrLink26.getAttribute('href'), 'https://github.com/example/repo/pull/7');
+
+    const htmlSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'assets', 'index.html'), 'utf8');
+    assert.ok(htmlSrc.includes('href="#workspace"'), 'Skip link targets #workspace');
+    assert.ok(htmlSrc.includes('id="btn-shortcuts"') && htmlSrc.includes('aria-label="Keyboard shortcuts"'), 'Shortcuts button has descriptive aria-label');
+    assert.ok(htmlSrc.includes('<kbd aria-hidden="true">/</kbd>'), 'Search shortcut hint is aria-hidden');
+    console.log('PASS: Board card semantics, priority labels, and accessible names verified');
+  }
+
+  console.log('\n--- 27. Testing ARIA Tablists, Keyboard Tool Rows, Form Validation, and Runner Cmd+Enter ---');
+  {
+    // Reader tabs sync aria-selected and roving tabindex
+    testExports.setReaderTab('trajectory');
+    assert.strictEqual(documentMock.getElementById('tab-agent-trajectory').getAttribute('aria-selected'), 'true', 'trajectory tab aria-selected=true');
+    assert.strictEqual(documentMock.getElementById('tab-task-spec').getAttribute('aria-selected'), 'false', 'spec tab aria-selected=false');
+    assert.strictEqual(documentMock.getElementById('tab-task-spec').getAttribute('tabindex'), '-1', 'inactive tab has tabindex=-1');
+    testExports.setReaderTab('spec');
+    assert.strictEqual(documentMock.getElementById('tab-task-spec').getAttribute('aria-selected'), 'true', 'spec tab restored aria-selected=true');
+
+    // Spec modal Write/Preview tabs sync aria-selected and render empty state without inline style
+    testExports.openSpecModal({});
+    testExports.setSpecModalTab('preview');
+    assert.strictEqual(documentMock.getElementById('spec-tab-preview').getAttribute('aria-selected'), 'true', 'preview tab aria-selected=true');
+    assert.ok(!documentMock.getElementById('spec-modal-preview').innerHTML.includes('style='), 'empty preview uses class instead of CSP-blocked inline style');
+    testExports.submitSpecModal();
+    assert.strictEqual(documentMock.getElementById('spec-modal-title').getAttribute('aria-invalid'), 'true', 'empty title sets aria-invalid');
+    assert.strictEqual(documentMock.getElementById('spec-modal-title').getAttribute('aria-describedby'), 'spec-modal-error', 'empty title sets aria-describedby');
+    testExports.closeSpecModal();
+
+    // Keyboard activation on trajectory tool call row
+    openAgentDrawer('kbd-tool-item');
+    handleAgentStreamEvent({
+      type: 'tool_call',
+      update: { toolCallId: 'kbd-c1', name: 'bash', rawInput: { command: 'echo hi' }, status: 'running' }
+    });
+    const kbdStream27 = documentMock.getElementById('agent-trajectory-stream');
+    const kbdRow = kbdStream27.children.filter(r => !!findDescendant(r, '.badge-tool'))[0];
+    assert.ok(kbdRow, 'trajectory tool row created');
+    assert.strictEqual(kbdRow.getAttribute('role'), 'button', 'trajectory tool row has button role');
+    assert.strictEqual(kbdRow.getAttribute('tabindex'), '0', 'trajectory tool row is keyboard focusable');
+    kbdRow.dispatchEvent({ type: 'keydown', key: 'Enter', preventDefault() {} });
+    assert.strictEqual(documentMock.getElementById('agent-tool-inspector').hidden, false, 'Enter key opens tool inspector');
+    testExports.closeToolInspector();
+    closeAgentDrawer();
+
+    // Runner Cmd+Enter submits via els.btnRunnerSave
+    const runnerDlg27 = documentMock.getElementById('runner-dialog');
+    const runnerSaveBtn27 = documentMock.getElementById('btn-runner-save');
+    let runnerSaveClicked = false;
+    const origClick27 = runnerSaveBtn27.click;
+    runnerSaveBtn27.click = function () { runnerSaveClicked = true; };
+    runnerSaveBtn27.disabled = false;
+    runnerDlg27.open = true;
+    documentMock.dispatchEvent({
+      type: 'keydown',
+      key: 'Enter',
+      metaKey: true,
+      target: runnerDlg27,
+      preventDefault() {}
+    });
+    assert.strictEqual(runnerSaveClicked, true, 'Cmd+Enter in Runner dialog clicks btn-runner-save');
+    runnerSaveBtn27.click = origClick27;
+    runnerDlg27.open = false;
+
+    console.log('PASS: ARIA tablists, keyboard tool rows, form validation, and Runner Cmd+Enter verified');
+  }
+
+  console.log('\n--- 28. Testing Swimlane SVG ViewBox Bounds and Clickable Tool Nodes ---');
+  {
+    openAgentDrawer('swim-test-item');
+    handleAgentStreamEvent({
+      type: 'agent_thought_chunk',
+      update: { sessionUpdate: 'agent_thought_chunk', content: { text: 'Planning step' } }
+    });
+    handleAgentStreamEvent({
+      type: 'tool_call',
+      update: { toolCallId: 'swim-call-1', name: 'bash', rawInput: { command: 'cargo test' }, status: 'running' }
+    });
+    const svgEl28 = documentMock.getElementById('agent-swimlane-svg');
+    const circles28 = svgEl28.children.filter(c => c.tagName === 'CIRCLE');
+    assert.ok(circles28.length >= 3, 'Swimlane renders input, model, and tool nodes');
+    circles28.forEach(c => {
+      const cy = Number(c.getAttribute('cy'));
+      assert.ok(cy > 0 && cy < 64, `Swimlane circle cy=${cy} fits inside viewBox height 64`);
+    });
+    const toolCircle28 = circles28.find(c => (c.getAttribute('class') || '').includes('swimlane-node-tools'));
+    assert.ok(toolCircle28, 'Swimlane renders tools lane node');
+    toolCircle28.click();
+    assert.strictEqual(documentMock.getElementById('agent-tool-inspector').hidden, false, 'Clicking swimlane tool node opens tool inspector');
+    testExports.closeToolInspector();
+    closeAgentDrawer();
+    console.log('PASS: Swimlane SVG viewBox bounds and clickable tool nodes verified');
+  }
+
+  console.log('\n--- 29. Testing Single-Pointer Board Card Status Move Control (WCAG 2.5.7) ---');
+  {
+    const moveItem29 = { id: 'move-card-29', title: 'Moveable Card', status: 'created', type: 'task', revision: 1 };
+    testExports.state.items.push(moveItem29);
+    const moveCard29 = testExports.buildBoardCard(moveItem29);
+    const moveSel29 = moveCard29.querySelector('.card-move-select');
+    assert.ok(moveSel29, 'Board card includes single-pointer status move select');
+    assert.ok(moveSel29.getAttribute('aria-label').includes('Moveable Card'), 'Move select aria-label identifies the card');
+    const optValues29 = moveSel29.children.map(o => o.value).filter(Boolean);
+    assert.ok(!optValues29.includes('created'), 'Move select omits current status');
+    assert.ok(optValues29.includes('planned') && optValues29.includes('in_progress'), 'Move select offers target columns');
+
+    let movedPayload29 = null;
+    const prevFetch29 = fetchStub;
+    fetchStub = function (url, opts) {
+      if (url.includes('items/move-card-29/action')) {
+        movedPayload29 = JSON.parse(opts.body);
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ ok: true }) });
+      }
+      return prevFetch29(url, opts);
+    };
+    moveSel29.value = 'planned';
+    moveSel29.dispatchEvent({ type: 'change', stopPropagation() {} });
+    await new Promise(r => setTimeout(r, 20));
+    assert.ok(movedPayload29 && movedPayload29.to === 'planned', 'Selecting target column dispatches transition without dragging');
+    assert.strictEqual(moveSel29.value, '', 'Move select resets after dispatch');
+    fetchStub = prevFetch29;
+    console.log('PASS: Single-pointer board card status move control verified');
+  }
+
+  console.log('\n--- 30. Testing Single Primary Action per Detail View ---');
+  {
+    const statuses30 = ['created', 'planned', 'in_progress', 'blocked', 'done', 'closed'];
+    statuses30.forEach(st => {
+      testExports.renderActions({ id: 'act-' + st, title: 'Item ' + st, status: st, type: 'task', revision: 1 });
+      const primaryBtns = documentMock.getElementById('proposal-actions').children.filter(c =>
+        c.classList && c.classList.contains('primary')
+      );
+      assert.ok(primaryBtns.length <= 1, `Status ${st} renders at most 1 primary filled button (got ${primaryBtns.length})`);
+    });
+    console.log('PASS: Single primary action per detail view verified');
+  }
+
+  console.log('\n--- 31. Testing Dialog aria-labelledby and Backdrop Light-Dismiss ---');
+  {
+    const htmlSrc31 = fs.readFileSync(path.join(__dirname, '..', 'src', 'assets', 'index.html'), 'utf8');
+    const dialogTags = htmlSrc31.match(/<dialog\b[^>]*>/g) || [];
+    assert.ok(dialogTags.length >= 7, 'All 7 viewer dialogs exist');
+    dialogTags.forEach(tag => {
+      assert.ok(tag.includes('aria-labelledby='), `Dialog tag must have aria-labelledby: ${tag}`);
+    });
+
+    const scDlg = documentMock.getElementById('shortcuts-modal');
+    testExports.openShortcutsModal();
+    assert.strictEqual(scDlg.open, true, 'Shortcuts dialog opens');
+    scDlg.dispatchEvent({ type: 'click', target: scDlg });
+    assert.strictEqual(scDlg.open, false, 'Clicking dialog backdrop dismisses shortcuts dialog');
+    console.log('PASS: Dialog aria-labelledby and backdrop light-dismiss verified');
+  }
+
+  console.log('\n--- 32. Testing Human-Readable Status Labels and Typography Rules ---');
+  {
+    assert.strictEqual(testExports.formatStatusLabel('in_progress'), 'In progress', 'in_progress formats cleanly');
+    assert.strictEqual(testExports.formatStatusLabel('created'), 'Backlog', 'created formats as Backlog');
+    const cssSrc32 = fs.readFileSync(path.join(__dirname, '..', 'src', 'assets', 'app.css'), 'utf8');
+    assert.ok(cssSrc32.includes('max-width: 68ch'), 'Prose caps reading measure within 60-75ch');
+    assert.ok(cssSrc32.includes('text-wrap: balance') && cssSrc32.includes('text-wrap: pretty'), 'Headings balance and prose uses pretty wrap');
+    assert.ok(cssSrc32.includes('font-size: 1rem'), 'Mobile inputs enforce 16px floor to prevent iOS zoom');
+    console.log('PASS: Human-readable status labels and typography rules verified');
+  }
+
+  console.log('\n--- 33. Testing Motion Discipline and Theme-Switch Transition Suppression ---');
+  {
+    const cssSrc33 = fs.readFileSync(path.join(__dirname, '..', 'src', 'assets', 'app.css'), 'utf8');
+    assert.ok(cssSrc33.includes(':root.theme-switching'), 'Theme switch transition suppression class is defined');
+    assert.ok(cssSrc33.includes(':not(:disabled):active'), 'Press scale excludes disabled buttons');
+    assert.ok(cssSrc33.includes('scale(0.96)'), 'Press feedback scales to 0.96');
+    assert.ok(cssSrc33.includes('prefers-reduced-motion: no-preference'), 'Motion animations are gated behind prefers-reduced-motion: no-preference');
+    assert.ok(!cssSrc33.includes('transition: all'), 'No transition: all declarations');
+    console.log('PASS: Motion discipline and theme-switch transition suppression verified');
+  }
+
+  console.log('\n--- 34. Testing Actionable Empty States and Consistent Copy ---');
+  {
+    const prevItems34 = testExports.state.items.slice();
+    testExports.state.items = [{ id: 'f34', title: 'Alpha', status: 'created', type: 'task' }];
+    testExports.state.filters.text = 'nonexistent-query-xyz';
+    testExports.renderList();
+    const listEmpty34 = documentMock.getElementById('list-empty');
+    assert.ok(listEmpty34.textContent.includes('nonexistent-query-xyz'), 'Filtered empty state names the active query');
+    assert.ok(listEmpty34.querySelector('.empty-action-btn'), 'Filtered empty state renders Clear filters action');
+    testExports.state.filters.text = '';
+    testExports.state.items = prevItems34;
+
+    const htmlSrc34 = fs.readFileSync(path.join(__dirname, '..', 'src', 'assets', 'index.html'), 'utf8');
+    assert.ok(htmlSrc34.includes('id="btn-agents-go-board"'), 'Agents empty state includes next action button');
+    assert.ok(!htmlSrc34.includes('Skip to proposal'), 'Stale proposal terminology removed from chrome');
+    console.log('PASS: Actionable empty states and consistent copy verified');
+  }
+
+  console.log('\n--- 35. Testing Active Filter Summary Chips Bar ---');
+  {
+    const statusSel35 = documentMock.getElementById('status-filter');
+    const prioSel35 = documentMock.getElementById('priority-filter');
+    const chipsBar35 = documentMock.getElementById('active-filters');
+    statusSel35.value = 'in_progress';
+    statusSel35.dispatchEvent({ type: 'change' });
+    prioSel35.value = 'high';
+    prioSel35.dispatchEvent({ type: 'change' });
+    assert.strictEqual(chipsBar35.hidden, false, 'Active filters bar shows when filters are active');
+    assert.ok(chipsBar35.textContent.includes('Status: In progress'), 'Chip displays formatted status label');
+    assert.ok(chipsBar35.textContent.includes('Priority: High'), 'Chip displays priority filter');
+    assert.ok(chipsBar35.textContent.includes('Clear all'), 'Multiple active filters show Clear all button');
+
+    const statusChip35 = chipsBar35.children.find(c => c.dataset && c.dataset.filterKey === 'status');
+    assert.ok(statusChip35, 'Status chip has filterKey dataset');
+    statusChip35.click();
+    assert.strictEqual(testExports.state.filters.status, '', 'Clicking status chip clears status filter');
+    assert.strictEqual(testExports.state.filters.priority, 'high', 'Other filters stay active');
+
+    const prioChip35 = chipsBar35.children.find(c => c.dataset && c.dataset.filterKey === 'priority');
+    prioChip35.click();
+    assert.strictEqual(chipsBar35.hidden, true, 'Active filters bar hides when last filter is removed');
+    console.log('PASS: Active filter summary chips bar verified');
+  }
+
+  console.log('\n--- 36. Testing 1/2/3 View Mode Keyboard Shortcuts ---');
+  {
+    documentMock.dispatchEvent({ type: 'keydown', key: '3', target: documentMock.body, preventDefault() {} });
+    assert.strictEqual(testExports.state.viewMode, 'agents', 'Pressing 3 switches to agents view');
+    documentMock.dispatchEvent({ type: 'keydown', key: '2', target: documentMock.body, preventDefault() {} });
+    assert.strictEqual(testExports.state.viewMode, 'detail', 'Pressing 2 switches to detail view');
+    documentMock.dispatchEvent({ type: 'keydown', key: '1', target: documentMock.body, preventDefault() {} });
+    assert.strictEqual(testExports.state.viewMode, 'board', 'Pressing 1 switches to board view');
+    console.log('PASS: 1/2/3 view mode keyboard shortcuts verified');
+  }
+
+  console.log('\n--- 37. Testing Agents Table Semantics and Action Wrapper ---');
+  {
+    const html37 = fs.readFileSync(path.join(__dirname, '..', 'src', 'assets', 'index.html'), 'utf8');
+    const colScopeCount = (html37.match(/<th\s+scope="col"/g) || []).length;
+    assert.strictEqual(colScopeCount, 8, 'All 8 agents table headers declare scope="col"');
+
+    const prevRuns37 = testExports.state.activeRunsInfo;
+    const prevActive37 = testExports.state.activeRuns;
+    testExports.state.activeRunsInfo = [{
+      item_id: 'agents-layout-1',
+      mode: 'implement',
+      interactive: true,
+      waiting_for_user: true,
+      is_primary_worktree: false,
+      worktree_path: '.pin_worktrees/agents-layout-1',
+      started_at: Math.floor(Date.now() / 1000) - 30,
+      last_message: 'Need confirmation before merging.'
+    }];
+    testExports.state.activeRuns = new Set(['agents-layout-1']);
+    testExports.renderAgentsTable();
+    const row37 = documentMock.getElementById('agents-table-body').children[0];
+    assert.ok(row37, 'Agents table rendered row');
+    const actionsTd37 = row37.querySelector('.agent-col-actions');
+    assert.ok(actionsTd37, 'Actions cell rendered');
+    assert.strictEqual(actionsTd37.getAttribute('data-label'), 'Actions', 'Actions cell carries data-label for mobile card view');
+    const group37 = actionsTd37.querySelector('.agent-actions-group');
+    assert.ok(group37, 'Actions buttons live inside .agent-actions-group wrapper instead of flex td');
+    assert.ok(group37.querySelector('.btn-reply-run'), 'Reply button inside actions wrapper');
+    assert.ok(group37.querySelector('.btn-view-run'), 'View run button inside actions wrapper');
+
+    testExports.state.activeRunsInfo = prevRuns37;
+    testExports.state.activeRuns = prevActive37;
+    testExports.renderAgentsTable();
+    console.log('PASS: Agents table semantics and action wrapper verified');
+  }
 
   console.log('\n========================================');
   console.log('ALL VIEWER TRAJECTORY TESTS PASSED (0)');

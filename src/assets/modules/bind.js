@@ -1,7 +1,7 @@
 import { state, find } from './state.js';
 import { els, $ } from './dom.js';
 import { sendCancel, sendRun, sendCommitPr, sendMessage, sendFinish, sendUpdate, sendSync } from './api.js';
-import { text, showToast } from './formatters.js';
+import { text, clear, node, showToast, formatStatusLabel } from './formatters.js';
 import { setRoute, applyRoute, setOnRouteChanged } from './router.js';
 import { insertSnippetIntoTextarea, handleScreenshotPaste } from './media.js';
 import { handleCardDrop, setViewMode, setBoardCallbacks, renderBoard } from './board.js';
@@ -37,7 +37,7 @@ export function setBindCallbacks(cbs) {
 
 export function sendRunItem(id, useWorktree, errorPrefix, optMode, interactive) {
   var mode = (optMode === 'idea' || (typeof errorPrefix === 'string' && errorPrefix.indexOf('Idea') !== -1)) ? 'idea' : undefined;
-  showToast(mode === 'idea' ? 'Starting Idea agent...' : (interactive ? 'Starting interactive agent...' : 'Starting agent...'), false);
+  showToast(mode === 'idea' ? 'Starting Idea agent…' : (interactive ? 'Starting interactive agent…' : 'Starting agent…'), false);
   var payload = useWorktree ? { use_worktree: true } : {};
   if (mode) payload.mode = mode;
   if (interactive) payload.interactive = true;
@@ -80,7 +80,7 @@ export function sendRunItem(id, useWorktree, errorPrefix, optMode, interactive) 
 }
 
 export function sendCommitPrItem(id) {
-  showToast('Starting Commit & PR agent...', false);
+  showToast('Starting Commit + PR agent…', false);
   return sendCommitPr(id)
     .then(function (res) {
       if (!res.ok) {
@@ -145,7 +145,7 @@ export function finishIdeaDiscussion(itemId) {
     })
     .then(function () {
       showToast('Discussion finished. Generating spec…', false);
-      appendTrajectoryContextRow('Finalizing idea discussion and updating proposal…');
+      appendTrajectoryContextRow('Finalizing idea discussion and updating item…');
       updateActiveRuns();
     })
     .catch(function (err) {
@@ -225,6 +225,7 @@ export function bindNavigation() {
   if (els.viewBoardBtn) els.viewBoardBtn.addEventListener('click', function () { setViewMode('board'); });
   if (els.viewDetailBtn) els.viewDetailBtn.addEventListener('click', function () { setViewMode('detail'); });
   if (els.viewAgentsBtn) els.viewAgentsBtn.addEventListener('click', function () { setViewMode('agents'); });
+  if (els.btnAgentsGoBoard) els.btnAgentsGoBoard.addEventListener('click', function () { setViewMode('board'); });
   if (els.back) els.back.addEventListener('click', function () { setRoute(null); });
   if (els.btnNewTicket) els.btnNewTicket.addEventListener('click', function () { openSpecModal(); });
   if (els.btnUpdate) els.btnUpdate.addEventListener('click', handleUpdateInstall);
@@ -243,8 +244,75 @@ function updateFilterToggleLabel() {
   text(els.filterToggle, active > 0 ? 'Filters (' + active + ')' : 'Filters');
 }
 
+function formatChipValue(value) {
+  var s = String(value || '');
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+}
+
+function renderActiveFilterChips() {
+  if (!els.activeFilters) return;
+  clear(els.activeFilters);
+  var chips = [];
+  if (state.filters.text && state.filters.text.trim()) {
+    chips.push({ key: 'text', label: 'Search: "' + state.filters.text.trim() + '"' });
+  }
+  if (state.filters.status) {
+    chips.push({ key: 'status', label: 'Status: ' + formatStatusLabel(state.filters.status) });
+  }
+  if (state.filters.type) {
+    chips.push({ key: 'type', label: 'Type: ' + formatChipValue(state.filters.type) });
+  }
+  if (state.filters.kind) {
+    chips.push({ key: 'kind', label: 'Kind: ' + formatChipValue(state.filters.kind) });
+  }
+  if (state.filters.priority) {
+    chips.push({ key: 'priority', label: 'Priority: ' + formatChipValue(state.filters.priority) });
+  }
+  if (state.filters.project && state.filters.project.trim()) {
+    chips.push({ key: 'project', label: 'Project: ' + state.filters.project.trim() });
+  }
+
+  if (!chips.length) {
+    els.activeFilters.hidden = true;
+    return;
+  }
+
+  els.activeFilters.hidden = false;
+  chips.forEach(function (chip) {
+    var btn = node('button', 'filter-chip');
+    btn.type = 'button';
+    btn.dataset.filterKey = chip.key;
+    btn.setAttribute('aria-label', 'Remove ' + chip.label + ' filter');
+    btn.appendChild(node('span', 'filter-chip-label', chip.label));
+    var x = node('span', 'filter-chip-x', '×');
+    x.setAttribute('aria-hidden', 'true');
+    btn.appendChild(x);
+    btn.addEventListener('click', function () {
+      state.filters[chip.key] = '';
+      if (chip.key === 'text' && els.search) els.search.value = '';
+      if (chip.key === 'status' && els.status) els.status.value = '';
+      if (chip.key === 'type' && els.type) els.type.value = '';
+      if (chip.key === 'kind' && els.kind) els.kind.value = '';
+      if (chip.key === 'priority' && els.priority) els.priority.value = '';
+      if (chip.key === 'project' && els.project) els.project.value = '';
+      applyFilters();
+    });
+    els.activeFilters.appendChild(btn);
+  });
+
+  if (chips.length > 1) {
+    var clearAllBtn = node('button', 'text-button filter-chip-clear', 'Clear all');
+    clearAllBtn.type = 'button';
+    clearAllBtn.addEventListener('click', function () {
+      if (els.clear && els.clear.click) els.clear.click();
+    });
+    els.activeFilters.appendChild(clearAllBtn);
+  }
+}
+
 function applyFilters() {
   updateFilterToggleLabel();
+  renderActiveFilterChips();
   renderList();
   renderBoard();
 }
@@ -504,7 +572,7 @@ export function bindGlobalShortcuts() {
       if (event.key === 'Escape') { event.preventDefault(); closeRunnerDialog(); }
       else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
         event.preventDefault();
-        if (els.runnerSaveBtn && !els.runnerSaveBtn.disabled) els.runnerSaveBtn.click();
+        if (els.btnRunnerSave && !els.btnRunnerSave.disabled) els.btnRunnerSave.click();
       }
       return;
     }
@@ -554,15 +622,21 @@ export function bindGlobalShortcuts() {
       return;
     }
     var card = event.target && event.target.closest && event.target.closest('.board-card');
-    if (card && (event.key === 'Enter' || /^Arrow/.test(event.key))) {
+    if (card && !input && (event.key === 'Enter' || /^Arrow/.test(event.key))) {
+      var focusCard = function (targetCard) {
+        if (!targetCard) return;
+        var opener = targetCard.querySelector && targetCard.querySelector('.board-card-open');
+        if (opener && opener.focus) opener.focus();
+        else if (targetCard.focus) targetCard.focus();
+      };
       if (event.key === 'Enter') {
-        if (event.target === card || !/^(BUTTON|A|INPUT)$/.test(targetTag)) { event.preventDefault(); card.click(); return; }
+        if (event.target === card || !/^(BUTTON|A|INPUT|SELECT)$/.test(targetTag)) { event.preventDefault(); card.click(); return; }
       }
       var currentColContainer = card.closest('.board-col-cards');
       var colCards = currentColContainer ? Array.from(currentColContainer.querySelectorAll('.board-card')) : [];
       var cIdx = colCards.indexOf(card);
-      if (event.key === 'ArrowDown' && cIdx >= 0 && cIdx < colCards.length - 1) { event.preventDefault(); colCards[cIdx + 1].focus(); return; }
-      if (event.key === 'ArrowUp' && cIdx > 0) { event.preventDefault(); colCards[cIdx - 1].focus(); return; }
+      if (event.key === 'ArrowDown' && cIdx >= 0 && cIdx < colCards.length - 1) { event.preventDefault(); focusCard(colCards[cIdx + 1]); return; }
+      if (event.key === 'ArrowUp' && cIdx > 0) { event.preventDefault(); focusCard(colCards[cIdx - 1]); return; }
       if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
         var currentCol = card.closest('.board-col');
         var step = event.key === 'ArrowRight' ? 'nextElementSibling' : 'previousElementSibling';
@@ -574,7 +648,7 @@ export function bindGlobalShortcuts() {
             if (targetCards.length > 0) {
               event.preventDefault();
               var targetCard = targetCards[Math.min(cIdx >= 0 ? cIdx : 0, targetCards.length - 1)];
-              if (targetCard && targetCard.focus) targetCard.focus();
+              focusCard(targetCard);
               return;
             }
           }
@@ -583,6 +657,9 @@ export function bindGlobalShortcuts() {
       }
     }
     if (input || event.metaKey || event.ctrlKey || event.altKey) return;
+    if (event.key === '1') { event.preventDefault(); setViewMode('board'); return; }
+    if (event.key === '2') { event.preventDefault(); setViewMode('detail'); return; }
+    if (event.key === '3') { event.preventDefault(); setViewMode('agents'); return; }
     if (event.key === 'n' || event.key === 'c') { event.preventDefault(); openSpecModal(); return; }
     if (event.key === 'r') { event.preventDefault(); openReplyModal(); return; }
     if (event.key === '?' || (event.key === '/' && event.shiftKey)) { event.preventDefault(); openShortcutsModal(); return; }
@@ -630,23 +707,38 @@ export function toggleTheme() {
     next = null;
   }
 
+  var root = document.documentElement;
+  if (root.classList && typeof root.classList.add === 'function') {
+    root.classList.add('theme-switching');
+  }
+
   try {
     if (next) {
-      if (typeof document.documentElement.setAttribute === 'function') {
-        document.documentElement.setAttribute('data-theme', next);
+      if (typeof root.setAttribute === 'function') {
+        root.setAttribute('data-theme', next);
       }
       if (typeof localStorage !== 'undefined' && localStorage && typeof localStorage.setItem === 'function') {
         localStorage.setItem('pin-theme', next);
       }
     } else {
-      if (typeof document.documentElement.removeAttribute === 'function') {
-        document.documentElement.removeAttribute('data-theme');
+      if (typeof root.removeAttribute === 'function') {
+        root.removeAttribute('data-theme');
       }
       if (typeof localStorage !== 'undefined' && localStorage && typeof localStorage.removeItem === 'function') {
         localStorage.removeItem('pin-theme');
       }
     }
   } catch (_) {}
+
+  if (root.classList && typeof root.classList.remove === 'function') {
+    void root.offsetHeight;
+    var raf = (typeof window !== 'undefined' && window && typeof window.requestAnimationFrame === 'function')
+      ? window.requestAnimationFrame
+      : function (cb) { setTimeout(cb, 0); };
+    raf(function () {
+      root.classList.remove('theme-switching');
+    });
+  }
 }
 
 export function bind(options) {
@@ -739,5 +831,73 @@ export function bind(options) {
   bindRunnerUi();
   bindAlertsUi();
   bindReplyInboxUi();
+  bindTablists();
+  bindDialogLightDismiss();
+  if (els.toast) {
+    els.toast.addEventListener('click', function () {
+      els.toast.hidden = true;
+    });
+  }
   bindGlobalShortcuts();
+}
+
+function bindDialogLightDismiss() {
+  var pairs = [
+    [els.actionDialog, closeActionModal],
+    [els.specModal, closeSpecModal],
+    [els.runnerDialog, closeRunnerDialog],
+    [els.replyModal, closeReplyModal],
+    [els.alertsDialog, closeAlertsDialog],
+    [els.worktreeModal, closeWorktreeModal],
+    [els.shortcutsModal, closeShortcutsModal]
+  ];
+  var lastNonDialogFocus = null;
+  if (typeof document !== 'undefined' && document.addEventListener) {
+    document.addEventListener('focusin', function (e) {
+      if (e && e.target && (!e.target.closest || !e.target.closest('dialog'))) {
+        lastNonDialogFocus = e.target;
+      }
+    });
+  }
+  pairs.forEach(function (entry) {
+    var dlg = entry[0];
+    var onClose = entry[1];
+    if (!dlg || !dlg.addEventListener) return;
+    dlg.addEventListener('click', function (e) {
+      if (e && e.target === dlg) {
+        onClose();
+      }
+    });
+    dlg.addEventListener('close', function () {
+      if (lastNonDialogFocus && lastNonDialogFocus.isConnected && typeof lastNonDialogFocus.focus === 'function') {
+        try { lastNonDialogFocus.focus(); } catch (_) {}
+      }
+    });
+  });
+}
+
+function bindTablists() {
+  if (typeof document === 'undefined' || !document.addEventListener) return;
+  document.addEventListener('keydown', function (event) {
+    var tab = event.target && event.target.closest && event.target.closest('[role="tab"]');
+    if (!tab) return;
+    var list = tab.closest('[role="tablist"]');
+    if (!list) return;
+    if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft' && event.key !== 'Home' && event.key !== 'End') return;
+    var tabs = Array.from(list.querySelectorAll('[role="tab"]')).filter(function (t) { return !t.hidden && !t.disabled; });
+    if (tabs.length < 2) return;
+    var idx = tabs.indexOf(tab);
+    if (idx < 0) return;
+    event.preventDefault();
+    var nextIdx = idx;
+    if (event.key === 'ArrowRight') nextIdx = (idx + 1) % tabs.length;
+    else if (event.key === 'ArrowLeft') nextIdx = (idx - 1 + tabs.length) % tabs.length;
+    else if (event.key === 'Home') nextIdx = 0;
+    else if (event.key === 'End') nextIdx = tabs.length - 1;
+    var nextTab = tabs[nextIdx];
+    if (nextTab) {
+      if (nextTab.focus) nextTab.focus();
+      if (nextTab.click) nextTab.click();
+    }
+  });
 }

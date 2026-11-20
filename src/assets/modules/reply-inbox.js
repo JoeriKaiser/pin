@@ -61,9 +61,17 @@ function setReplyError(msg) {
   if (msg) {
     text(els.replyModalError, msg);
     els.replyModalError.hidden = false;
+    if (els.replyModalInput && els.replyModalInput.setAttribute) {
+      els.replyModalInput.setAttribute('aria-invalid', 'true');
+      els.replyModalInput.setAttribute('aria-describedby', 'reply-modal-error');
+    }
   } else {
     text(els.replyModalError, '');
     els.replyModalError.hidden = true;
+    if (els.replyModalInput && els.replyModalInput.removeAttribute) {
+      els.replyModalInput.removeAttribute('aria-invalid');
+      els.replyModalInput.removeAttribute('aria-describedby');
+    }
   }
 }
 
@@ -85,7 +93,7 @@ function setReplySubmitting(submitting) {
   if (els.replyModalInput) els.replyModalInput.disabled = submitting;
   if (els.btnReplySend) {
     els.btnReplySend.disabled = submitting;
-    text(els.btnReplySend, submitting ? 'Sending…' : 'Send Reply');
+    text(els.btnReplySend, submitting ? 'Sending…' : 'Send reply');
   }
   if (els.btnReplyFinish) els.btnReplyFinish.disabled = submitting;
 }
@@ -101,8 +109,12 @@ function renderReplyQueue(waitingRuns) {
   waitingRuns.forEach(function (run, idx) {
     var itm = find(run.item_id);
     var label = (itm && itm.title) ? itm.title : run.item_id.slice(0, 8);
-    var btn = node('button', 'reply-queue-pill' + (run.item_id === activeReplyItemId ? ' active' : ''));
+    var isActive = run.item_id === activeReplyItemId;
+    var btn = node('button', 'reply-queue-pill' + (isActive ? ' active' : ''));
     btn.type = 'button';
+    btn.setAttribute('role', 'tab');
+    btn.setAttribute('aria-selected', String(isActive));
+    btn.setAttribute('tabindex', isActive ? '0' : '-1');
     btn.dataset.itemId = run.item_id;
     btn.appendChild(node('span', 'reply-queue-num', String(idx + 1)));
     btn.appendChild(node('span', 'reply-queue-label', label));
@@ -206,7 +218,7 @@ export function renderReplyModalForItem(itemId) {
   renderQuickHelpers(run.last_message || '');
 
   if (els.btnReplyFinish) {
-    text(els.btnReplyFinish, run.mode === 'implement' ? 'Finish & Complete' : 'Finish Discussion');
+    text(els.btnReplyFinish, run.mode === 'implement' ? 'Finish & Complete' : 'Finish discussion');
   }
   if (els.replyModalInput) {
     state.chatDrafts = state.chatDrafts || {};

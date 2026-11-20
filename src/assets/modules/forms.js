@@ -99,7 +99,7 @@ function setQuickAddDisabled(disabled) {
   if (els.quickAddTags) els.quickAddTags.disabled = disabled;
   if (els.quickAddSubmit) {
     els.quickAddSubmit.disabled = disabled;
-    text(els.quickAddSubmit, disabled ? 'Creating…' : 'Create Ticket');
+    text(els.quickAddSubmit, disabled ? 'Creating…' : 'Create task');
   }
 }
 
@@ -148,6 +148,17 @@ export function submitQuickAdd() {
   });
 }
 
+function setFieldInvalid(el, errorId) {
+  if (!el || !el.setAttribute) return;
+  if (errorId) {
+    el.setAttribute('aria-invalid', 'true');
+    el.setAttribute('aria-describedby', errorId);
+  } else if (el.removeAttribute) {
+    el.removeAttribute('aria-invalid');
+    el.removeAttribute('aria-describedby');
+  }
+}
+
 function showSpecModalError(msg) {
   if (!els.specModalError) return;
   if (msg) {
@@ -156,19 +167,33 @@ function showSpecModalError(msg) {
   } else {
     text(els.specModalError, '');
     els.specModalError.hidden = true;
+    setFieldInvalid(els.specModalTitle, null);
   }
 }
 
 export function setSpecModalTab(tab) {
-  if (tab === 'preview') {
-    if (els.specTabWrite) els.specTabWrite.classList.remove('active');
-    if (els.specTabPreview) els.specTabPreview.classList.add('active');
+  var isPreview = tab === 'preview';
+  if (els.specTabWrite) {
+    els.specTabWrite.classList.toggle('active', !isPreview);
+    if (els.specTabWrite.setAttribute) {
+      els.specTabWrite.setAttribute('aria-selected', String(!isPreview));
+      els.specTabWrite.setAttribute('tabindex', isPreview ? '-1' : '0');
+    }
+  }
+  if (els.specTabPreview) {
+    els.specTabPreview.classList.toggle('active', isPreview);
+    if (els.specTabPreview.setAttribute) {
+      els.specTabPreview.setAttribute('aria-selected', String(isPreview));
+      els.specTabPreview.setAttribute('tabindex', isPreview ? '0' : '-1');
+    }
+  }
+  if (isPreview) {
     if (els.specModalBody) els.specModalBody.hidden = true;
     if (els.specModalPreview) {
       els.specModalPreview.hidden = false;
       var raw = els.specModalBody ? els.specModalBody.value.trim() : '';
       if (!raw) {
-        els.specModalPreview.innerHTML = '<p style="color: var(--muted); font-style: italic;">Nothing to preview yet. Write Markdown in the editor.</p>';
+        els.specModalPreview.innerHTML = '<p class="spec-preview-empty">Nothing to preview yet. Write Markdown in the editor.</p>';
       } else {
         var rendered = '';
         if (typeof marked !== 'undefined' && marked && typeof marked.parse === 'function') {
@@ -184,8 +209,6 @@ export function setSpecModalTab(tab) {
       }
     }
   } else {
-    if (els.specTabWrite) els.specTabWrite.classList.add('active');
-    if (els.specTabPreview) els.specTabPreview.classList.remove('active');
     if (els.specModalBody) els.specModalBody.hidden = false;
     if (els.specModalPreview) els.specModalPreview.hidden = true;
   }
@@ -241,14 +264,15 @@ function setSpecModalDisabled(disabled) {
   if (els.specModalProject) els.specModalProject.disabled = disabled;
   if (els.specModalSubmitBtn) {
     els.specModalSubmitBtn.disabled = disabled;
-    text(els.specModalSubmitBtn, disabled ? 'Creating…' : 'Create Ticket');
+    text(els.specModalSubmitBtn, disabled ? 'Creating…' : 'Create task');
   }
 }
 
 export function submitSpecModal() {
   var fields = collectTicketFields('spec-modal');
   if (!fields.title) {
-    showSpecModalError('Title is required');
+    showSpecModalError('Enter a title before creating the task.');
+    setFieldInvalid(els.specModalTitle, 'spec-modal-error');
     if (els.specModalTitle) els.specModalTitle.focus();
     return;
   }
@@ -355,7 +379,7 @@ export function triggerModalSubmit() {
           });
         }
         closeActionModal();
-        showToast('Action applied successfully', false);
+        showToast('Changes saved', false);
         callbacks.refreshData();
       })
       .catch(function (err) {
@@ -433,7 +457,7 @@ export function openCompleteModal(item) {
       ta.id = 'action-input-evidence';
       ta.required = true;
       ta.rows = 7;
-      ta.placeholder = 'e.g. cargo test output, CLI smoke test, or verification proof...';
+      ta.placeholder = 'e.g. cargo test output, CLI smoke test, or verification proof…';
       label.appendChild(ta);
       body.appendChild(label);
     },
@@ -441,10 +465,12 @@ export function openCompleteModal(item) {
       var ta = $('action-input-evidence');
       var val = ta ? ta.value.trim() : '';
       if (!val) {
+        setFieldInvalid(ta, 'dialog-error');
         if (ta && ta.focus) ta.focus();
-        showDialogError('Verification evidence is required.');
+        showDialogError('Enter verification evidence before completing this item.');
         return false;
       }
+      setFieldInvalid(ta, null);
       var payload = { action: 'complete', evidence: val, expect_revision: rev };
       state.lastAction = { id: item.id, payload: payload };
       return sendAction(item.id, payload);
@@ -455,8 +481,8 @@ export function openCompleteModal(item) {
 export function openBlockedModal(item) {
   var rev = item.revision;
   openActionModal({
-    title: 'Mark Blocked: ' + (item.title || item.id),
-    submitText: 'Mark Blocked',
+    title: 'Mark blocked: ' + (item.title || item.id),
+    submitText: 'Mark blocked',
     render: function (body) {
       var label = node('label');
       label.appendChild(node('span', '', 'Blocker reason (required)'));
@@ -465,7 +491,7 @@ export function openBlockedModal(item) {
       ta.id = 'action-input-blocker';
       ta.required = true;
       ta.rows = 4;
-      ta.placeholder = 'e.g. Waiting on upstream PR, missing credentials, or prerequisite task...';
+      ta.placeholder = 'e.g. Waiting on upstream PR, missing credentials, or prerequisite task…';
       label.appendChild(ta);
       body.appendChild(label);
     },
@@ -473,10 +499,12 @@ export function openBlockedModal(item) {
       var ta = $('action-input-blocker');
       var val = ta ? ta.value.trim() : '';
       if (!val) {
+        setFieldInvalid(ta, 'dialog-error');
         if (ta && ta.focus) ta.focus();
-        showDialogError('Blocker reason is required.');
+        showDialogError('Enter a blocker reason before marking this item blocked.');
         return false;
       }
+      setFieldInvalid(ta, null);
       var payload = { action: 'transition', to: 'blocked', note: val, expect_revision: rev };
       state.lastAction = { id: item.id, payload: payload };
       return sendAction(item.id, payload);
@@ -488,14 +516,14 @@ export function openCloseModal(item) {
   var rev = item.revision;
   openActionModal({
     title: 'Close: ' + (item.title || item.id),
-    submitText: 'Close Item',
+    submitText: 'Close item',
     render: function (body) {
       var label = node('label');
       label.appendChild(node('span', '', 'Closing note (optional)'));
       var ta = node('textarea');
       ta.id = 'action-input-close';
       ta.rows = 3;
-      ta.placeholder = 'e.g. Shipped in release v1.2, verified by test suite...';
+      ta.placeholder = 'e.g. Shipped in release v1.2, verified by test suite…';
       label.appendChild(ta);
       body.appendChild(label);
     },

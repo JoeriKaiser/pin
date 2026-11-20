@@ -1,7 +1,7 @@
 import { state, find, itemStatus, itemType, kind, priority, tags, matches, updateShown, isRunWaiting, getRunInfo } from './state.js';
 import { els } from './dom.js';
 import { sendAction, ensureActionOk } from './api.js';
-import { node, text, clear, date, timeAgo, showToast } from './formatters.js';
+import { node, text, clear, date, timeAgo, showToast, formatStatusLabel } from './formatters.js';
 import { renderMarkdownSnippet, renderMarkdown } from './markdown.js';
 import { setRoute } from './router.js';
 import { summarizeQuestionPreview } from './alerts.js';
@@ -48,8 +48,26 @@ export function renderList() {
   if (!state.shown.length) {
     if (els.listEmpty) {
       clear(els.listEmpty);
-      els.listEmpty.appendChild(node('strong', '', state.items.length ? 'No items match filters.' : 'No items in this vault.'));
-      els.listEmpty.appendChild(node('p', '', state.items.length ? 'Try clearing search or filters.' : 'Add items with pin add.'));
+      var hasItems = state.items.length > 0;
+      var queryText = state.filters && state.filters.text ? state.filters.text.trim() : '';
+      var heading = hasItems
+        ? (queryText ? ('No items match "' + queryText + '"') : 'No items match these filters')
+        : 'No items yet';
+      var hint = hasItems
+        ? 'Clear active filters or search terms to see all items.'
+        : 'Create a task here or add one from the terminal with pin add.';
+      els.listEmpty.appendChild(node('strong', '', heading));
+      els.listEmpty.appendChild(node('p', '', hint));
+      var actionBtn = node('button', hasItems ? 'control empty-action-btn' : 'action-btn primary empty-action-btn', hasItems ? 'Clear filters' : 'New task');
+      actionBtn.type = 'button';
+      actionBtn.addEventListener('click', function () {
+        if (hasItems) {
+          if (els.clear && els.clear.click) els.clear.click();
+        } else if (els.btnNewTicket && els.btnNewTicket.click) {
+          els.btnNewTicket.click();
+        }
+      });
+      els.listEmpty.appendChild(actionBtn);
     }
 
     return;
@@ -67,7 +85,7 @@ export function renderList() {
 
     var meta = node('span', 'item-badges');
     meta.appendChild(node('span', 'type-badge', itemType(item)));
-    meta.appendChild(node('span', 'status-badge status-' + itemStatus(item), itemStatus(item)));
+    meta.appendChild(node('span', 'status-badge status-' + itemStatus(item), formatStatusLabel(itemStatus(item))));
 
     if (priority(item) !== 'unset') {
       meta.appendChild(node('span', 'priority-' + priority(item), priority(item)));
@@ -75,6 +93,8 @@ export function renderList() {
 
     var time = node('time', '', timeAgo(item.timestamp));
     time.dateTime = String(item.timestamp || '');
+    var fullDate = date(item.timestamp, true);
+    if (fullDate) time.title = fullDate;
     meta.appendChild(time);
 
     button.appendChild(meta);
@@ -155,7 +175,7 @@ export function renderDependencies(item) {
     parentLi.appendChild(parentBtn);
 
     if (parentStatus) {
-      parentLi.appendChild(node('span', 'status-badge status-' + parentStatus, parentStatus));
+      parentLi.appendChild(node('span', 'status-badge status-' + parentStatus, formatStatusLabel(parentStatus)));
     }
 
     var parentRm = node('button', 'dep-remove-btn', '✕');
@@ -196,7 +216,7 @@ export function renderDependencies(item) {
       subBtn.title = 'Subtask: ' + sub.id;
       subBtn.addEventListener('click', function () { setRoute(sub.id); });
       subLi.appendChild(subBtn);
-      subLi.appendChild(node('span', 'status-badge status-' + subStatus, subStatus));
+      subLi.appendChild(node('span', 'status-badge status-' + subStatus, formatStatusLabel(subStatus)));
 
       var subRm = node('button', 'dep-remove-btn', '✕');
       subRm.type = 'button';
@@ -236,7 +256,7 @@ export function renderDependencies(item) {
       li.appendChild(btn);
 
       if (depItem) {
-        li.appendChild(node('span', 'status-badge status-' + itemStatus(depItem), itemStatus(depItem)));
+        li.appendChild(node('span', 'status-badge status-' + itemStatus(depItem), formatStatusLabel(itemStatus(depItem))));
       }
 
       var depRm = node('button', 'dep-remove-btn', '✕');
@@ -277,7 +297,7 @@ export function renderDependencies(item) {
       btn.title = 'Dependent: ' + dep.id;
       btn.addEventListener('click', function () { setRoute(dep.id); });
       li.appendChild(btn);
-      li.appendChild(node('span', 'status-badge status-' + itemStatus(dep), itemStatus(dep)));
+      li.appendChild(node('span', 'status-badge status-' + itemStatus(dep), formatStatusLabel(itemStatus(dep))));
       list.appendChild(li);
     });
   }
@@ -312,7 +332,7 @@ export function renderDependencies(item) {
       relLi.appendChild(relBtn);
 
       if (relStatus) {
-        relLi.appendChild(node('span', 'status-badge status-' + relStatus, relStatus));
+        relLi.appendChild(node('span', 'status-badge status-' + relStatus, formatStatusLabel(relStatus)));
       }
 
       var relRm = node('button', 'dep-remove-btn', '✕');
@@ -360,6 +380,7 @@ export function renderDependencies(item) {
 
   var sel = document.createElement('select');
   sel.className = 'dep-add-select';
+  sel.setAttribute('aria-label', 'Relationship type');
   var optDep = document.createElement('option');
   optDep.value = 'depend';
   optDep.textContent = 'Prerequisite';
@@ -376,7 +397,8 @@ export function renderDependencies(item) {
 
   var inp = document.createElement('input');
   inp.className = 'dep-add-input';
-  inp.placeholder = 'Search item ID or title...';
+  inp.placeholder = 'Search item ID or title…';
+  inp.setAttribute('aria-label', 'Target item ID or title');
   inp.setAttribute('list', 'dep-items-datalist');
   row.appendChild(inp);
   form.appendChild(row);
@@ -405,7 +427,7 @@ export function renderDependencies(item) {
   function submitRelationship() {
     var raw = inp.value.trim();
     if (!raw) {
-      showToast('Please specify an item ID', true);
+      showToast('Enter an item ID to link', true);
       return;
     }
     var targetId = raw.split(/[\s:]+/)[0];
@@ -472,22 +494,22 @@ export function renderActions(item) {
 
   if (st === 'created') {
     if (item.type === 'idea') {
-      btn('Start Idea Mode', true, function () {
-        callbacks.sendRunItem(item.id, false, 'Failed to start Idea Mode: ', 'idea');
+      btn('Start idea mode', true, function () {
+        callbacks.sendRunItem(item.id, false, 'Failed to start idea mode: ', 'idea');
       });
-      btn('Convert to Spec', false, function () {
+      btn('Convert to spec', false, function () {
         callbacks.convertIdeaToSpec(item);
       });
     } else {
-      btn('Discuss in Idea Mode', false, function () {
-        callbacks.sendRunItem(item.id, false, 'Failed to start Idea Mode: ', 'idea');
+      btn('Discuss in idea mode', false, function () {
+        callbacks.sendRunItem(item.id, false, 'Failed to start idea mode: ', 'idea');
       });
     }
-    btn('Move to Planned', item.type !== 'idea', function () {
+    btn('Move to planned', item.type !== 'idea', function () {
       sendAction(item.id, { action: 'transition', to: 'planned', expect_revision: rev })
         .then(ensureActionOk)
         .then(function () {
-          showToast('Moved to Planned', false);
+          showToast('Moved to planned', false);
           callbacks.refreshData();
         })
         .catch(function (err) { showToast('Action failed: ' + err.message, true); });
@@ -496,21 +518,21 @@ export function renderActions(item) {
 
   if (st === 'planned') {
     if (item.type === 'idea') {
-      btn('Start Idea Mode', true, function () {
-        callbacks.sendRunItem(item.id, false, 'Failed to start Idea Mode: ', 'idea');
+      btn('Start idea mode', true, function () {
+        callbacks.sendRunItem(item.id, false, 'Failed to start idea mode: ', 'idea');
       });
-      btn('Convert to Spec', false, function () {
+      btn('Convert to spec', false, function () {
         callbacks.convertIdeaToSpec(item);
       });
     } else {
-      btn('Start Agent', true, function () {
+      btn('Start agent', true, function () {
         callbacks.openWorktreeModal(item, null);
       });
-      btn('Discuss in Idea Mode', false, function () {
-        callbacks.sendRunItem(item.id, false, 'Failed to start Idea Mode: ', 'idea');
+      btn('Discuss in idea mode', false, function () {
+        callbacks.sendRunItem(item.id, false, 'Failed to start idea mode: ', 'idea');
       });
     }
-    btn('Mark Blocked', false, function () {
+    btn('Mark blocked', false, function () {
       callbacks.openBlockedModal(item);
     });
   }
@@ -523,37 +545,37 @@ export function renderActions(item) {
           callbacks.openReplyModal(item.id);
         });
       }
-      btn('View Agent Run', !waitingInProgress, function () {
+      btn('View agent run', !waitingInProgress, function () {
         callbacks.openAgentDrawer(item.id);
       });
     } else {
       if (item.type === 'idea') {
-        btn('Resume Idea Mode', true, function () {
-          callbacks.sendRunItem(item.id, false, 'Failed to resume Idea Mode: ', 'idea');
+        btn('Resume idea mode', true, function () {
+          callbacks.sendRunItem(item.id, false, 'Failed to resume idea mode: ', 'idea');
         });
-        btn('Convert to Spec', false, function () {
+        btn('Convert to spec', false, function () {
           callbacks.convertIdeaToSpec(item);
         });
       } else {
-        btn('Resume Agent', true, function () {
+        btn('Resume agent', true, function () {
           callbacks.openWorktreeModal(item, null);
         });
       }
     }
-    btn('Complete with Evidence', !state.activeRuns.has(item.id), function () {
+    btn('Complete with evidence', false, function () {
       callbacks.openCompleteModal(item);
     });
-    btn('Mark Blocked', false, function () {
+    btn('Mark blocked', false, function () {
       callbacks.openBlockedModal(item);
     });
   }
 
   if (st === 'blocked') {
-    btn('Unblock (Move to Planned)', true, function () {
+    btn('Unblock to planned', true, function () {
       sendAction(item.id, { action: 'transition', to: 'planned', expect_revision: rev })
         .then(ensureActionOk)
         .then(function () {
-          showToast('Moved to Planned', false);
+          showToast('Moved to planned', false);
           callbacks.refreshData();
         })
         .catch(function (err) { showToast('Action failed: ' + err.message, true); });
@@ -562,7 +584,7 @@ export function renderActions(item) {
 
   if (st === 'done') {
     if (state.activeRuns.has(item.id)) {
-      btn('View Agent Run', true, function () {
+      btn('View agent run', true, function () {
         callbacks.openAgentDrawer(item.id);
       });
     } else if (item.git_status === 'merged') {
@@ -571,19 +593,22 @@ export function renderActions(item) {
       els.actions.appendChild(mergedInd);
     } else if (item.git_status === 'pr_open' || (item.pr_url && item.pr_url.length > 0)) {
       var prLabel = item.pr_number ? 'View PR #' + item.pr_number + ' ↗' : 'View PR ↗';
-      btn(prLabel, true, function () {
-        if (item.pr_url) window.open(item.pr_url, '_blank', 'noopener,noreferrer');
-      });
+      var prActionLink = node('a', 'action-btn primary', prLabel);
+      prActionLink.href = item.pr_url || '#';
+      prActionLink.setAttribute('href', item.pr_url || '#');
+      prActionLink.target = '_blank';
+      prActionLink.rel = 'noopener noreferrer';
+      els.actions.appendChild(prActionLink);
     } else {
       btn('Commit + PR', true, function () {
         callbacks.sendCommitPrItem(item.id);
       });
     }
-    btn('Close Item', false, function () {
+    btn('Close item', false, function () {
       callbacks.openCloseModal(item);
     });
     if (!item.archived_at) {
-      btn('Archive Item', false, function () {
+      btn('Archive item', false, function () {
         sendAction(item.id, { action: 'archive', expect_revision: rev })
           .then(ensureActionOk)
           .then(function () {
@@ -593,11 +618,11 @@ export function renderActions(item) {
           .catch(function (err) { showToast('Action failed: ' + err.message, true); });
       });
     }
-    btn('Reopen to Planned', false, function () {
+    btn('Reopen to planned', false, function () {
       sendAction(item.id, { action: 'transition', to: 'planned', expect_revision: rev })
         .then(ensureActionOk)
         .then(function () {
-          showToast('Reopened to Planned', false);
+          showToast('Reopened to planned', false);
           callbacks.refreshData();
         })
         .catch(function (err) { showToast('Action failed: ' + err.message, true); });
@@ -605,12 +630,12 @@ export function renderActions(item) {
   }
 
   if (st !== 'closed' && st !== 'cancelled' && st !== 'done') {
-    btn('Close Item', false, function () {
+    btn('Close item', false, function () {
       callbacks.openCloseModal(item);
     });
   }
   if (st === 'closed' && !item.archived_at) {
-    btn('Archive Item', false, function () {
+    btn('Archive item', false, function () {
       sendAction(item.id, { action: 'archive', expect_revision: rev })
         .then(ensureActionOk)
         .then(function () {
@@ -622,7 +647,7 @@ export function renderActions(item) {
   }
 
   if (item.archived_at) {
-    btn('Unarchive Item', false, function () {
+    btn('Unarchive item', false, function () {
       sendAction(item.id, { action: 'unarchive', expect_revision: rev })
         .then(ensureActionOk)
         .then(function () {
@@ -671,15 +696,15 @@ export function renderHandoff(item) {
   }
 
   if (st === 'blocked') {
-    addField('blocker', 'Blocker:', 'Blocked', 'handoff-pill-blocker', h.blocker, false);
-    addField('verification', 'Verification evidence:', 'Evidence', 'handoff-pill-verification', h.verification, false);
-    addField('progress', 'Progress:', null, null, h.progress, false);
-    addField('next', 'Next steps:', null, null, h.next, false);
+    addField('blocker', 'Blocker', 'Blocked', 'handoff-pill-blocker', h.blocker, false);
+    addField('verification', 'Verification', 'Verified', 'handoff-pill-verification', h.verification, false);
+    addField('progress', 'Progress', null, null, h.progress, false);
+    addField('next', 'Next steps', null, null, h.next, false);
   } else {
-    addField('verification', 'Verification evidence:', 'Evidence', 'handoff-pill-verification', h.verification, false);
-    addField('progress', 'Progress:', null, null, h.progress, false);
-    addField('next', 'Next steps:', null, null, h.next, false);
-    addField('blocker', 'Blocker:', 'Blocker', 'handoff-pill-blocker', h.blocker, false);
+    addField('verification', 'Verification', 'Verified', 'handoff-pill-verification', h.verification, false);
+    addField('progress', 'Progress', null, null, h.progress, false);
+    addField('next', 'Next steps', null, null, h.next, false);
+    addField('blocker', 'Blocker', 'Blocked', 'handoff-pill-blocker', h.blocker, false);
   }
 }
 
@@ -710,17 +735,28 @@ export function renderActivity(item) {
 
 export function setReaderTab(tab) {
   state.readerTab = tab;
-  if (tab === 'trajectory') {
-    if (els.tabAgentTrajectory) els.tabAgentTrajectory.classList.add('active');
-    if (els.tabTaskSpec) els.tabTaskSpec.classList.remove('active');
+  var isTraj = tab === 'trajectory';
+  if (els.tabAgentTrajectory) {
+    els.tabAgentTrajectory.classList.toggle('active', isTraj);
+    if (els.tabAgentTrajectory.setAttribute) {
+      els.tabAgentTrajectory.setAttribute('aria-selected', String(isTraj));
+      els.tabAgentTrajectory.setAttribute('tabindex', isTraj ? '0' : '-1');
+    }
+  }
+  if (els.tabTaskSpec) {
+    els.tabTaskSpec.classList.toggle('active', !isTraj);
+    if (els.tabTaskSpec.setAttribute) {
+      els.tabTaskSpec.setAttribute('aria-selected', String(!isTraj));
+      els.tabTaskSpec.setAttribute('tabindex', isTraj ? '-1' : '0');
+    }
+  }
+  if (isTraj) {
     if (els.proposal) els.proposal.hidden = true;
     if (els.agentDrawer) els.agentDrawer.hidden = false;
 
     if (state.currentStreamingId === state.selected) return;
     if (state.selected) callbacks.openAgentDrawer(state.selected);
   } else {
-    if (els.tabTaskSpec) els.tabTaskSpec.classList.add('active');
-    if (els.tabAgentTrajectory) els.tabAgentTrajectory.classList.remove('active');
     if (els.proposal) els.proposal.hidden = false;
     if (els.agentDrawer) els.agentDrawer.hidden = true;
   }
@@ -737,7 +773,15 @@ export function renderDetail() {
     if (els.readerTabs) els.readerTabs.hidden = true;
     if (els.proposal) els.proposal.hidden = true;
     if (els.agentDrawer) els.agentDrawer.hidden = true;
-    if (els.detailEmpty) text(els.detailEmpty, state.selected ? 'This item is not in the vault.' : 'Select an item to view it.');
+    if (els.detailEmpty) {
+      clear(els.detailEmpty);
+      var wrap = node('div', 'empty-stack');
+      wrap.appendChild(node('strong', '', state.selected ? 'Item not found' : 'Select an item'));
+      wrap.appendChild(node('p', '', state.selected
+        ? 'This item is no longer in the vault. Pick another item from the list or return to the board.'
+        : 'Choose an item from the list to inspect its details, relationships, and activity.'));
+      els.detailEmpty.appendChild(wrap);
+    }
     return;
   }
 
@@ -789,7 +833,7 @@ export function renderDetail() {
   text(els.title, item.title || '(untitled)');
 
   clear(els.summary);
-  addSummary(itemStatus(item), 'status-badge status-' + itemStatus(item));
+  addSummary(formatStatusLabel(itemStatus(item)), 'status-badge status-' + itemStatus(item));
   if (priority(item) !== 'unset') addSummary(priority(item) + ' priority', 'priority-' + priority(item));
   addSummary(date(item.timestamp, true));
   if (tags(item).length) addSummary(tags(item).join(' · '));

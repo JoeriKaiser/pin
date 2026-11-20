@@ -136,10 +136,12 @@ export function renderAgentsTable() {
 
     // 1. Item ID & Title
     var itemCell = node('td', 'agent-col-item');
+    itemCell.setAttribute('data-label', 'Item');
     var itemBtn = node('button', 'agent-item-link');
     itemBtn.type = 'button';
     var shortId = run.item_id.slice(0, 8);
     var itemTitle = (itm && itm.title) ? itm.title : run.item_id;
+    itemBtn.title = itemTitle;
     itemBtn.appendChild(node('span', 'agent-item-id', shortId));
     itemBtn.appendChild(document.createTextNode(' '));
     itemBtn.appendChild(node('span', 'agent-item-title', itemTitle));
@@ -152,6 +154,7 @@ export function renderAgentsTable() {
 
     // 2. Mode
     var modeCell = node('td', 'agent-col-mode');
+    modeCell.setAttribute('data-label', 'Mode');
     var modeLabel = run.interactive ? 'Implement · Interactive' : 'Implement';
     var modeClass = 'badge-mode-implement';
     if (run.mode === 'commit_pr') {
@@ -167,6 +170,7 @@ export function renderAgentsTable() {
 
     // 3. Worktree Target
     var wtCell = node('td', 'agent-col-worktree');
+    wtCell.setAttribute('data-label', 'Worktree');
     var wtText = run.is_primary_worktree ? 'Primary' : (run.worktree_path || 'Worktree');
     var wtBadge = node('span', run.is_primary_worktree ? 'badge-wt-primary' : 'badge-wt-isolated', wtText);
     if (run.worktree_path) wtBadge.title = run.worktree_path;
@@ -175,6 +179,7 @@ export function renderAgentsTable() {
 
     // 4. Actor
     var actorCell = node('td', 'agent-col-actor');
+    actorCell.setAttribute('data-label', 'Actor');
     var actorName = run.actor || (itm && itm.claimed_by) ||
       (state.runner && state.runner.actor) || 'agent:omp';
     actorCell.appendChild(node('span', 'agent-actor', actorName));
@@ -182,6 +187,7 @@ export function renderAgentsTable() {
 
     // 5. Model captured when the run started
     var modelCell = node('td', 'agent-col-model');
+    modelCell.setAttribute('data-label', 'Model');
     var modelName = run.model || 'Agent default';
     var modelSpan = node('span', 'agent-model', modelName);
     modelSpan.title = run.model || 'Uses the agent default model';
@@ -190,14 +196,16 @@ export function renderAgentsTable() {
 
     // 6. Duration Ticker
     var durCell = node('td', 'agent-col-duration');
+    durCell.setAttribute('data-label', 'Duration');
     var ticker = node('span', 'agent-duration-ticker', formatDuration(run.started_at));
     ticker.dataset.startedAt = String(run.started_at || 0);
     ticker.setAttribute('data-started-at', String(run.started_at || 0));
     durCell.appendChild(ticker);
     row.appendChild(durCell);
 
-    // 6. Activity
+    // 7. Activity
     var actCell = node('td', 'agent-col-activity');
+    actCell.setAttribute('data-label', 'Activity');
     var activityText = getRunActivity(run);
     if (run.waiting_for_user) {
       var waitWrap = node('div', 'agent-activity-waiting');
@@ -216,8 +224,10 @@ export function renderAgentsTable() {
     }
     row.appendChild(actCell);
 
-    // 7. Actions
+    // 8. Actions
     var actBtnsCell = node('td', 'agent-col-actions');
+    actBtnsCell.setAttribute('data-label', 'Actions');
+    var actBtnsGroup = node('div', 'agent-actions-group');
 
     if (run.waiting_for_user) {
       var replyBtn = node('button', 'action-btn primary action-btn-small btn-reply-run', 'Reply');
@@ -225,20 +235,20 @@ export function renderAgentsTable() {
       replyBtn.addEventListener('click', function () {
         if (callbacks.openReplyModal) callbacks.openReplyModal(run.item_id);
       });
-      actBtnsCell.appendChild(replyBtn);
+      actBtnsGroup.appendChild(replyBtn);
     }
 
     // View Run
-    var viewRunBtn = node('button', 'control text-button btn-view-run', 'View Run');
+    var viewRunBtn = node('button', 'control text-button btn-view-run', 'View run');
     viewRunBtn.type = 'button';
     viewRunBtn.addEventListener('click', function () {
       if (callbacks.openAgentDrawer) callbacks.openAgentDrawer(run.item_id);
     });
-    actBtnsCell.appendChild(viewRunBtn);
+    actBtnsGroup.appendChild(viewRunBtn);
 
     // Open Chat (interactive runs)
     if (isRunInteractive(run)) {
-      var openChatBtn = node('button', 'control text-button btn-open-chat', 'Open Chat');
+      var openChatBtn = node('button', 'control text-button btn-open-chat', 'Open chat');
       openChatBtn.type = 'button';
       openChatBtn.addEventListener('click', function () {
         if (callbacks.openAgentDrawer) callbacks.openAgentDrawer(run.item_id);
@@ -246,7 +256,7 @@ export function renderAgentsTable() {
           try { els.agentChatInput.focus(); } catch (_) {}
         }
       });
-      actBtnsCell.appendChild(openChatBtn);
+      actBtnsGroup.appendChild(openChatBtn);
     }
 
     // Cancel
@@ -276,8 +286,9 @@ export function renderAgentsTable() {
           showToast(err.message || 'Failed to cancel', true);
         });
     });
-    actBtnsCell.appendChild(cancelBtn);
+    actBtnsGroup.appendChild(cancelBtn);
 
+    actBtnsCell.appendChild(actBtnsGroup);
     row.appendChild(actBtnsCell);
     els.agentsTableBody.appendChild(row);
   });

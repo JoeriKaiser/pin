@@ -205,7 +205,7 @@ export function renderAlertsButton() {
   els.btnAlertsToggle.classList.toggle('alerts-active', anyEnabled);
   els.btnAlertsToggle.setAttribute(
     'aria-label',
-    anyEnabled ? 'Alert settings (enabled)' : 'Alert settings (muted)'
+    anyEnabled ? 'Alerts (enabled)' : 'Alerts (muted)'
   );
   els.btnAlertsToggle.title = desktopReady
     ? 'Alerts: desktop notifications + ' + (prefs.sound ? 'sound' : 'silent')
@@ -229,7 +229,7 @@ export function renderAlertsDialog() {
     } else if (Notif.permission === 'denied') {
       text(els.alertsDesktopStatus, 'Blocked by browser settings. Allow notifications for localhost to enable.');
     } else {
-      text(els.alertsDesktopStatus, 'Click "Enable Desktop Alerts" to grant browser notification permission.');
+      text(els.alertsDesktopStatus, 'Click "Enable desktop alerts" to grant browser notification permission.');
     }
   }
   if (els.btnAlertsRequestPerm) {

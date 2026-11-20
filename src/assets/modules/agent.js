@@ -47,7 +47,7 @@ export function syncAgentChatControls(itemId, interactive, waiting, mode, restor
   }
   if (els.btnAgentFinishIdea) {
     els.btnAgentFinishIdea.disabled = false;
-    text(els.btnAgentFinishIdea, mode === 'implement' ? 'Finish & Complete' : 'Finish Discussion');
+    text(els.btnAgentFinishIdea, mode === 'implement' ? 'Finish & Complete' : 'Finish discussion');
   }
   if (els.agentChatHelpers) {
     if (waiting) {
@@ -182,8 +182,20 @@ export function closeAgentDrawer() {
   state.currentStreamingId = null; state.readerTab = 'spec';
   if (els.agentDrawer) els.agentDrawer.hidden = true;
   if (els.proposal) els.proposal.hidden = false;
-  if (els.tabTaskSpec) els.tabTaskSpec.classList.add('active');
-  if (els.tabAgentTrajectory) els.tabAgentTrajectory.classList.remove('active');
+  if (els.tabTaskSpec) {
+    els.tabTaskSpec.classList.add('active');
+    if (els.tabTaskSpec.setAttribute) {
+      els.tabTaskSpec.setAttribute('aria-selected', 'true');
+      els.tabTaskSpec.setAttribute('tabindex', '0');
+    }
+  }
+  if (els.tabAgentTrajectory) {
+    els.tabAgentTrajectory.classList.remove('active');
+    if (els.tabAgentTrajectory.setAttribute) {
+      els.tabAgentTrajectory.setAttribute('aria-selected', 'false');
+      els.tabAgentTrajectory.setAttribute('tabindex', '-1');
+    }
+  }
   syncWaitingAlerts({ notify: false });
 }
 
@@ -241,7 +253,20 @@ export function openAgentDrawer(itemId) {
     setViewMode('detail');
   }
   state.readerTab = 'trajectory';
-  if (els.tabAgentTrajectory) els.tabAgentTrajectory.classList.add('active'); if (els.tabTaskSpec) els.tabTaskSpec.classList.remove('active');
+  if (els.tabAgentTrajectory) {
+    els.tabAgentTrajectory.classList.add('active');
+    if (els.tabAgentTrajectory.setAttribute) {
+      els.tabAgentTrajectory.setAttribute('aria-selected', 'true');
+      els.tabAgentTrajectory.setAttribute('tabindex', '0');
+    }
+  }
+  if (els.tabTaskSpec) {
+    els.tabTaskSpec.classList.remove('active');
+    if (els.tabTaskSpec.setAttribute) {
+      els.tabTaskSpec.setAttribute('aria-selected', 'false');
+      els.tabTaskSpec.setAttribute('tabindex', '-1');
+    }
+  }
   if (els.proposal) els.proposal.hidden = true; if (els.agentDrawer) els.agentDrawer.hidden = false;
   syncWaitingAlerts({ notify: false });
 
@@ -576,9 +601,19 @@ export function handleAgentStreamEvent(data) {
     var stCls = inline.status === 'completed' ? 'status-completed' : (inline.status === 'failed' ? 'status-failed' : 'status-running');
     tLine.appendChild(node('span', 'tool-status-badge ' + stCls, inline.status));
     tRow.classList.add('clickable-tool-row');
+    tRow.tabIndex = 0;
+    tRow.setAttribute('tabindex', '0');
+    tRow.setAttribute('role', 'button');
+    tRow.setAttribute('aria-label', 'Inspect tool call ' + inline.name);
     function inspect(e) { if (e && e.stopPropagation) e.stopPropagation(); openToolInspector(callId); }
     tLine.addEventListener('click', inspect);
     tRow.addEventListener('click', inspect);
+    tRow.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        inspect(e);
+      }
+    });
     var tBody = node('div', 'trajectory-body');
     tBody.appendChild(tLine);
     tRow.appendChild(node('div', 'trajectory-gutter', '●'));
@@ -687,22 +722,71 @@ export function copyToolOutput() {
   if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(els.inspectorOutput.textContent || '');
 }
 
+function svgNode(tag, className, value) {
+  var n = (typeof document !== 'undefined' && typeof document.createElementNS === 'function')
+    ? document.createElementNS('http://www.w3.org/2000/svg', tag)
+    : document.createElement(tag);
+  if (className) n.setAttribute('class', className);
+  if (value != null) text(n, value);
+  return n;
+}
+
 export function renderSwimlaneSvg() {
   if (!els.swimlaneSvg || !state.trajectory) return;
   clear(els.swimlaneSvg);
-  var lanes = { input: 20, model: 50, tools: 80 };
-  ['Input', 'Model', 'Tools'].forEach(function (l) {
-    var txt = node('text', 'swimlane-lane-label', l);
-    txt.setAttribute('x', '10');
-    txt.setAttribute('y', String(lanes[l.toLowerCase()] + 4));
+  var lanes = { input: 14, model: 32, tools: 50 };
+  var laneOrder = [
+    { key: 'input', label: 'Input' },
+    { key: 'model', label: 'Model' },
+    { key: 'tools', label: 'Tools' }
+  ];
+  laneOrder.forEach(function (lane) {
+    var y = lanes[lane.key];
+    var line = svgNode('line', 'swimlane-lane-line');
+    line.setAttribute('x1', '48');
+    line.setAttribute('x2', '790');
+    line.setAttribute('y1', String(y));
+    line.setAttribute('y2', String(y));
+    els.swimlaneSvg.appendChild(line);
+
+    var txt = svgNode('text', 'swimlane-lane-label', lane.label);
+    txt.setAttribute('x', '8');
+    txt.setAttribute('y', String(y + 3));
     els.swimlaneSvg.appendChild(txt);
   });
-  (state.trajectory.steps || []).forEach(function (s, idx) {
-    var c = node('circle', 'swimlane-node swimlane-node-' + s.lane);
-    c.setAttribute('cx', String(60 + idx * 30));
-    c.setAttribute('cy', String(lanes[s.lane] || 50));
-    c.setAttribute('r', '6');
+
+  var steps = state.trajectory.steps || [];
+  var maxSpan = 720;
+  var gap = steps.length > 1 ? Math.min(32, maxSpan / (steps.length - 1)) : 32;
+  var prevX = null;
+  var prevY = null;
+
+  steps.forEach(function (s, idx) {
+    var cx = Math.round(62 + idx * gap);
+    var cy = lanes[s.lane] || lanes.model;
+    if (prevX != null && prevY != null) {
+      var seg = svgNode('line', 'swimlane-connector');
+      seg.setAttribute('x1', String(prevX));
+      seg.setAttribute('y1', String(prevY));
+      seg.setAttribute('x2', String(cx));
+      seg.setAttribute('y2', String(cy));
+      els.swimlaneSvg.appendChild(seg);
+    }
+    var c = svgNode('circle', 'swimlane-node swimlane-node-' + s.lane + (s.callId ? ' swimlane-node-clickable' : ''));
+    c.setAttribute('cx', String(cx));
+    c.setAttribute('cy', String(cy));
+    c.setAttribute('r', '5');
+    if (s.label) {
+      c.appendChild(svgNode('title', '', s.label));
+    }
+    if (s.callId) {
+      c.addEventListener('click', function () {
+        openToolInspector(s.callId);
+      });
+    }
     els.swimlaneSvg.appendChild(c);
+    prevX = cx;
+    prevY = cy;
   });
 }
 

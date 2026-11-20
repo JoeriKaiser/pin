@@ -1,6 +1,6 @@
 import { els } from './dom.js';
 import { state, updateShown } from './state.js';
-import { stripAnsi, cleanThoughtText, escapeHtml } from './formatters.js';
+import { stripAnsi, cleanThoughtText, escapeHtml, formatStatusLabel } from './formatters.js';
 import {
   setReaderTab, renderActions, renderHandoff, renderList, renderDetail
 } from './detail.js';
@@ -73,6 +73,7 @@ if (typeof window !== 'undefined') {
     submitQuickAdd: submitQuickAdd,
     submitSpecModal: submitSpecModal,
     escapeHtml: escapeHtml,
+    formatStatusLabel: formatStatusLabel,
     openSpecModal: openSpecModal,
     closeSpecModal: closeSpecModal,
     setSpecModalTab: setSpecModalTab,

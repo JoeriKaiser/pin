@@ -86,23 +86,77 @@ export function handleCardDrop(droppedId, targetStatus) {
 }
 
 export function buildBoardCard(item) {
-  var card = node('button', 'board-card status-border-' + itemStatus(item));
-  card.type = 'button';
+  var card = node('article', 'board-card status-border-' + itemStatus(item));
   card.dataset.id = item.id;
   card.draggable = true;
 
   var header = node('div', 'board-card-header');
+  var headerMeta = node('div', 'board-card-header-meta');
   var idSpan = node('span', 'board-card-id', item.id.slice(0, 8));
-  header.appendChild(idSpan);
+  headerMeta.appendChild(idSpan);
 
-  if (priority(item) !== 'unset') {
-    var dot = node('span', 'priority-dot priority-' + priority(item));
-    dot.title = priority(item) + ' priority';
-    header.appendChild(dot);
+  var prio = priority(item);
+  if (prio !== 'unset') {
+    var prioLabel = prio === 'high' ? 'High' : (prio === 'medium' ? 'Med' : 'Low');
+    var prioPill = node('span', 'priority-pill priority-' + prio);
+    prioPill.title = prio + ' priority';
+    var dot = node('span', 'priority-dot priority-' + prio);
+    dot.setAttribute('aria-hidden', 'true');
+    prioPill.appendChild(dot);
+    prioPill.appendChild(document.createTextNode(prioLabel));
+    headerMeta.appendChild(prioPill);
+  }
+  header.appendChild(headerMeta);
+
+  var curStatus = itemStatus(item);
+  if (!item.archived_at) {
+    var moveSelect = node('select', 'card-move-select');
+    moveSelect.setAttribute('aria-label', 'Move ' + (item.title || item.id) + ' to column');
+    moveSelect.title = 'Move to another column';
+    var placeholderOpt = node('option', '', 'Move');
+    placeholderOpt.value = '';
+    placeholderOpt.selected = true;
+    placeholderOpt.disabled = true;
+    moveSelect.appendChild(placeholderOpt);
+    var targets = [
+      { value: 'created', label: 'Backlog' },
+      { value: 'planned', label: 'Planned' },
+      { value: 'in_progress', label: 'In progress' },
+      { value: 'blocked', label: 'Blocked' },
+      { value: 'done', label: 'Done' },
+      { value: 'closed', label: 'Closed' }
+    ];
+    targets.forEach(function (t) {
+      if (t.value === curStatus) return;
+      var opt = node('option', '', t.label);
+      opt.value = t.value;
+      moveSelect.appendChild(opt);
+    });
+    moveSelect.addEventListener('click', function (e) {
+      if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+    });
+    moveSelect.addEventListener('mousedown', function (e) {
+      if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+    });
+    moveSelect.addEventListener('change', function (e) {
+      if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+      var nextStatus = moveSelect.value;
+      moveSelect.value = '';
+      if (nextStatus) handleCardDrop(item.id, nextStatus);
+    });
+    header.appendChild(moveSelect);
   }
   card.appendChild(header);
 
-  var titleEl = node('h4', 'board-card-title', item.title || '(untitled)');
+  var titleEl = node('h3', 'board-card-title');
+  var openBtn = node('button', 'board-card-open', item.title || '(untitled)');
+  openBtn.type = 'button';
+  openBtn.addEventListener('click', function (e) {
+    if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+    setRoute(item.id);
+    setViewMode('detail');
+  });
+  titleEl.appendChild(openBtn);
   card.appendChild(titleEl);
 
   var meta = node('div', 'board-card-meta');
@@ -117,39 +171,46 @@ export function buildBoardCard(item) {
 
   if (state.activeRuns.has(item.id)) {
     var waiting = isRunWaiting(item.id);
+    var runActions = node('div', 'board-card-actions');
     if (waiting) {
       card.classList.add('card-waiting-reply');
       var waitBadge = node('span', 'card-waiting-indicator');
-      waitBadge.appendChild(node('span', 'needs-reply-dot'));
+      var waitDot = node('span', 'needs-reply-dot');
+      waitDot.setAttribute('aria-hidden', 'true');
+      waitBadge.appendChild(waitDot);
       waitBadge.appendChild(document.createTextNode('Needs reply'));
       meta.appendChild(waitBadge);
 
       var replyBtn = node('button', 'btn-reply-card', 'Reply');
       replyBtn.type = 'button';
-      replyBtn.setAttribute('aria-label', 'Reply to agent for ' + (item.title || item.id));
+      replyBtn.setAttribute('aria-label', 'Reply for ' + (item.title || item.id));
       replyBtn.addEventListener('click', function (e) {
         if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
         callbacks.openReplyModal(item.id);
       });
-      meta.appendChild(replyBtn);
+      runActions.appendChild(replyBtn);
     } else {
       var runBadge = node('span', 'card-running-indicator');
-      runBadge.appendChild(node('span', 'card-running-dot'));
-      runBadge.appendChild(document.createTextNode('Running Agent'));
+      var runDot = node('span', 'card-running-dot');
+      runDot.setAttribute('aria-hidden', 'true');
+      runBadge.appendChild(runDot);
+      runBadge.appendChild(document.createTextNode('Running agent'));
       meta.appendChild(runBadge);
     }
 
-    var viewRunBtn = node('button', 'btn-view-run', 'View Run');
+    var viewRunBtn = node('button', 'btn-view-run', 'View run');
     viewRunBtn.type = 'button';
     viewRunBtn.setAttribute('aria-label', 'View run for ' + (item.title || item.id));
     viewRunBtn.addEventListener('click', function (e) {
       if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
       callbacks.openAgentDrawer(item.id);
     });
-    meta.appendChild(viewRunBtn);
+    runActions.appendChild(viewRunBtn);
+    meta.appendChild(runActions);
   } else {
     var cardStatus = itemStatus(item);
     if (cardStatus === 'done' && !item.archived_at) {
+      var doneActions = node('div', 'board-card-actions');
       var isMerged = item.git_status === 'merged';
       var isPrOpen = !isMerged && (item.git_status === 'pr_open' || (item.pr_url && item.pr_url.length > 0));
       if (isPrOpen) {
@@ -160,11 +221,11 @@ export function buildBoardCard(item) {
         prLink.target = '_blank';
         prLink.rel = 'noopener noreferrer';
         prLink.title = 'Open Pull Request: ' + (item.pr_url || '');
-        prLink.setAttribute('aria-label', 'View pull request for ' + (item.title || item.id));
+        prLink.setAttribute('aria-label', prLabel.replace(/\s*↗$/, '') + ' for ' + (item.title || item.id));
         prLink.addEventListener('click', function (e) {
           if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
         });
-        meta.appendChild(prLink);
+        doneActions.appendChild(prLink);
       } else if (isMerged) {
         var mergedBadge = node('span', 'indicator-merged', 'Merged into main');
         mergedBadge.title = 'Merged into main branch';
@@ -173,12 +234,12 @@ export function buildBoardCard(item) {
         var commitPrBtn = node('button', 'btn-commit-pr', 'Commit + PR');
         commitPrBtn.type = 'button';
         commitPrBtn.title = 'Start agent to commit worktree and create PR';
-        commitPrBtn.setAttribute('aria-label', 'Commit worktree and create pull request for ' + (item.title || item.id));
+        commitPrBtn.setAttribute('aria-label', 'Commit + PR for ' + (item.title || item.id));
         commitPrBtn.addEventListener('click', function (e) {
           if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
           callbacks.sendCommitPrItem(item.id);
         });
-        meta.appendChild(commitPrBtn);
+        doneActions.appendChild(commitPrBtn);
       }
 
       var archiveBtn = node('button', 'btn-archive', 'Archive');
@@ -199,7 +260,8 @@ export function buildBoardCard(item) {
             showToast('Action failed: ' + err.message, true);
           });
       });
-      meta.appendChild(archiveBtn);
+      doneActions.appendChild(archiveBtn);
+      meta.appendChild(doneActions);
     }
   }
   card.appendChild(meta);
@@ -216,7 +278,9 @@ export function buildBoardCard(item) {
     card.classList.remove('dragging');
   });
 
-  card.addEventListener('click', function () {
+  card.addEventListener('click', function (e) {
+    if (e && e.target && e.target.closest && e.target.closest('button, a, select, input')) return;
+    if (typeof window !== 'undefined' && window.getSelection && String(window.getSelection()).trim()) return;
     setRoute(item.id);
     setViewMode('detail');
   });
