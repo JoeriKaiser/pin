@@ -504,7 +504,7 @@ export function bindGlobalShortcuts() {
       if (event.key === 'Escape') { event.preventDefault(); closeRunnerDialog(); }
       else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
         event.preventDefault();
-        if (els.runnerSaveBtn && !els.runnerSaveBtn.disabled) els.runnerSaveBtn.click();
+        if (els.btnRunnerSave && !els.btnRunnerSave.disabled) els.btnRunnerSave.click();
       }
       return;
     }
@@ -745,5 +745,37 @@ export function bind(options) {
   bindRunnerUi();
   bindAlertsUi();
   bindReplyInboxUi();
+  bindTablists();
+  if (els.toast) {
+    els.toast.addEventListener('click', function () {
+      els.toast.hidden = true;
+    });
+  }
   bindGlobalShortcuts();
+}
+
+function bindTablists() {
+  if (typeof document === 'undefined' || !document.addEventListener) return;
+  document.addEventListener('keydown', function (event) {
+    var tab = event.target && event.target.closest && event.target.closest('[role="tab"]');
+    if (!tab) return;
+    var list = tab.closest('[role="tablist"]');
+    if (!list) return;
+    if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft' && event.key !== 'Home' && event.key !== 'End') return;
+    var tabs = Array.from(list.querySelectorAll('[role="tab"]')).filter(function (t) { return !t.hidden && !t.disabled; });
+    if (tabs.length < 2) return;
+    var idx = tabs.indexOf(tab);
+    if (idx < 0) return;
+    event.preventDefault();
+    var nextIdx = idx;
+    if (event.key === 'ArrowRight') nextIdx = (idx + 1) % tabs.length;
+    else if (event.key === 'ArrowLeft') nextIdx = (idx - 1 + tabs.length) % tabs.length;
+    else if (event.key === 'Home') nextIdx = 0;
+    else if (event.key === 'End') nextIdx = tabs.length - 1;
+    var nextTab = tabs[nextIdx];
+    if (nextTab) {
+      if (nextTab.focus) nextTab.focus();
+      if (nextTab.click) nextTab.click();
+    }
+  });
 }

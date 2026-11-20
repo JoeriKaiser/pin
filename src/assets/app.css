@@ -4008,6 +4008,15 @@ a:hover {
   background: var(--bg);
 }
 
+.spec-preview-empty {
+  color: var(--muted);
+  font-style: italic;
+}
+
+[aria-invalid="true"] {
+  border-color: var(--danger-ink) !important;
+}
+
 .spec-modal-hint {
   font-size: var(--text-2xs);
   color: var(--faint);
@@ -4115,6 +4124,7 @@ a:hover {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  cursor: pointer;
   transition: opacity var(--transition-fast), transform var(--transition-fast);
 }
 

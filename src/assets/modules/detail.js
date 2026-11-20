@@ -715,17 +715,28 @@ export function renderActivity(item) {
 
 export function setReaderTab(tab) {
   state.readerTab = tab;
-  if (tab === 'trajectory') {
-    if (els.tabAgentTrajectory) els.tabAgentTrajectory.classList.add('active');
-    if (els.tabTaskSpec) els.tabTaskSpec.classList.remove('active');
+  var isTraj = tab === 'trajectory';
+  if (els.tabAgentTrajectory) {
+    els.tabAgentTrajectory.classList.toggle('active', isTraj);
+    if (els.tabAgentTrajectory.setAttribute) {
+      els.tabAgentTrajectory.setAttribute('aria-selected', String(isTraj));
+      els.tabAgentTrajectory.setAttribute('tabindex', isTraj ? '0' : '-1');
+    }
+  }
+  if (els.tabTaskSpec) {
+    els.tabTaskSpec.classList.toggle('active', !isTraj);
+    if (els.tabTaskSpec.setAttribute) {
+      els.tabTaskSpec.setAttribute('aria-selected', String(!isTraj));
+      els.tabTaskSpec.setAttribute('tabindex', isTraj ? '-1' : '0');
+    }
+  }
+  if (isTraj) {
     if (els.proposal) els.proposal.hidden = true;
     if (els.agentDrawer) els.agentDrawer.hidden = false;
 
     if (state.currentStreamingId === state.selected) return;
     if (state.selected) callbacks.openAgentDrawer(state.selected);
   } else {
-    if (els.tabTaskSpec) els.tabTaskSpec.classList.add('active');
-    if (els.tabAgentTrajectory) els.tabAgentTrajectory.classList.remove('active');
     if (els.proposal) els.proposal.hidden = false;
     if (els.agentDrawer) els.agentDrawer.hidden = true;
   }

@@ -71,9 +71,14 @@ export function showToast(message, isError) {
     els.toast.classList.toggle('toast-error', !!isError);
     els.toast.classList.toggle('toast-success', !isError);
   }
+  var announcer = isError ? els.alertAnnouncer : els.toastAnnouncer;
+  if (announcer) {
+    text(announcer, '');
+    text(announcer, message);
+  }
   toastTimer = setTimeout(function () {
     els.toast.hidden = true;
-  }, 3500);
+  }, isError ? 6500 : 3500);
 }
 
 export function showDialogError(message) {

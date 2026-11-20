@@ -301,6 +301,17 @@ export function closeRunnerDialog() {
   showRunnerError('');
 }
 
+function setRunnerFieldInvalid(el, invalid) {
+  if (!el) return;
+  if (invalid && el.setAttribute) {
+    el.setAttribute('aria-invalid', 'true');
+    el.setAttribute('aria-describedby', 'runner-dialog-error');
+  } else if (el.removeAttribute) {
+    el.removeAttribute('aria-invalid');
+    el.removeAttribute('aria-describedby');
+  }
+}
+
 function showRunnerError(message) {
   if (!els.runnerDialogError) return;
   if (message) {
@@ -309,6 +320,8 @@ function showRunnerError(message) {
   } else {
     text(els.runnerDialogError, '');
     els.runnerDialogError.hidden = true;
+    setRunnerFieldInvalid(els.runnerCommandInput, false);
+    setRunnerFieldInvalid(els.runnerActorInput, false);
   }
 }
 
@@ -344,11 +357,15 @@ export function saveRunnerSettingsFromDialog() {
   var actor = els.runnerActorInput ? els.runnerActorInput.value.trim() : '';
 
   if (!command) {
-    showRunnerError('Agent command cannot be empty.');
+    showRunnerError('Enter an agent command before saving.');
+    setRunnerFieldInvalid(els.runnerCommandInput, true);
+    if (els.runnerCommandInput && els.runnerCommandInput.focus) els.runnerCommandInput.focus();
     return Promise.resolve(null);
   }
   if (!actor) {
-    showRunnerError('Vault actor cannot be empty.');
+    showRunnerError('Enter a vault actor before saving.');
+    setRunnerFieldInvalid(els.runnerActorInput, true);
+    if (els.runnerActorInput && els.runnerActorInput.focus) els.runnerActorInput.focus();
     return Promise.resolve(null);
   }
 

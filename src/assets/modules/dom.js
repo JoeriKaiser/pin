@@ -144,6 +144,7 @@ export var els = {
   dialogCancelBtn: $('dialog-cancel-btn'),
   dialogSubmitBtn: $('dialog-submit-btn'),
   toast: $('toast'),
+  toastAnnouncer: $('toast-announcer'),
   readerTabs: $('reader-tabs'),
   tabTaskSpec: $('tab-task-spec'),
   tabAgentTrajectory: $('tab-agent-trajectory'),

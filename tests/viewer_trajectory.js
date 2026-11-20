@@ -2534,6 +2534,64 @@ async function runHarness() {
     console.log('PASS: Board card semantics, priority labels, and accessible names verified');
   }
 
+  console.log('\n--- 27. Testing ARIA Tablists, Keyboard Tool Rows, Form Validation, and Runner Cmd+Enter ---');
+  {
+    // Reader tabs sync aria-selected and roving tabindex
+    testExports.setReaderTab('trajectory');
+    assert.strictEqual(documentMock.getElementById('tab-agent-trajectory').getAttribute('aria-selected'), 'true', 'trajectory tab aria-selected=true');
+    assert.strictEqual(documentMock.getElementById('tab-task-spec').getAttribute('aria-selected'), 'false', 'spec tab aria-selected=false');
+    assert.strictEqual(documentMock.getElementById('tab-task-spec').getAttribute('tabindex'), '-1', 'inactive tab has tabindex=-1');
+    testExports.setReaderTab('spec');
+    assert.strictEqual(documentMock.getElementById('tab-task-spec').getAttribute('aria-selected'), 'true', 'spec tab restored aria-selected=true');
+
+    // Spec modal Write/Preview tabs sync aria-selected and render empty state without inline style
+    testExports.openSpecModal({});
+    testExports.setSpecModalTab('preview');
+    assert.strictEqual(documentMock.getElementById('spec-tab-preview').getAttribute('aria-selected'), 'true', 'preview tab aria-selected=true');
+    assert.ok(!documentMock.getElementById('spec-modal-preview').innerHTML.includes('style='), 'empty preview uses class instead of CSP-blocked inline style');
+    testExports.submitSpecModal();
+    assert.strictEqual(documentMock.getElementById('spec-modal-title').getAttribute('aria-invalid'), 'true', 'empty title sets aria-invalid');
+    assert.strictEqual(documentMock.getElementById('spec-modal-title').getAttribute('aria-describedby'), 'spec-modal-error', 'empty title sets aria-describedby');
+    testExports.closeSpecModal();
+
+    // Keyboard activation on trajectory tool call row
+    openAgentDrawer('kbd-tool-item');
+    handleAgentStreamEvent({
+      type: 'tool_call',
+      update: { toolCallId: 'kbd-c1', name: 'bash', rawInput: { command: 'echo hi' }, status: 'running' }
+    });
+    const kbdStream27 = documentMock.getElementById('agent-trajectory-stream');
+    const kbdRow = kbdStream27.children.filter(r => !!findDescendant(r, '.badge-tool'))[0];
+    assert.ok(kbdRow, 'trajectory tool row created');
+    assert.strictEqual(kbdRow.getAttribute('role'), 'button', 'trajectory tool row has button role');
+    assert.strictEqual(kbdRow.getAttribute('tabindex'), '0', 'trajectory tool row is keyboard focusable');
+    kbdRow.dispatchEvent({ type: 'keydown', key: 'Enter', preventDefault() {} });
+    assert.strictEqual(documentMock.getElementById('agent-tool-inspector').hidden, false, 'Enter key opens tool inspector');
+    testExports.closeToolInspector();
+    closeAgentDrawer();
+
+    // Runner Cmd+Enter submits via els.btnRunnerSave
+    const runnerDlg27 = documentMock.getElementById('runner-dialog');
+    const runnerSaveBtn27 = documentMock.getElementById('btn-runner-save');
+    let runnerSaveClicked = false;
+    const origClick27 = runnerSaveBtn27.click;
+    runnerSaveBtn27.click = function () { runnerSaveClicked = true; };
+    runnerSaveBtn27.disabled = false;
+    runnerDlg27.open = true;
+    documentMock.dispatchEvent({
+      type: 'keydown',
+      key: 'Enter',
+      metaKey: true,
+      target: runnerDlg27,
+      preventDefault() {}
+    });
+    assert.strictEqual(runnerSaveClicked, true, 'Cmd+Enter in Runner dialog clicks btn-runner-save');
+    runnerSaveBtn27.click = origClick27;
+    runnerDlg27.open = false;
+
+    console.log('PASS: ARIA tablists, keyboard tool rows, form validation, and Runner Cmd+Enter verified');
+  }
+
   console.log('\n========================================');
   console.log('ALL VIEWER TRAJECTORY TESTS PASSED (0)');
   console.log('========================================');
