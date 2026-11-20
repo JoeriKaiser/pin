@@ -3,6 +3,7 @@ import { state, find, itemStatus, getRunInfo, isRunInteractive } from './state.j
 import { els, $ } from './dom.js';
 import { fetchRuns, fetchItemLog } from './api.js';
 import { text, clear, node, stripAnsi, cleanThoughtText } from './formatters.js';
+import { renderMarkdownSnippet } from './markdown.js';
 import { setViewMode } from './board.js';
 import { setRoute } from './router.js';
 var callbacks = { refreshData: function () {}, renderBoard: function () {}, renderDetail: function () {}, renderAgentsTable: function () {} };
@@ -177,9 +178,18 @@ function createTrajectory(timingStart, now) {
   return {
     startTime: timingStart ? (timingStart * 1000) : now, startedAt: timingStart, finishedAt: null, turns: 0, calls: 0, timer: null,
     steps: [{ lane: 'input', label: 'Start' }], activeAssistantRow: null, activeAssistantTextEl: null,
+    activeAssistantKind: null, activeAssistantRaw: '',
     intervals: { input: [{ start: now, end: now + 50 }], model: [], tools: [] }, currentModelInterval: null,
     toolIntervals: {}, toolCalls: {}, toolRows: {}, filterQuery: ''
   };
+}
+
+function resetActiveAssistantRow() {
+  if (!state.trajectory) return;
+  state.trajectory.activeAssistantRow = null;
+  state.trajectory.activeAssistantTextEl = null;
+  state.trajectory.activeAssistantKind = null;
+  state.trajectory.activeAssistantRaw = '';
 }
 
 export function openAgentDrawer(itemId) {
@@ -401,6 +411,7 @@ export function handleAgentStreamEvent(data) {
     return;
   }
   if (data.type === 'waiting_for_user') {
+    resetActiveAssistantRow();
     var activeInfo = getRunInfo(state.currentStreamingId);
     syncAgentChatControls(state.currentStreamingId, true, true, activeInfo && activeInfo.mode, false);
     if (els.agentChatInput && typeof els.agentChatInput.focus === 'function') {
@@ -413,6 +424,7 @@ export function handleAgentStreamEvent(data) {
     return;
   }
   if (data.type === 'user_message') {
+    resetActiveAssistantRow();
     var content = data.text || (data.update && data.update.content) || '';
     if (content) appendTrajectoryUserRow(content);
     var msgRunInfo = getRunInfo(state.currentStreamingId);
@@ -436,7 +448,9 @@ export function handleAgentStreamEvent(data) {
 
   if (updateType === 'plan') {
     renderAgentPlan(update);
-  } else if (updateType === 'agent_thought_chunk' || updateType === 'agent_message_chunk') {
+  } else if (updateType === 'agent_thought_chunk' || updateType === 'agent_message_chunk' || updateType === 'agent_message') {
+    var isMessage = updateType === 'agent_message_chunk' || updateType === 'agent_message';
+    var chunkKind = isMessage ? 'message' : 'thought';
     var rawThought = extractThoughtContent(update);
     appendAgentThought(rawThought);
     var cleaned = cleanThoughtText(rawThought);
@@ -449,19 +463,21 @@ export function handleAgentStreamEvent(data) {
     }
     if (!state.trajectory) return;
 
-    if (!state.trajectory.activeAssistantRow) {
+    if (!state.trajectory.activeAssistantRow || state.trajectory.activeAssistantKind !== chunkKind) {
       state.trajectory.turns++;
       if (els.metricTurns) text(els.metricTurns, 'Turns: ' + state.trajectory.turns);
-      var row = node('div', 'trajectory-row trajectory-row-assistant');
+      var row = node('div', 'trajectory-row trajectory-row-assistant ' + (isMessage ? 'trajectory-row-message' : 'trajectory-row-thought'));
       row.appendChild(node('div', 'trajectory-gutter', '●'));
-      row.appendChild(node('span', 'trajectory-badge badge-assistant', 'ASSISTANT'));
+      row.appendChild(node('span', 'trajectory-badge badge-assistant' + (isMessage ? '' : ' badge-thought'), isMessage ? 'ASSISTANT' : 'THOUGHT'));
       var body = node('div', 'trajectory-body');
-      var thoughtEl = node('div', 'trajectory-thought-text');
-      body.appendChild(thoughtEl);
+      var textEl = node('div', isMessage ? 'trajectory-message-text prose' : 'trajectory-thought-text');
+      body.appendChild(textEl);
       row.appendChild(body);
       if (els.trajectoryStream) els.trajectoryStream.appendChild(row);
       state.trajectory.activeAssistantRow = row;
-      state.trajectory.activeAssistantTextEl = thoughtEl;
+      state.trajectory.activeAssistantTextEl = textEl;
+      state.trajectory.activeAssistantKind = chunkKind;
+      state.trajectory.activeAssistantRaw = '';
 
       var mNow = Date.now();
       state.trajectory.intervals.model.push({ start: mNow, end: mNow });
@@ -475,13 +491,18 @@ export function handleAgentStreamEvent(data) {
     }
 
     if (cleaned && state.trajectory.activeAssistantTextEl) {
-      var aNodes = state.trajectory.activeAssistantTextEl.childNodes || state.trajectory.activeAssistantTextEl.children;
-      var aLast = aNodes && aNodes.length > 0 ? aNodes[aNodes.length - 1] : null;
-      if (aLast && (aLast.nodeType === 3 || typeof aLast.textContent === 'string') && aLast.parentNode === state.trajectory.activeAssistantTextEl) {
-        aLast.textContent = (aLast.textContent || '') + cleaned;
-        if (aLast.nodeValue !== undefined) aLast.nodeValue = aLast.textContent;
+      if (isMessage) {
+        state.trajectory.activeAssistantRaw = (state.trajectory.activeAssistantRaw || '') + cleaned;
+        renderMarkdownSnippet(state.trajectory.activeAssistantRaw, state.trajectory.activeAssistantTextEl);
       } else {
-        state.trajectory.activeAssistantTextEl.appendChild(document.createTextNode(cleaned));
+        var aNodes = state.trajectory.activeAssistantTextEl.childNodes || state.trajectory.activeAssistantTextEl.children;
+        var aLast = aNodes && aNodes.length > 0 ? aNodes[aNodes.length - 1] : null;
+        if (aLast && (aLast.nodeType === 3 || typeof aLast.textContent === 'string') && aLast.parentNode === state.trajectory.activeAssistantTextEl) {
+          aLast.textContent = (aLast.textContent || '') + cleaned;
+          if (aLast.nodeValue !== undefined) aLast.nodeValue = aLast.textContent;
+        } else {
+          state.trajectory.activeAssistantTextEl.appendChild(document.createTextNode(cleaned));
+        }
       }
     }
     scrollTrajectoryStreamToBottom();
@@ -496,8 +517,7 @@ export function handleAgentStreamEvent(data) {
       state.trajectory.currentModelInterval.end = Date.now();
       state.trajectory.currentModelInterval = null;
     }
-    state.trajectory.activeAssistantRow = null;
-    state.trajectory.activeAssistantTextEl = null;
+    resetActiveAssistantRow();
     state.trajectory.calls++;
     if (els.metricCalls) text(els.metricCalls, 'Calls: ' + state.trajectory.calls);
 

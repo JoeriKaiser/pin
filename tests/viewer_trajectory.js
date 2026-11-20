@@ -2167,6 +2167,20 @@ async function runHarness() {
   testExports.state.activeRunsInfo = [];
   console.log('PASS: Trajectory chat state sync and draft persistence verified');
 
+  console.log('\n--- 20. Testing Markdown Assistant Messages vs Thoughts ---');
+  openAgentDrawer('item-md-traj');
+  handleAgentStreamEvent({ type: 'agent_thought_chunk', update: 'Checking files silently...' });
+  handleAgentStreamEvent({ type: 'agent_message_chunk', update: '1. **First question?**\n' });
+  handleAgentStreamEvent({ type: 'agent_message_chunk', update: '2. Second question?' });
+  const trajEl20 = document.getElementById('agent-trajectory-stream');
+  const thoughtRows20 = findAllDescendants(trajEl20, '.trajectory-row-thought');
+  const messageRows20 = findAllDescendants(trajEl20, '.trajectory-row-message');
+  assert.strictEqual(thoughtRows20.length, 1, 'thought chunk creates separate thought row');
+  assert.strictEqual(messageRows20.length, 1, 'consecutive message chunks merge into one assistant message row');
+  assert.ok(messageRows20[0].textContent.includes('First question?') && messageRows20[0].textContent.includes('Second question?'), 'message row preserves streamed text');
+  closeAgentDrawer();
+  console.log('PASS: Markdown assistant messages vs thoughts verified');
+
   console.log('\n========================================');
   console.log('ALL VIEWER TRAJECTORY TESTS PASSED (0)');
   console.log('========================================');

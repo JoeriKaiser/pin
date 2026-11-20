@@ -2854,6 +2854,45 @@ a:hover {
   background: transparent;
 }
 
+.badge-thought {
+  color: var(--faint);
+}
+
+.trajectory-row-message {
+  background: var(--surface);
+  border-top: 1px solid var(--line-subtle);
+  border-bottom: 1px solid var(--line-subtle);
+  padding-top: var(--space-2);
+  padding-bottom: var(--space-2);
+}
+
+.trajectory-message-text {
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--ink);
+  word-break: break-word;
+}
+
+.trajectory-message-text > :first-child {
+  margin-top: 0;
+}
+
+.trajectory-message-text > :last-child {
+  margin-bottom: 0;
+}
+
+.trajectory-message-text p,
+.trajectory-message-text ul,
+.trajectory-message-text ol {
+  margin: var(--space-1-5) 0;
+}
+
+.trajectory-message-text ul,
+.trajectory-message-text ol {
+  padding-left: var(--space-5);
+}
+
 .badge-tool {
   color: var(--role-tool);
   border: none;

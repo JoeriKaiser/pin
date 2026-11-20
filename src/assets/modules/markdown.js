@@ -95,7 +95,7 @@ export function renderMarkdownSnippet(raw, container) {
       var dirty = marked.parse(trimmed, { renderer: markedRenderer, gfm: true, breaks: true, async: false });
       var clean = sanitizeHtml(dirty);
       container.innerHTML = clean;
-      if (!container.textContent && !container.childNodes.length) {
+      if (!container.childNodes.length) {
         container.textContent = trimmed;
       }
       return;
