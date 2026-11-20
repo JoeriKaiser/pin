@@ -2426,6 +2426,72 @@ async function runHarness() {
   testExports.syncWaitingAlerts({ notify: false });
   console.log('PASS: Live quick-reply queue sync and trajectory reply helpers verified');
 
+  console.log('\n--- 25. Testing CSS Token Integrity and WCAG 2.2 AA Contrast ---');
+  {
+    const cssSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'assets', 'app.css'), 'utf8');
+    const definedVars = new Set([...cssSrc.matchAll(/(--[a-z0-9-]+)\s*:/g)].map(m => m[1]));
+    const usedVars = [...cssSrc.matchAll(/var\(\s*(--[a-z0-9-]+)/g)].map(m => m[1]);
+    const undefinedVars = [...new Set(usedVars.filter(v => !definedVars.has(v)))];
+    assert.deepStrictEqual(undefinedVars, [], 'app.css must not reference undefined CSS variables');
+
+    const oklchToLinearRgb = (L, C, hDeg) => {
+      const h = hDeg * Math.PI / 180;
+      const a = C * Math.cos(h);
+      const b = C * Math.sin(h);
+      const l_ = L + 0.3963377774 * a + 0.2158037573 * b;
+      const m_ = L - 0.1055613458 * a - 0.0638541728 * b;
+      const s_ = L - 0.0894841775 * a - 1.2914855480 * b;
+      const l = l_ * l_ * l_, m = m_ * m_ * m_, s = s_ * s_ * s_;
+      const r = +4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s;
+      const g = -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s;
+      const bl = -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s;
+      return {
+        r: Math.min(1, Math.max(0, r)),
+        g: Math.min(1, Math.max(0, g)),
+        b: Math.min(1, Math.max(0, bl)),
+        inGamut: r >= -1e-4 && r <= 1.0001 && g >= -1e-4 && g <= 1.0001 && bl >= -1e-4 && bl <= 1.0001
+      };
+    };
+    const parseColor = (str) => {
+      const s = str.trim();
+      if (s === '#ffffff') return { r: 1, g: 1, b: 1, inGamut: true };
+      const m = s.match(/oklch\(\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)(?:\s*\/\s*([\d.]+))?\s*\)/);
+      if (!m) return null;
+      return oklchToLinearRgb(+m[1], +m[2], +m[3]);
+    };
+    const contrastRatio = (c1, c2) => {
+      const l1 = 0.2126 * c1.r + 0.7152 * c1.g + 0.0722 * c1.b;
+      const l2 = 0.2126 * c2.r + 0.7152 * c2.g + 0.0722 * c2.b;
+      return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+    };
+    const extractTokens = (block) => {
+      const out = {};
+      for (const m of block.matchAll(/(--[a-z0-9-]+)\s*:\s*([^;]+);/g)) out[m[1]] = m[2].trim();
+      return out;
+    };
+    const lightTokens = extractTokens(cssSrc.slice(cssSrc.indexOf(':root {'), cssSrc.indexOf('/* Dark Theme Palette')));
+    const darkTokens = extractTokens(cssSrc.slice(cssSrc.indexOf(':root[data-theme="dark"] {'), cssSrc.indexOf('@media (prefers-color-scheme: dark)')));
+    const requiredPairs = [
+      ['--ink', '--bg', 4.5], ['--muted', '--surface', 4.5], ['--faint', '--soft', 4.5],
+      ['--accent', '--surface', 4.5], ['--accent', '--accent-subtle', 4.5],
+      ['--accent-ink', '--accent-solid', 4.5], ['--accent-ink', '--accent-solid-hover', 4.5],
+      ['--focus', '--surface', 3.0], ['--control-border', '--surface', 3.0],
+      ['--priority-high', '--status-blocked-bg', 4.5], ['--priority-low', '--status-created-bg', 4.5],
+      ['--role-tool', '--bg', 4.5]
+    ];
+    for (const [themeName, tokens] of [['light', lightTokens], ['dark', darkTokens]]) {
+      for (const [k, v] of Object.entries(tokens)) {
+        const parsed = parseColor(v);
+        if (parsed) assert.ok(parsed.inGamut, `${themeName} token ${k} (${v}) must be in sRGB gamut`);
+      }
+      for (const [fg, bg, minRatio] of requiredPairs) {
+        const cr = contrastRatio(parseColor(tokens[fg]), parseColor(tokens[bg]));
+        assert.ok(cr >= minRatio, `${themeName} ${fg} on ${bg} contrast ${cr.toFixed(2)}:1 < ${minRatio}:1`);
+      }
+    }
+    console.log('PASS: CSS token integrity and WCAG 2.2 AA contrast verified');
+  }
+
   console.log('\n========================================');
   console.log('ALL VIEWER TRAJECTORY TESTS PASSED (0)');
   console.log('========================================');
