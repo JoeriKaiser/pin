@@ -12,6 +12,7 @@ export var els = {
   agents: $('agents'),
   agentsTableBody: $('agents-table-body'),
   agentsEmpty: $('agents-empty'),
+  btnAgentsGoBoard: $('btn-agents-go-board'),
   agentsTableWrap: $('agents-table-wrap'),
   countCreated: $('count-created'),
   countPlanned: $('count-planned'),

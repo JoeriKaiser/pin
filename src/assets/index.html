@@ -18,7 +18,7 @@
     <button id="btn-runner" class="control runner-btn" type="button" title="Runner settings">Runner <span id="runner-summary" class="runner-summary">agent:omp</span></button>
     <button id="btn-sync-git" class="control" type="button" title="Sync Git merge status">Sync Git</button>
     <button id="btn-update" class="control action-btn-update" type="button" title="Update pin" hidden>Update to <span id="update-version"></span></button>
-    <button id="btn-new-ticket" class="control action-btn-accent" type="button" title="New spec ticket (n)">+ New Task</button>
+    <button id="btn-new-ticket" class="control action-btn-accent" type="button" title="New task (n)">+ New task</button>
     <button id="btn-shortcuts" class="control icon-control" type="button" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts"><svg class="ui-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="6.25"/><path d="M6.25 6.25a1.85 1.85 0 0 1 3.4.95c0 1.15-1.65 1.4-1.65 2.3"/><circle cx="8" cy="11.75" r="0.6" fill="currentColor" stroke="none"/></svg></button>
     <button id="btn-theme-toggle" class="control icon-control" type="button" title="Toggle theme (t)" aria-label="Toggle theme"><svg class="ui-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="5.75"/><path d="M8 2.25v11.5A5.75 5.75 0 0 0 8 2.25Z" fill="currentColor" stroke="none"/></svg></button>
     <div class="view-switch" role="group" aria-label="View mode">
@@ -49,7 +49,7 @@
     <span id="needs-reply-banner-more" class="needs-reply-banner-more" hidden></span>
   </div>
   <div class="needs-reply-banner-actions">
-    <button id="btn-needs-reply-banner-view" class="control action-btn-small" type="button">View Run</button>
+    <button id="btn-needs-reply-banner-view" class="control action-btn-small" type="button">View run</button>
     <button id="btn-needs-reply-banner-action" class="action-btn primary action-btn-small" type="button">Reply</button>
   </div>
 </div>
@@ -66,12 +66,12 @@
         </div>
         <div id="quick-add-container" class="quick-add-container">
           <div class="quick-add-triggers">
-            <button id="quick-add-trigger" class="quick-add-trigger" type="button">+ Add task or spec ticket…</button>
-            <button id="quick-idea-trigger" class="quick-add-trigger quick-idea-btn" type="button" title="Create an idea ticket to explore with an agent">+ Idea…</button>
+            <button id="quick-add-trigger" class="quick-add-trigger" type="button">+ Add task…</button>
+            <button id="quick-idea-trigger" class="quick-add-trigger quick-idea-btn" type="button" title="Create an idea to explore with an agent">+ Idea…</button>
           </div>
           <form id="quick-add-form" class="quick-add-form" hidden>
             <div class="quick-add-header">
-              <input id="quick-add-input" class="quick-add-input" type="text" placeholder="Task or spec title…" aria-label="Task title" autocomplete="off" required>
+              <input id="quick-add-input" class="quick-add-input" type="text" placeholder="Task title…" aria-label="Task title" autocomplete="off" required>
               <div class="quick-add-header-actions">
                 <button id="quick-add-expand-btn" class="control icon-btn" type="button" title="Open in full modal editor" aria-label="Open in full modal editor"><svg class="ui-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.5 2.5h4v4M6.5 13.5h-4v-4M13.5 2.5l-4.5 4.5M2.5 13.5l4.5-4.5"/></svg></button>
                 <button id="quick-add-close-btn" class="control icon-btn" type="button" title="Collapse editor" aria-label="Collapse quick add"><svg class="ui-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
@@ -80,8 +80,8 @@
             <div class="quick-add-editor-wrap">
               <textarea id="quick-add-body" class="quick-add-body" placeholder="Specification details, requirements, acceptance criteria… (Markdown)" aria-label="Task details" rows="4"></textarea>
               <div class="quick-add-snippets">
-                <button type="button" class="snippet-btn" data-insert="ac">+ Acceptance Criteria</button>
-                <button type="button" class="snippet-btn" data-insert="template">+ Spec Template</button>
+                <button type="button" class="snippet-btn" data-insert="ac">+ Acceptance criteria</button>
+                <button type="button" class="snippet-btn" data-insert="template">+ Spec template</button>
               </div>
             </div>
             <div class="quick-add-meta">
@@ -109,7 +109,7 @@
               <span class="quick-add-hint">Cmd+Enter to create · Esc to cancel</span>
               <div class="quick-add-buttons">
                 <button id="quick-add-cancel" class="control text-button" type="button">Cancel</button>
-                <button id="quick-add-submit" class="action-btn primary" type="submit">Create Ticket</button>
+                <button id="quick-add-submit" class="action-btn primary" type="submit">Create task</button>
               </div>
             </div>
           </form>
@@ -125,7 +125,7 @@
       </div>
       <div class="board-col" data-col="in_progress">
         <div class="board-col-header">
-          <h2 class="board-col-title">In Progress</h2>
+          <h2 class="board-col-title">In progress</h2>
           <span class="board-col-count" id="count-in_progress">0</span>
         </div>
         <div class="board-col-cards" data-drop-status="in_progress"></div>
@@ -147,7 +147,7 @@
     </div>
     <details id="board-archive-drawer" class="board-drawer">
       <summary class="board-drawer-summary">
-        <span>Closed & Cancelled (<span id="count-closed">0</span>)</span>
+        <span>Closed and cancelled (<span id="count-closed">0</span>)</span>
       </summary>
       <div class="board-drawer-content board-col-cards" data-drop-status="closed"></div>
     </details>
@@ -161,10 +161,15 @@
   <section id="reader" class="reader" tabindex="-1" aria-label="Item details">
     <button id="back" class="back control" type="button">← Work items</button>
     <div class="reader-tabs" id="reader-tabs" role="tablist" aria-label="Item views" hidden>
-      <button type="button" class="reader-tab active" id="tab-task-spec" role="tab" aria-selected="true" aria-controls="proposal" tabindex="0">Task Spec</button>
-      <button type="button" class="reader-tab" id="tab-agent-trajectory" role="tab" aria-selected="false" aria-controls="agent-drawer" tabindex="-1">Agent Trajectory <span id="reader-trajectory-badge" class="badge-mini" hidden>Running</span></button>
+      <button type="button" class="reader-tab active" id="tab-task-spec" role="tab" aria-selected="true" aria-controls="proposal" tabindex="0">Task details</button>
+      <button type="button" class="reader-tab" id="tab-agent-trajectory" role="tab" aria-selected="false" aria-controls="agent-drawer" tabindex="-1">Agent trajectory <span id="reader-trajectory-badge" class="badge-mini" hidden>Running</span></button>
     </div>
-    <div id="detail-empty" class="empty reader-empty"><p>Select an item to view it.</p></div>
+    <div id="detail-empty" class="empty reader-empty">
+      <div class="empty-stack">
+        <strong>Select an item</strong>
+        <p>Choose an item from the list to inspect its details, relationships, and activity.</p>
+      </div>
+    </div>
     <article id="proposal" hidden>
       <div class="split-detail">
         <div class="prose-pane">
@@ -186,22 +191,22 @@
             <dl id="proposal-meta"></dl>
           </details>
           <section id="activity-section" class="activity-section" hidden>
-            <h2>Activity History</h2>
+            <h2>Activity history</h2>
             <ol id="activity-list" class="activity-list"></ol>
           </section>
         </aside>
       </div>
     </article>
-    <aside id="agent-drawer" class="agent-drawer" aria-label="Agent Execution" hidden>
+    <aside id="agent-drawer" class="agent-drawer" aria-label="Agent execution" hidden>
       <div class="agent-drawer-header">
         <div class="agent-drawer-title-group">
-          <h2>Agent Execution</h2>
+          <h2>Agent execution</h2>
           <span id="agent-task-title" class="agent-task-title"></span>
           <span id="agent-item-id" class="agent-badge-id"></span>
           <span id="agent-status-pill" class="agent-status-pill">Running</span>
         </div>
         <div class="agent-drawer-actions">
-          <button id="btn-cancel-agent" class="action-btn danger" type="button">Cancel Agent</button>
+          <button id="btn-cancel-agent" class="action-btn danger" type="button">Cancel agent</button>
           <button id="btn-close-agent-drawer" class="dialog-close" type="button" aria-label="Close drawer"><svg class="ui-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
         </div>
       </div>
@@ -216,7 +221,7 @@
           <span class="trajectory-metric" id="agent-metric-turns">Turns: 0</span>
           <span class="trajectory-metric" id="agent-metric-calls">Calls: 0</span>
           <span id="agent-log-info" class="agent-log-info trajectory-metric"></span>
-          <input type="search" id="agent-trajectory-search" class="agent-trajectory-search" placeholder="Search..." aria-label="Search trajectory">
+          <input type="search" id="agent-trajectory-search" class="agent-trajectory-search" placeholder="Filter trajectory…" aria-label="Filter trajectory">
         </div>
         <div id="agent-swimlane-container" class="agent-swimlane-container">
           <svg id="agent-swimlane-svg" class="agent-swimlane-svg" viewBox="0 0 800 64" preserveAspectRatio="xMinYMid meet" aria-label="Execution timeline"></svg>
@@ -265,7 +270,11 @@
     <h1 class="visually-hidden">Running agents</h1>
     <div class="agents-container">
       <div id="agents-empty" class="agents-empty" hidden>
-        <p>No agents currently running</p>
+        <div class="empty-stack">
+          <strong>No agents currently running</strong>
+          <p>Start an agent from any planned or backlog item on the board to monitor runs here.</p>
+          <button id="btn-agents-go-board" class="action-btn primary empty-action-btn" type="button">Go to board</button>
+        </div>
       </div>
       <div id="agents-table-wrap" class="agents-table-wrap">
         <table class="agents-table">
@@ -306,7 +315,7 @@
 <dialog id="spec-modal" class="action-dialog spec-modal" aria-labelledby="spec-modal-title-heading">
   <form id="spec-modal-form" class="dialog-content spec-modal-content">
     <div class="dialog-header">
-      <h2 id="spec-modal-title-heading">New Spec Ticket</h2>
+      <h2 id="spec-modal-title-heading">New task</h2>
       <button id="spec-modal-close-btn" class="dialog-close" type="button" aria-label="Close"><svg class="ui-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
     </div>
     <div id="spec-modal-error" class="dialog-error" role="alert" hidden></div>
@@ -356,8 +365,8 @@
             <button type="button" id="spec-tab-preview" class="control tab-btn" role="tab" aria-selected="false" aria-controls="spec-modal-preview" tabindex="-1">Preview</button>
           </div>
           <div class="spec-modal-snippets">
-            <button type="button" class="snippet-btn" data-insert="ac">+ Acceptance Criteria</button>
-            <button type="button" class="snippet-btn" data-insert="template">+ Spec Template</button>
+            <button type="button" class="snippet-btn" data-insert="ac">+ Acceptance criteria</button>
+            <button type="button" class="snippet-btn" data-insert="template">+ Spec template</button>
           </div>
         </div>
         <div class="spec-modal-pane-wrap">
@@ -369,7 +378,7 @@
     <div class="dialog-footer">
       <span class="spec-modal-hint">Cmd+Enter to create · Esc to cancel</span>
       <button id="spec-modal-cancel-btn" class="control text-button" type="button">Cancel</button>
-      <button id="spec-modal-submit-btn" class="action-btn primary" type="submit">Create Ticket</button>
+      <button id="spec-modal-submit-btn" class="action-btn primary" type="submit">Create task</button>
     </div>
   </form>
 </dialog>
@@ -378,7 +387,7 @@
 <dialog id="runner-dialog" class="action-dialog runner-dialog" aria-labelledby="runner-dialog-title">
   <div class="dialog-content">
     <div class="dialog-header">
-      <h2 id="runner-dialog-title">Agent Runner</h2>
+      <h2 id="runner-dialog-title">Agent runner</h2>
       <button id="btn-runner-close" class="dialog-close" type="button" aria-label="Close"><svg class="ui-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
     </div>
     <div id="runner-dialog-error" class="dialog-error" role="alert" hidden></div>
@@ -410,7 +419,7 @@
     </div>
     <div class="dialog-footer">
       <button id="btn-runner-cancel" class="control text-button" type="button">Cancel</button>
-      <button id="btn-runner-save" class="action-btn primary" type="button">Save Runner</button>
+      <button id="btn-runner-save" class="action-btn primary" type="button">Save runner</button>
     </div>
   </div>
 </dialog>
@@ -443,11 +452,11 @@
       </div>
     </div>
     <div class="dialog-footer reply-modal-footer">
-      <button id="btn-reply-open-trajectory" class="control text-button" type="button">Open Full Trajectory</button>
+      <button id="btn-reply-open-trajectory" class="control text-button" type="button">Open full trajectory</button>
       <div class="reply-modal-footer-right">
         <span class="spec-modal-hint">Cmd+Enter to send</span>
-        <button id="btn-reply-finish" class="control" type="button">Finish Discussion</button>
-        <button id="btn-reply-send" class="action-btn primary" type="button">Send Reply</button>
+        <button id="btn-reply-finish" class="control" type="button">Finish discussion</button>
+        <button id="btn-reply-send" class="action-btn primary" type="button">Send reply</button>
       </div>
     </div>
   </div>
@@ -456,7 +465,7 @@
 <dialog id="alerts-dialog" class="action-dialog alerts-dialog" aria-labelledby="alerts-dialog-title">
   <div class="dialog-content">
     <div class="dialog-header">
-      <h2 id="alerts-dialog-title">Prompt Alerts</h2>
+      <h2 id="alerts-dialog-title">Prompt alerts</h2>
       <button id="btn-alerts-close" class="dialog-close" type="button" aria-label="Close"><svg class="ui-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
     </div>
     <div class="dialog-body">
@@ -471,8 +480,8 @@
       </label>
       <p id="alerts-desktop-status" class="runner-model-status" aria-live="polite"></p>
       <div class="alerts-dialog-tools">
-        <button id="btn-alerts-request-perm" class="control" type="button">Enable Desktop Alerts</button>
-        <button id="btn-alerts-test" class="control" type="button">Test Alert</button>
+        <button id="btn-alerts-request-perm" class="control" type="button">Enable desktop alerts</button>
+        <button id="btn-alerts-test" class="control" type="button">Test alert</button>
       </div>
     </div>
     <div class="dialog-footer">
@@ -507,7 +516,7 @@
 <dialog id="shortcuts-modal" class="action-dialog shortcuts-modal" aria-labelledby="shortcuts-modal-title">
   <div class="dialog-content shortcuts-modal-content">
     <div class="dialog-header">
-      <h2 id="shortcuts-modal-title">Keyboard Shortcuts</h2>
+      <h2 id="shortcuts-modal-title">Keyboard shortcuts</h2>
       <button id="shortcuts-modal-close-btn" class="dialog-close" type="button" aria-label="Close"><svg class="ui-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
     </div>
     <div class="dialog-body shortcuts-modal-body">

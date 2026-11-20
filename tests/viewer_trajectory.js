@@ -2701,6 +2701,24 @@ async function runHarness() {
     console.log('PASS: Motion discipline and theme-switch transition suppression verified');
   }
 
+  console.log('\n--- 34. Testing Actionable Empty States and Consistent Copy ---');
+  {
+    const prevItems34 = testExports.state.items.slice();
+    testExports.state.items = [{ id: 'f34', title: 'Alpha', status: 'created', type: 'task' }];
+    testExports.state.filters.text = 'nonexistent-query-xyz';
+    testExports.renderList();
+    const listEmpty34 = documentMock.getElementById('list-empty');
+    assert.ok(listEmpty34.textContent.includes('nonexistent-query-xyz'), 'Filtered empty state names the active query');
+    assert.ok(listEmpty34.querySelector('.empty-action-btn'), 'Filtered empty state renders Clear filters action');
+    testExports.state.filters.text = '';
+    testExports.state.items = prevItems34;
+
+    const htmlSrc34 = fs.readFileSync(path.join(__dirname, '..', 'src', 'assets', 'index.html'), 'utf8');
+    assert.ok(htmlSrc34.includes('id="btn-agents-go-board"'), 'Agents empty state includes next action button');
+    assert.ok(!htmlSrc34.includes('Skip to proposal'), 'Stale proposal terminology removed from chrome');
+    console.log('PASS: Actionable empty states and consistent copy verified');
+  }
+
   console.log('\n========================================');
   console.log('ALL VIEWER TRAJECTORY TESTS PASSED (0)');
   console.log('========================================');

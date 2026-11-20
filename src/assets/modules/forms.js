@@ -99,7 +99,7 @@ function setQuickAddDisabled(disabled) {
   if (els.quickAddTags) els.quickAddTags.disabled = disabled;
   if (els.quickAddSubmit) {
     els.quickAddSubmit.disabled = disabled;
-    text(els.quickAddSubmit, disabled ? 'Creating…' : 'Create Ticket');
+    text(els.quickAddSubmit, disabled ? 'Creating…' : 'Create task');
   }
 }
 
@@ -264,7 +264,7 @@ function setSpecModalDisabled(disabled) {
   if (els.specModalProject) els.specModalProject.disabled = disabled;
   if (els.specModalSubmitBtn) {
     els.specModalSubmitBtn.disabled = disabled;
-    text(els.specModalSubmitBtn, disabled ? 'Creating…' : 'Create Ticket');
+    text(els.specModalSubmitBtn, disabled ? 'Creating…' : 'Create task');
   }
 }
 
@@ -379,7 +379,7 @@ export function triggerModalSubmit() {
           });
         }
         closeActionModal();
-        showToast('Action applied successfully', false);
+        showToast('Changes saved', false);
         callbacks.refreshData();
       })
       .catch(function (err) {
@@ -457,7 +457,7 @@ export function openCompleteModal(item) {
       ta.id = 'action-input-evidence';
       ta.required = true;
       ta.rows = 7;
-      ta.placeholder = 'e.g. cargo test output, CLI smoke test, or verification proof...';
+      ta.placeholder = 'e.g. cargo test output, CLI smoke test, or verification proof…';
       label.appendChild(ta);
       body.appendChild(label);
     },
@@ -491,7 +491,7 @@ export function openBlockedModal(item) {
       ta.id = 'action-input-blocker';
       ta.required = true;
       ta.rows = 4;
-      ta.placeholder = 'e.g. Waiting on upstream PR, missing credentials, or prerequisite task...';
+      ta.placeholder = 'e.g. Waiting on upstream PR, missing credentials, or prerequisite task…';
       label.appendChild(ta);
       body.appendChild(label);
     },
@@ -523,7 +523,7 @@ export function openCloseModal(item) {
       var ta = node('textarea');
       ta.id = 'action-input-close';
       ta.rows = 3;
-      ta.placeholder = 'e.g. Shipped in release v1.2, verified by test suite...';
+      ta.placeholder = 'e.g. Shipped in release v1.2, verified by test suite…';
       label.appendChild(ta);
       body.appendChild(label);
     },

@@ -1260,6 +1260,32 @@ a {
   font-size: var(--text-base);
 }
 
+.empty-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 28rem;
+  margin: 0 auto;
+}
+
+.empty-stack strong {
+  color: var(--ink);
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+}
+
+.empty-stack p {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--text-sm);
+  text-wrap: pretty;
+}
+
+.empty-action-btn {
+  margin-top: var(--space-3);
+}
+
 .agents-table-wrap {
   background: var(--surface);
   border: 1px solid var(--line);

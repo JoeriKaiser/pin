@@ -48,8 +48,26 @@ export function renderList() {
   if (!state.shown.length) {
     if (els.listEmpty) {
       clear(els.listEmpty);
-      els.listEmpty.appendChild(node('strong', '', state.items.length ? 'No items match filters.' : 'No items in this vault.'));
-      els.listEmpty.appendChild(node('p', '', state.items.length ? 'Try clearing search or filters.' : 'Add items with pin add.'));
+      var hasItems = state.items.length > 0;
+      var queryText = state.filters && state.filters.text ? state.filters.text.trim() : '';
+      var heading = hasItems
+        ? (queryText ? ('No items match "' + queryText + '"') : 'No items match these filters')
+        : 'No items yet';
+      var hint = hasItems
+        ? 'Clear active filters or search terms to see all items.'
+        : 'Create a task here or add one from the terminal with pin add.';
+      els.listEmpty.appendChild(node('strong', '', heading));
+      els.listEmpty.appendChild(node('p', '', hint));
+      var actionBtn = node('button', hasItems ? 'control empty-action-btn' : 'action-btn primary empty-action-btn', hasItems ? 'Clear filters' : 'New task');
+      actionBtn.type = 'button';
+      actionBtn.addEventListener('click', function () {
+        if (hasItems) {
+          if (els.clear && els.clear.click) els.clear.click();
+        } else if (els.btnNewTicket && els.btnNewTicket.click) {
+          els.btnNewTicket.click();
+        }
+      });
+      els.listEmpty.appendChild(actionBtn);
     }
 
     return;
@@ -409,7 +427,7 @@ export function renderDependencies(item) {
   function submitRelationship() {
     var raw = inp.value.trim();
     if (!raw) {
-      showToast('Please specify an item ID', true);
+      showToast('Enter an item ID to link', true);
       return;
     }
     var targetId = raw.split(/[\s:]+/)[0];
@@ -755,7 +773,15 @@ export function renderDetail() {
     if (els.readerTabs) els.readerTabs.hidden = true;
     if (els.proposal) els.proposal.hidden = true;
     if (els.agentDrawer) els.agentDrawer.hidden = true;
-    if (els.detailEmpty) text(els.detailEmpty, state.selected ? 'This item is not in the vault.' : 'Select an item to view it.');
+    if (els.detailEmpty) {
+      clear(els.detailEmpty);
+      var wrap = node('div', 'empty-stack');
+      wrap.appendChild(node('strong', '', state.selected ? 'Item not found' : 'Select an item'));
+      wrap.appendChild(node('p', '', state.selected
+        ? 'This item is no longer in the vault. Pick another item from the list or return to the board.'
+        : 'Choose an item from the list to inspect its details, relationships, and activity.'));
+      els.detailEmpty.appendChild(wrap);
+    }
     return;
   }
 

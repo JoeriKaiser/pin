@@ -93,7 +93,7 @@ function setReplySubmitting(submitting) {
   if (els.replyModalInput) els.replyModalInput.disabled = submitting;
   if (els.btnReplySend) {
     els.btnReplySend.disabled = submitting;
-    text(els.btnReplySend, submitting ? 'Sending…' : 'Send Reply');
+    text(els.btnReplySend, submitting ? 'Sending…' : 'Send reply');
   }
   if (els.btnReplyFinish) els.btnReplyFinish.disabled = submitting;
 }

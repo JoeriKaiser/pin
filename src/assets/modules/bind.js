@@ -37,7 +37,7 @@ export function setBindCallbacks(cbs) {
 
 export function sendRunItem(id, useWorktree, errorPrefix, optMode, interactive) {
   var mode = (optMode === 'idea' || (typeof errorPrefix === 'string' && errorPrefix.indexOf('Idea') !== -1)) ? 'idea' : undefined;
-  showToast(mode === 'idea' ? 'Starting Idea agent...' : (interactive ? 'Starting interactive agent...' : 'Starting agent...'), false);
+  showToast(mode === 'idea' ? 'Starting Idea agent…' : (interactive ? 'Starting interactive agent…' : 'Starting agent…'), false);
   var payload = useWorktree ? { use_worktree: true } : {};
   if (mode) payload.mode = mode;
   if (interactive) payload.interactive = true;
@@ -80,7 +80,7 @@ export function sendRunItem(id, useWorktree, errorPrefix, optMode, interactive) 
 }
 
 export function sendCommitPrItem(id) {
-  showToast('Starting Commit & PR agent...', false);
+  showToast('Starting Commit + PR agent…', false);
   return sendCommitPr(id)
     .then(function (res) {
       if (!res.ok) {
@@ -145,7 +145,7 @@ export function finishIdeaDiscussion(itemId) {
     })
     .then(function () {
       showToast('Discussion finished. Generating spec…', false);
-      appendTrajectoryContextRow('Finalizing idea discussion and updating proposal…');
+      appendTrajectoryContextRow('Finalizing idea discussion and updating item…');
       updateActiveRuns();
     })
     .catch(function (err) {
@@ -225,6 +225,7 @@ export function bindNavigation() {
   if (els.viewBoardBtn) els.viewBoardBtn.addEventListener('click', function () { setViewMode('board'); });
   if (els.viewDetailBtn) els.viewDetailBtn.addEventListener('click', function () { setViewMode('detail'); });
   if (els.viewAgentsBtn) els.viewAgentsBtn.addEventListener('click', function () { setViewMode('agents'); });
+  if (els.btnAgentsGoBoard) els.btnAgentsGoBoard.addEventListener('click', function () { setViewMode('board'); });
   if (els.back) els.back.addEventListener('click', function () { setRoute(null); });
   if (els.btnNewTicket) els.btnNewTicket.addEventListener('click', function () { openSpecModal(); });
   if (els.btnUpdate) els.btnUpdate.addEventListener('click', handleUpdateInstall);
