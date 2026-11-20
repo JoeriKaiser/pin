@@ -389,6 +389,10 @@ button {
   flex-shrink: 0;
 }
 
+[dir="rtl"] .back-arrow {
+  transform: scaleX(-1);
+}
+
 .control.icon-control {
   width: var(--control-height);
   padding: 0;
@@ -3129,6 +3133,51 @@ a {
   background: var(--soft);
   border-start-end-radius: var(--radius-sm);
   border-end-end-radius: var(--radius-sm);
+}
+
+.prose table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
+  margin: var(--space-4) 0;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+.prose thead th {
+  background: var(--surface-raised);
+  color: var(--ink);
+  font-weight: var(--weight-semibold);
+  text-align: start;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--line-strong);
+  border-inline-end: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.prose tbody td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--line);
+  border-inline-end: 1px solid var(--line);
+  text-align: start;
+  vertical-align: top;
+}
+
+.prose thead th:last-child,
+.prose tbody td:last-child {
+  border-inline-end: none;
+}
+
+.prose tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.prose tbody tr:nth-child(even) td {
+  background: var(--soft);
 }
 
 .prose pre {

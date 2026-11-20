@@ -494,22 +494,22 @@ export function renderActions(item) {
 
   if (st === 'created') {
     if (item.type === 'idea') {
-      btn('Start Idea Mode', true, function () {
-        callbacks.sendRunItem(item.id, false, 'Failed to start Idea Mode: ', 'idea');
+      btn('Start idea mode', true, function () {
+        callbacks.sendRunItem(item.id, false, 'Failed to start idea mode: ', 'idea');
       });
-      btn('Convert to Spec', false, function () {
+      btn('Convert to spec', false, function () {
         callbacks.convertIdeaToSpec(item);
       });
     } else {
-      btn('Discuss in Idea Mode', false, function () {
-        callbacks.sendRunItem(item.id, false, 'Failed to start Idea Mode: ', 'idea');
+      btn('Discuss in idea mode', false, function () {
+        callbacks.sendRunItem(item.id, false, 'Failed to start idea mode: ', 'idea');
       });
     }
-    btn('Move to Planned', item.type !== 'idea', function () {
+    btn('Move to planned', item.type !== 'idea', function () {
       sendAction(item.id, { action: 'transition', to: 'planned', expect_revision: rev })
         .then(ensureActionOk)
         .then(function () {
-          showToast('Moved to Planned', false);
+          showToast('Moved to planned', false);
           callbacks.refreshData();
         })
         .catch(function (err) { showToast('Action failed: ' + err.message, true); });
@@ -518,21 +518,21 @@ export function renderActions(item) {
 
   if (st === 'planned') {
     if (item.type === 'idea') {
-      btn('Start Idea Mode', true, function () {
-        callbacks.sendRunItem(item.id, false, 'Failed to start Idea Mode: ', 'idea');
+      btn('Start idea mode', true, function () {
+        callbacks.sendRunItem(item.id, false, 'Failed to start idea mode: ', 'idea');
       });
-      btn('Convert to Spec', false, function () {
+      btn('Convert to spec', false, function () {
         callbacks.convertIdeaToSpec(item);
       });
     } else {
-      btn('Start Agent', true, function () {
+      btn('Start agent', true, function () {
         callbacks.openWorktreeModal(item, null);
       });
-      btn('Discuss in Idea Mode', false, function () {
-        callbacks.sendRunItem(item.id, false, 'Failed to start Idea Mode: ', 'idea');
+      btn('Discuss in idea mode', false, function () {
+        callbacks.sendRunItem(item.id, false, 'Failed to start idea mode: ', 'idea');
       });
     }
-    btn('Mark Blocked', false, function () {
+    btn('Mark blocked', false, function () {
       callbacks.openBlockedModal(item);
     });
   }
@@ -545,37 +545,37 @@ export function renderActions(item) {
           callbacks.openReplyModal(item.id);
         });
       }
-      btn('View Agent Run', !waitingInProgress, function () {
+      btn('View agent run', !waitingInProgress, function () {
         callbacks.openAgentDrawer(item.id);
       });
     } else {
       if (item.type === 'idea') {
-        btn('Resume Idea Mode', true, function () {
-          callbacks.sendRunItem(item.id, false, 'Failed to resume Idea Mode: ', 'idea');
+        btn('Resume idea mode', true, function () {
+          callbacks.sendRunItem(item.id, false, 'Failed to resume idea mode: ', 'idea');
         });
-        btn('Convert to Spec', false, function () {
+        btn('Convert to spec', false, function () {
           callbacks.convertIdeaToSpec(item);
         });
       } else {
-        btn('Resume Agent', true, function () {
+        btn('Resume agent', true, function () {
           callbacks.openWorktreeModal(item, null);
         });
       }
     }
-    btn('Complete with Evidence', false, function () {
+    btn('Complete with evidence', false, function () {
       callbacks.openCompleteModal(item);
     });
-    btn('Mark Blocked', false, function () {
+    btn('Mark blocked', false, function () {
       callbacks.openBlockedModal(item);
     });
   }
 
   if (st === 'blocked') {
-    btn('Unblock (Move to Planned)', true, function () {
+    btn('Unblock to planned', true, function () {
       sendAction(item.id, { action: 'transition', to: 'planned', expect_revision: rev })
         .then(ensureActionOk)
         .then(function () {
-          showToast('Moved to Planned', false);
+          showToast('Moved to planned', false);
           callbacks.refreshData();
         })
         .catch(function (err) { showToast('Action failed: ' + err.message, true); });
@@ -584,7 +584,7 @@ export function renderActions(item) {
 
   if (st === 'done') {
     if (state.activeRuns.has(item.id)) {
-      btn('View Agent Run', true, function () {
+      btn('View agent run', true, function () {
         callbacks.openAgentDrawer(item.id);
       });
     } else if (item.git_status === 'merged') {
@@ -604,11 +604,11 @@ export function renderActions(item) {
         callbacks.sendCommitPrItem(item.id);
       });
     }
-    btn('Close Item', false, function () {
+    btn('Close item', false, function () {
       callbacks.openCloseModal(item);
     });
     if (!item.archived_at) {
-      btn('Archive Item', false, function () {
+      btn('Archive item', false, function () {
         sendAction(item.id, { action: 'archive', expect_revision: rev })
           .then(ensureActionOk)
           .then(function () {
@@ -618,11 +618,11 @@ export function renderActions(item) {
           .catch(function (err) { showToast('Action failed: ' + err.message, true); });
       });
     }
-    btn('Reopen to Planned', false, function () {
+    btn('Reopen to planned', false, function () {
       sendAction(item.id, { action: 'transition', to: 'planned', expect_revision: rev })
         .then(ensureActionOk)
         .then(function () {
-          showToast('Reopened to Planned', false);
+          showToast('Reopened to planned', false);
           callbacks.refreshData();
         })
         .catch(function (err) { showToast('Action failed: ' + err.message, true); });
@@ -630,12 +630,12 @@ export function renderActions(item) {
   }
 
   if (st !== 'closed' && st !== 'cancelled' && st !== 'done') {
-    btn('Close Item', false, function () {
+    btn('Close item', false, function () {
       callbacks.openCloseModal(item);
     });
   }
   if (st === 'closed' && !item.archived_at) {
-    btn('Archive Item', false, function () {
+    btn('Archive item', false, function () {
       sendAction(item.id, { action: 'archive', expect_revision: rev })
         .then(ensureActionOk)
         .then(function () {
@@ -647,7 +647,7 @@ export function renderActions(item) {
   }
 
   if (item.archived_at) {
-    btn('Unarchive Item', false, function () {
+    btn('Unarchive item', false, function () {
       sendAction(item.id, { action: 'unarchive', expect_revision: rev })
         .then(ensureActionOk)
         .then(function () {

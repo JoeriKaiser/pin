@@ -47,7 +47,7 @@ export function syncAgentChatControls(itemId, interactive, waiting, mode, restor
   }
   if (els.btnAgentFinishIdea) {
     els.btnAgentFinishIdea.disabled = false;
-    text(els.btnAgentFinishIdea, mode === 'implement' ? 'Finish & Complete' : 'Finish Discussion');
+    text(els.btnAgentFinishIdea, mode === 'implement' ? 'Finish & Complete' : 'Finish discussion');
   }
   if (els.agentChatHelpers) {
     if (waiting) {

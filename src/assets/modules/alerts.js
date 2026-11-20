@@ -229,7 +229,7 @@ export function renderAlertsDialog() {
     } else if (Notif.permission === 'denied') {
       text(els.alertsDesktopStatus, 'Blocked by browser settings. Allow notifications for localhost to enable.');
     } else {
-      text(els.alertsDesktopStatus, 'Click "Enable Desktop Alerts" to grant browser notification permission.');
+      text(els.alertsDesktopStatus, 'Click "Enable desktop alerts" to grant browser notification permission.');
     }
   }
   if (els.btnAlertsRequestPerm) {

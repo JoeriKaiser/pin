@@ -481,8 +481,8 @@ export function openCompleteModal(item) {
 export function openBlockedModal(item) {
   var rev = item.revision;
   openActionModal({
-    title: 'Mark Blocked: ' + (item.title || item.id),
-    submitText: 'Mark Blocked',
+    title: 'Mark blocked: ' + (item.title || item.id),
+    submitText: 'Mark blocked',
     render: function (body) {
       var label = node('label');
       label.appendChild(node('span', '', 'Blocker reason (required)'));
@@ -516,7 +516,7 @@ export function openCloseModal(item) {
   var rev = item.revision;
   openActionModal({
     title: 'Close: ' + (item.title || item.id),
-    submitText: 'Close Item',
+    submitText: 'Close item',
     render: function (body) {
       var label = node('label');
       label.appendChild(node('span', '', 'Closing note (optional)'));

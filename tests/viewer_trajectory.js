@@ -2730,7 +2730,7 @@ async function runHarness() {
     prioSel35.dispatchEvent({ type: 'change' });
     assert.strictEqual(chipsBar35.hidden, false, 'Active filters bar shows when filters are active');
     assert.ok(chipsBar35.textContent.includes('Status: In progress'), 'Chip displays formatted status label');
-    assert.ok(chipsBar35.textContent.includes('Priority: high'), 'Chip displays priority filter');
+    assert.ok(chipsBar35.textContent.includes('Priority: High'), 'Chip displays priority filter');
     assert.ok(chipsBar35.textContent.includes('Clear all'), 'Multiple active filters show Clear all button');
 
     const statusChip35 = chipsBar35.children.find(c => c.dataset && c.dataset.filterKey === 'status');

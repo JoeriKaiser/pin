@@ -218,7 +218,7 @@ export function renderReplyModalForItem(itemId) {
   renderQuickHelpers(run.last_message || '');
 
   if (els.btnReplyFinish) {
-    text(els.btnReplyFinish, run.mode === 'implement' ? 'Finish & Complete' : 'Finish Discussion');
+    text(els.btnReplyFinish, run.mode === 'implement' ? 'Finish & Complete' : 'Finish discussion');
   }
   if (els.replyModalInput) {
     state.chatDrafts = state.chatDrafts || {};

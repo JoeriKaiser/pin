@@ -244,6 +244,11 @@ function updateFilterToggleLabel() {
   text(els.filterToggle, active > 0 ? 'Filters (' + active + ')' : 'Filters');
 }
 
+function formatChipValue(value) {
+  var s = String(value || '');
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+}
+
 function renderActiveFilterChips() {
   if (!els.activeFilters) return;
   clear(els.activeFilters);
@@ -255,13 +260,13 @@ function renderActiveFilterChips() {
     chips.push({ key: 'status', label: 'Status: ' + formatStatusLabel(state.filters.status) });
   }
   if (state.filters.type) {
-    chips.push({ key: 'type', label: 'Type: ' + state.filters.type });
+    chips.push({ key: 'type', label: 'Type: ' + formatChipValue(state.filters.type) });
   }
   if (state.filters.kind) {
-    chips.push({ key: 'kind', label: 'Kind: ' + state.filters.kind });
+    chips.push({ key: 'kind', label: 'Kind: ' + formatChipValue(state.filters.kind) });
   }
   if (state.filters.priority) {
-    chips.push({ key: 'priority', label: 'Priority: ' + state.filters.priority });
+    chips.push({ key: 'priority', label: 'Priority: ' + formatChipValue(state.filters.priority) });
   }
   if (state.filters.project && state.filters.project.trim()) {
     chips.push({ key: 'project', label: 'Project: ' + state.filters.project.trim() });
