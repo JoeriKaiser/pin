@@ -2756,6 +2756,42 @@ async function runHarness() {
     console.log('PASS: 1/2/3 view mode keyboard shortcuts verified');
   }
 
+  console.log('\n--- 37. Testing Agents Table Semantics and Action Wrapper ---');
+  {
+    const html37 = fs.readFileSync(path.join(__dirname, '..', 'src', 'assets', 'index.html'), 'utf8');
+    const colScopeCount = (html37.match(/<th\s+scope="col"/g) || []).length;
+    assert.strictEqual(colScopeCount, 8, 'All 8 agents table headers declare scope="col"');
+
+    const prevRuns37 = testExports.state.activeRunsInfo;
+    const prevActive37 = testExports.state.activeRuns;
+    testExports.state.activeRunsInfo = [{
+      item_id: 'agents-layout-1',
+      mode: 'implement',
+      interactive: true,
+      waiting_for_user: true,
+      is_primary_worktree: false,
+      worktree_path: '.pin_worktrees/agents-layout-1',
+      started_at: Math.floor(Date.now() / 1000) - 30,
+      last_message: 'Need confirmation before merging.'
+    }];
+    testExports.state.activeRuns = new Set(['agents-layout-1']);
+    testExports.renderAgentsTable();
+    const row37 = documentMock.getElementById('agents-table-body').children[0];
+    assert.ok(row37, 'Agents table rendered row');
+    const actionsTd37 = row37.querySelector('.agent-col-actions');
+    assert.ok(actionsTd37, 'Actions cell rendered');
+    assert.strictEqual(actionsTd37.getAttribute('data-label'), 'Actions', 'Actions cell carries data-label for mobile card view');
+    const group37 = actionsTd37.querySelector('.agent-actions-group');
+    assert.ok(group37, 'Actions buttons live inside .agent-actions-group wrapper instead of flex td');
+    assert.ok(group37.querySelector('.btn-reply-run'), 'Reply button inside actions wrapper');
+    assert.ok(group37.querySelector('.btn-view-run'), 'View run button inside actions wrapper');
+
+    testExports.state.activeRunsInfo = prevRuns37;
+    testExports.state.activeRuns = prevActive37;
+    testExports.renderAgentsTable();
+    console.log('PASS: Agents table semantics and action wrapper verified');
+  }
+
   console.log('\n========================================');
   console.log('ALL VIEWER TRAJECTORY TESTS PASSED (0)');
   console.log('========================================');
