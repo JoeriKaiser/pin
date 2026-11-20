@@ -2356,6 +2356,7 @@ async function runHarness() {
   assert.strictEqual(tbody23.children.length, 2, 'agents table renders both runs');
   assert.strictEqual(tbody23.children[0].dataset.itemId, 'run-beta', 'waiting run sorted first in agents table');
   assert.ok(tbody23.children[0].className.includes('agent-row-waiting'), 'waiting row has highlight class');
+  assert.ok(tbody23.children[0].textContent.includes('Implement · Interactive'), 'interactive implement run displays interactive mode label');
   assert.ok(findDescendant(tbody23.children[0], '.btn-reply-run'), 'waiting row has Reply button');
   assert.ok(findDescendant(tbody23.children[0], '.btn-open-chat'), 'interactive implement run shows Open Chat button');
   assert.ok(tbody23.children[1].textContent.includes('bash: cargo test'), 'running row displays server last_activity');

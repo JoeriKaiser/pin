@@ -152,7 +152,7 @@ export function renderAgentsTable() {
 
     // 2. Mode
     var modeCell = node('td', 'agent-col-mode');
-    var modeLabel = 'Implement';
+    var modeLabel = run.interactive ? 'Implement · Interactive' : 'Implement';
     var modeClass = 'badge-mode-implement';
     if (run.mode === 'commit_pr') {
       modeLabel = 'Commit & PR';

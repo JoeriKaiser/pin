@@ -733,6 +733,20 @@ a:hover {
   color: var(--muted);
 }
 
+.alerts-status-dot {
+  display: inline-block;
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: var(--radius-full);
+  background: var(--success-ink);
+  flex-shrink: 0;
+}
+
+.alerts-btn:not(.alerts-active) .alerts-status-dot {
+  background: transparent;
+  border: 1.5px solid var(--faint);
+}
+
 .needs-reply-banner {
   flex-shrink: 0;
   display: flex;

@@ -191,6 +191,13 @@ export function boot() {
   loadRunnerSettings();
 
   load(true).then(function () {
+    if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+      document.addEventListener('visibilitychange', function () {
+        if (!document.hidden) {
+          updateActiveRuns();
+        }
+      });
+    }
     setInterval(function () {
       if (typeof document !== 'undefined' && !document.hidden) {
         refreshData();
