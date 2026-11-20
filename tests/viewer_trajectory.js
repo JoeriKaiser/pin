@@ -2124,6 +2124,49 @@ async function runHarness() {
   localStorageMock.removeItem('pin-interactive-default');
   console.log('PASS: Interactive implement run option verified');
 
+  console.log('\n--- 19. Testing Trajectory Chat State Sync and Draft Persistence ---');
+  const chatContainer19 = document.getElementById('agent-chat-container');
+  const chatInput19 = document.getElementById('agent-chat-input');
+  const chatSend19 = document.getElementById('btn-agent-chat-send');
+  const finishBtn19 = document.getElementById('btn-agent-finish-idea');
+  const statusPill19 = document.getElementById('agent-status-pill');
+
+  // Non-interactive active run hides chat composer
+  testExports.state.activeRuns = new Set(['non-int-run', 'int-impl-run']);
+  testExports.state.activeRunsInfo = [
+    { item_id: 'non-int-run', mode: 'implement', interactive: false, waiting_for_user: false, started_at: 100 },
+    { item_id: 'int-impl-run', mode: 'implement', interactive: true, waiting_for_user: true, started_at: 200 }
+  ];
+  finishBtn19.disabled = true;
+  openAgentDrawer('non-int-run');
+  assert.strictEqual(chatContainer19.hidden, true, 'non-interactive run hides chat composer');
+
+  // Interactive implement run shows composer, re-enables finish button with implement label, restores draft
+  testExports.state.chatDrafts['int-impl-run'] = 'Draft answer in progress';
+  openAgentDrawer('int-impl-run');
+  assert.strictEqual(chatContainer19.hidden, false, 'interactive run shows chat composer');
+  assert.strictEqual(chatInput19.disabled, false, 'waiting run unlocks chat input');
+  assert.strictEqual(chatInput19.value, 'Draft answer in progress', 'saved draft restored on open');
+  assert.strictEqual(finishBtn19.disabled, false, 'finish button re-enabled for new run');
+  assert.strictEqual(finishBtn19.textContent, 'Finish & Complete', 'interactive implement finish label');
+  assert.ok(statusPill19.className.includes('status-waiting'), 'waiting status pill uses warning style');
+
+  // Replaying user_message resets waiting state back to running
+  handleAgentStreamEvent({ type: 'user_message', update: { content: 'Go ahead' } });
+  assert.strictEqual(chatInput19.disabled, true, 'user_message locks input while agent works');
+  assert.strictEqual(chatSend19.disabled, true, 'user_message disables send while agent works');
+  assert.strictEqual(statusPill19.textContent, 'Running', 'user_message resets status pill to Running');
+
+  // run_state frame authoritatively unlocks composer on late subscribe
+  handleAgentStreamEvent({ type: 'run_state', mode: 'implement', interactive: true, waiting_for_user: true });
+  assert.strictEqual(chatInput19.disabled, false, 'run_state waiting_for_user unlocks input');
+  assert.strictEqual(statusPill19.textContent, 'Waiting for reply', 'run_state updates status pill');
+
+  closeAgentDrawer();
+  testExports.state.activeRuns = new Set();
+  testExports.state.activeRunsInfo = [];
+  console.log('PASS: Trajectory chat state sync and draft persistence verified');
+
   console.log('\n========================================');
   console.log('ALL VIEWER TRAJECTORY TESTS PASSED (0)');
   console.log('========================================');

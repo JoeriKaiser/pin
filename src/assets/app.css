@@ -2524,6 +2524,12 @@ a:hover {
   border: 1px solid transparent;
 }
 
+.agent-status-pill.status-waiting {
+  background: var(--warning);
+  color: var(--warning-ink);
+  border-color: var(--warning-border);
+}
+
 .agent-status-pill.status-completed {
   background: var(--success);
   color: var(--success-ink);

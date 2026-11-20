@@ -109,6 +109,7 @@ export function sendAgentChatMessage(itemId) {
   var message = els.agentChatInput.value.trim();
   if (!message) return;
   els.agentChatInput.value = '';
+  if (state.chatDrafts && itemId) delete state.chatDrafts[itemId];
   els.agentChatInput.disabled = true;
   if (els.btnAgentChatSend) els.btnAgentChatSend.disabled = true;
 
@@ -121,6 +122,7 @@ export function sendAgentChatMessage(itemId) {
       showToast(err.message || 'Failed to send message', true);
       if (els.agentChatInput) {
         els.agentChatInput.value = message;
+        if (state.chatDrafts && itemId) state.chatDrafts[itemId] = message;
         els.agentChatInput.disabled = false;
         els.agentChatInput.focus();
       }
@@ -446,6 +448,15 @@ export function bindAgent() {
     });
   }
   if (els.agentChatInput) {
+    els.agentChatInput.addEventListener('input', function () {
+      if (state.currentStreamingId) {
+        state.chatDrafts = state.chatDrafts || {};
+        state.chatDrafts[state.currentStreamingId] = els.agentChatInput.value;
+      }
+    });
+    els.agentChatInput.addEventListener('paste', function (e) {
+      handleScreenshotPaste(e, els.agentChatInput);
+    });
     els.agentChatInput.addEventListener('keydown', function (e) {
       if (e.key === 'Enter' && !e.shiftKey) {
         if (e.isComposing || e.keyCode === 229 || e.repeat) return;

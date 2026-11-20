@@ -1,5 +1,5 @@
 import { BASE } from './config.js';
-import { state, find, itemStatus } from './state.js';
+import { state, find, itemStatus, getRunInfo, isRunInteractive } from './state.js';
 import { els, $ } from './dom.js';
 import { fetchRuns, fetchItemLog } from './api.js';
 import { text, clear, node, stripAnsi, cleanThoughtText } from './formatters.js';
@@ -19,6 +19,31 @@ function setStatusPill(status, cls) {
   if (els.agentStatusPill) {
     text(els.agentStatusPill, status);
     els.agentStatusPill.className = 'agent-status-pill ' + (cls || '');
+  }
+}
+
+export function syncAgentChatControls(itemId, interactive, waiting, mode, restoreDraft) {
+  if (!els.agentChatContainer) return;
+  if (!interactive) {
+    els.agentChatContainer.hidden = true;
+    return;
+  }
+  els.agentChatContainer.hidden = false;
+  if (els.agentChatInput) {
+    if (restoreDraft) {
+      els.agentChatInput.value = (state.chatDrafts && itemId && state.chatDrafts[itemId]) || '';
+    }
+    els.agentChatInput.disabled = !waiting;
+    els.agentChatInput.placeholder = waiting
+      ? 'Reply to agent… (Press Enter to send, Shift+Enter for newline)'
+      : 'Agent is working… reply box unlocks when it pauses for input';
+  }
+  if (els.btnAgentChatSend) {
+    els.btnAgentChatSend.disabled = !waiting;
+  }
+  if (els.btnAgentFinishIdea) {
+    els.btnAgentFinishIdea.disabled = false;
+    text(els.btnAgentFinishIdea, mode === 'implement' ? 'Finish & Complete' : 'Finish Discussion');
   }
 }
 
@@ -118,6 +143,10 @@ export function updateDurationDisplay() {
 }
 
 export function closeAgentDrawer() {
+  if (state.currentStreamingId && els.agentChatInput && typeof els.agentChatInput.value === 'string') {
+    state.chatDrafts = state.chatDrafts || {};
+    state.chatDrafts[state.currentStreamingId] = els.agentChatInput.value;
+  }
   if (state.trajectory && state.trajectory.timer) { clearInterval(state.trajectory.timer); state.trajectory.timer = null; }
   if (state.currentStream) { state.currentStream.close(); state.currentStream = null; }
   if (state.currentStreamingId) cacheTrajectory(state.currentStreamingId);
@@ -155,7 +184,13 @@ function createTrajectory(timingStart, now) {
 
 export function openAgentDrawer(itemId) {
   state.trajectoryCache = state.trajectoryCache || {};
-  if (state.currentStreamingId && state.currentStreamingId !== itemId) cacheTrajectory(state.currentStreamingId);
+  state.chatDrafts = state.chatDrafts || {};
+  if (state.currentStreamingId && state.currentStreamingId !== itemId) {
+    if (els.agentChatInput && typeof els.agentChatInput.value === 'string') {
+      state.chatDrafts[state.currentStreamingId] = els.agentChatInput.value;
+    }
+    cacheTrajectory(state.currentStreamingId);
+  }
   if (state.currentStream) { state.currentStream.close(); state.currentStream = null; }
   state.currentStreamingId = itemId;
 
@@ -175,9 +210,16 @@ export function openAgentDrawer(itemId) {
   if (els.agentItemId) { text(els.agentItemId, itemId.slice(0, 8)); els.agentItemId.dataset.fullId = itemId; }
   if (els.agentLogInfo) text(els.agentLogInfo, 'Logs: .pin_vault/runs/' + itemId + '.log');
   var isRunning = state.activeRuns && state.activeRuns.has(itemId);
+  var runInfo = getRunInfo(itemId);
+  var runInteractive = isRunInteractive(runInfo);
+  var runWaiting = !!(runInfo && runInfo.waiting_for_user);
   var itemSt = itm ? itemStatus(itm) : '';
-  var pillCls = isRunning ? '' : (itemSt === 'in_progress' ? 'status-interrupted' : ((itemSt === 'done' || itemSt === 'closed') ? 'status-completed' : ''));
-  var pillText = isRunning ? 'Running' : (itemSt === 'in_progress' ? 'Interrupted' : ((itemSt === 'done' || itemSt === 'closed') ? 'Completed' : 'Idle'));
+  var pillCls = isRunning
+    ? (runWaiting ? 'status-waiting' : 'status-running')
+    : (itemSt === 'in_progress' ? 'status-interrupted' : ((itemSt === 'done' || itemSt === 'closed') ? 'status-completed' : ''));
+  var pillText = isRunning
+    ? (runWaiting ? 'Waiting for reply' : 'Running')
+    : (itemSt === 'in_progress' ? 'Interrupted' : ((itemSt === 'done' || itemSt === 'closed') ? 'Completed' : 'Idle'));
   setStatusPill(pillText, pillCls);
   if (els.btnCancelAgent) els.btnCancelAgent.disabled = !isRunning;
   if (isRunning) {
@@ -222,14 +264,7 @@ export function openAgentDrawer(itemId) {
   if (isRunning) {
     updateDurationDisplay();
     state.trajectory.timer = setInterval(updateDurationDisplay, 1000);
-    if (els.agentChatContainer) {
-      els.agentChatContainer.hidden = false;
-      if (els.agentChatInput) {
-        els.agentChatInput.value = '';
-        els.agentChatInput.disabled = true;
-      }
-      if (els.btnAgentChatSend) els.btnAgentChatSend.disabled = true;
-    }
+    syncAgentChatControls(itemId, runInteractive, runWaiting, runInfo && runInfo.mode, true);
   } else if (els.agentChatContainer) {
     els.agentChatContainer.hidden = true;
   }
@@ -354,13 +389,24 @@ export function handleAgentStreamEvent(data) {
     state.trajectory.prUrl = data.pr_url;
     if (data.pr_number != null) state.trajectory.prNumber = data.pr_number;
   }
-  if (data.type === 'waiting_for_user') {
-    if (els.agentChatContainer) {
-      els.agentChatContainer.hidden = false;
-      if (els.agentChatInput) { els.agentChatInput.disabled = false; els.agentChatInput.focus(); }
-      if (els.btnAgentChatSend) els.btnAgentChatSend.disabled = false;
+  if (data.type === 'run_state') {
+    var rsInteractive = !!(data.interactive || data.mode === 'idea');
+    var rsWaiting = !!data.waiting_for_user;
+    syncAgentChatControls(state.currentStreamingId, rsInteractive, rsWaiting, data.mode, false);
+    if (rsWaiting) {
+      setStatusPill('Waiting for reply', 'status-waiting');
+    } else if (state.activeRuns && state.currentStreamingId && state.activeRuns.has(state.currentStreamingId)) {
+      setStatusPill('Running', 'status-running');
     }
-    setStatusPill('Waiting for reply', 'status-running');
+    return;
+  }
+  if (data.type === 'waiting_for_user') {
+    var activeInfo = getRunInfo(state.currentStreamingId);
+    syncAgentChatControls(state.currentStreamingId, true, true, activeInfo && activeInfo.mode, false);
+    if (els.agentChatInput && typeof els.agentChatInput.focus === 'function') {
+      els.agentChatInput.focus();
+    }
+    setStatusPill('Waiting for reply', 'status-waiting');
     appendTrajectoryContextRow('Agent is waiting for your reply.');
     announceAgentStatus('Agent is waiting for your reply.');
     scrollTrajectoryStreamToBottom();
@@ -369,6 +415,9 @@ export function handleAgentStreamEvent(data) {
   if (data.type === 'user_message') {
     var content = data.text || (data.update && data.update.content) || '';
     if (content) appendTrajectoryUserRow(content);
+    var msgRunInfo = getRunInfo(state.currentStreamingId);
+    syncAgentChatControls(state.currentStreamingId, true, false, msgRunInfo && msgRunInfo.mode, false);
+    setStatusPill('Running', 'status-running');
     return;
   }
   if (data.type === 'run_timing') {
