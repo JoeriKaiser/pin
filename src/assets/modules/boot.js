@@ -2,7 +2,7 @@ import { state, ORDER, unique, fillSelect, itemStatus, itemType, kind, priority,
 import { els } from './dom.js';
 import { fetchData, fetchUpdate } from './api.js';
 import { BASE } from './config.js';
-import { text, clear, node, isNarrow } from './formatters.js';
+import { text, clear, node, isNarrow, formatStatusLabel } from './formatters.js';
 import { route, applyRoute } from './router.js';
 import { setViewMode, renderBoard } from './board.js';
 import { renderDetail } from './detail.js';
@@ -12,7 +12,7 @@ import { loadRunnerSettings, handleRunnerSettingsEvent } from './runner.js';
 import { handleGlobalWaitingEvent } from './alerts.js';
 
 export function setupFilters() {
-  fillSelect(els.status, unique(itemStatus), 'Any status', ORDER.status);
+  fillSelect(els.status, unique(itemStatus), 'Any status', ORDER.status, formatStatusLabel);
   fillSelect(els.type, unique(itemType), 'Any type', ORDER.type);
   fillSelect(els.kind, unique(kind), 'Any kind', ORDER.kind);
   fillSelect(els.priority, unique(priority), 'Any priority', ORDER.priority);

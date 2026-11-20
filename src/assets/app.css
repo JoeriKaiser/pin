@@ -379,8 +379,9 @@ button {
 
 a {
   color: var(--accent);
-  text-underline-offset: 0.18em;
-  text-decoration-thickness: 1px;
+  text-underline-position: from-font;
+  text-decoration-thickness: from-font;
+  text-underline-offset: 0.16em;
 }
 
 a:hover {
@@ -914,6 +915,7 @@ a:hover {
 .reply-queue-num {
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
   opacity: 0.8;
 }
 
@@ -1417,6 +1419,7 @@ a:hover {
 .board-col-count {
   font-size: var(--text-2xs);
   font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
   font-weight: var(--weight-medium);
   padding: 0.1rem 0.45rem;
   background: var(--surface);
@@ -1548,6 +1551,7 @@ a:hover {
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  overflow-wrap: break-word;
   width: 100%;
   text-align: start;
   color: inherit;
@@ -1660,8 +1664,7 @@ a:hover {
 }
 
 .status-badge {
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.01em;
   font-weight: var(--weight-semibold);
   border: 1px solid transparent;
 }
@@ -2196,6 +2199,7 @@ a:hover {
   margin-left: auto;
   color: var(--faint);
   font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
 }
 
 /* Sidebar priority badge styling */
@@ -2319,6 +2323,7 @@ a:hover {
 .worker-revision {
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
   color: var(--faint);
 }
 
@@ -2527,6 +2532,8 @@ a:hover {
   font-weight: var(--weight-bold);
   line-height: var(--leading-tight);
   letter-spacing: -0.015em;
+  text-wrap: balance;
+  overflow-wrap: break-word;
   color: var(--ink);
 }
 
@@ -2833,10 +2840,12 @@ a:hover {
   margin-left: auto;
   color: var(--faint);
   font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
 }
 
 .activity-note {
   color: var(--ink);
+  overflow-wrap: break-word;
   margin-top: var(--space-1-5);
   padding-top: var(--space-1-5);
   border-top: 1px dashed var(--line);
@@ -2849,30 +2858,36 @@ a:hover {
   color: var(--ink);
   font-size: var(--text-base);
   line-height: var(--leading-relaxed);
+  overflow-wrap: break-word;
 }
 
 .prose h1, .prose h2, .prose h3, .prose h4 {
   color: var(--ink);
   font-weight: var(--weight-bold);
   line-height: var(--leading-tight);
+  text-wrap: balance;
+  max-width: 68ch;
   margin-top: var(--space-6);
   margin-bottom: var(--space-2-5);
 }
 
-.prose h1 { font-size: var(--text-xl); border-bottom: 1px solid var(--line); padding-bottom: var(--space-2); }
-.prose h2 { font-size: var(--text-lg); border-bottom: 1px solid var(--line-subtle); padding-bottom: var(--space-1-5); }
+.prose h1 { font-size: var(--text-xl); letter-spacing: -0.015em; border-bottom: 1px solid var(--line); padding-bottom: var(--space-2); }
+.prose h2 { font-size: var(--text-lg); letter-spacing: -0.01em; border-bottom: 1px solid var(--line-subtle); padding-bottom: var(--space-1-5); }
 .prose h3 { font-size: var(--text-md); }
 .prose h4 { font-size: var(--text-base); }
 
 .prose p {
   margin-top: 0;
   margin-bottom: var(--space-3-5);
+  max-width: 68ch;
+  text-wrap: pretty;
 }
 
 .prose ul, .prose ol {
   margin-top: 0;
   margin-bottom: var(--space-3-5);
   padding-left: var(--space-5);
+  max-width: 68ch;
 }
 
 .prose li {
@@ -2882,6 +2897,7 @@ a:hover {
 .prose blockquote {
   margin: var(--space-4) 0;
   padding: var(--space-2) var(--space-4);
+  max-width: 68ch;
   border-left: 3px solid var(--line-strong);
   color: var(--muted);
   background: var(--soft);
@@ -2970,6 +2986,7 @@ a:hover {
 .badge-mini {
   background: var(--accent-subtle);
   color: var(--accent);
+  font-variant-numeric: tabular-nums;
 }
 
 .agent-drawer {
@@ -3249,6 +3266,7 @@ a:hover {
 .trajectory-metric {
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
   color: var(--muted);
   background: var(--soft);
   border: 1px solid var(--line);
@@ -4472,6 +4490,28 @@ footer {
 
   .agents-view {
     padding: var(--space-3);
+  }
+
+  .search input,
+  .filters input,
+  .filters select,
+  .quick-add-input,
+  .quick-add-body,
+  .quick-add-meta select,
+  .quick-add-tags,
+  .dialog-body input,
+  .dialog-body select,
+  .dialog-body textarea,
+  .spec-modal-title-input,
+  .spec-modal-grid input,
+  .spec-modal-grid select,
+  .spec-modal-textarea,
+  .reply-modal-input,
+  .agent-chat-input,
+  .agent-trajectory-search,
+  .dep-add-input,
+  .dep-add-select {
+    font-size: 1rem;
   }
 
   footer {

@@ -157,7 +157,7 @@ export function unique(pick) {
   return out;
 }
 
-export function fillSelect(select, values, first, order) {
+export function fillSelect(select, values, first, order, formatLabel) {
   if (!select) return;
   var cur = select.value;
   if (typeof select.replaceChildren === 'function') {
@@ -183,7 +183,7 @@ export function fillSelect(select, values, first, order) {
   }
   sorted.forEach(function (value) {
     var option = document.createElement('option');
-    option.textContent = value;
+    option.textContent = formatLabel ? formatLabel(value) : value;
     option.value = value;
     select.appendChild(option);
   });

@@ -1,7 +1,7 @@
 import { state, find, itemStatus, itemType, kind, priority, tags, matches, updateShown, isRunWaiting, getRunInfo } from './state.js';
 import { els } from './dom.js';
 import { sendAction, ensureActionOk } from './api.js';
-import { node, text, clear, date, timeAgo, showToast } from './formatters.js';
+import { node, text, clear, date, timeAgo, showToast, formatStatusLabel } from './formatters.js';
 import { renderMarkdownSnippet, renderMarkdown } from './markdown.js';
 import { setRoute } from './router.js';
 import { summarizeQuestionPreview } from './alerts.js';
@@ -67,7 +67,7 @@ export function renderList() {
 
     var meta = node('span', 'item-badges');
     meta.appendChild(node('span', 'type-badge', itemType(item)));
-    meta.appendChild(node('span', 'status-badge status-' + itemStatus(item), itemStatus(item)));
+    meta.appendChild(node('span', 'status-badge status-' + itemStatus(item), formatStatusLabel(itemStatus(item))));
 
     if (priority(item) !== 'unset') {
       meta.appendChild(node('span', 'priority-' + priority(item), priority(item)));
@@ -75,6 +75,8 @@ export function renderList() {
 
     var time = node('time', '', timeAgo(item.timestamp));
     time.dateTime = String(item.timestamp || '');
+    var fullDate = date(item.timestamp, true);
+    if (fullDate) time.title = fullDate;
     meta.appendChild(time);
 
     button.appendChild(meta);
@@ -155,7 +157,7 @@ export function renderDependencies(item) {
     parentLi.appendChild(parentBtn);
 
     if (parentStatus) {
-      parentLi.appendChild(node('span', 'status-badge status-' + parentStatus, parentStatus));
+      parentLi.appendChild(node('span', 'status-badge status-' + parentStatus, formatStatusLabel(parentStatus)));
     }
 
     var parentRm = node('button', 'dep-remove-btn', '✕');
@@ -196,7 +198,7 @@ export function renderDependencies(item) {
       subBtn.title = 'Subtask: ' + sub.id;
       subBtn.addEventListener('click', function () { setRoute(sub.id); });
       subLi.appendChild(subBtn);
-      subLi.appendChild(node('span', 'status-badge status-' + subStatus, subStatus));
+      subLi.appendChild(node('span', 'status-badge status-' + subStatus, formatStatusLabel(subStatus)));
 
       var subRm = node('button', 'dep-remove-btn', '✕');
       subRm.type = 'button';
@@ -236,7 +238,7 @@ export function renderDependencies(item) {
       li.appendChild(btn);
 
       if (depItem) {
-        li.appendChild(node('span', 'status-badge status-' + itemStatus(depItem), itemStatus(depItem)));
+        li.appendChild(node('span', 'status-badge status-' + itemStatus(depItem), formatStatusLabel(itemStatus(depItem))));
       }
 
       var depRm = node('button', 'dep-remove-btn', '✕');
@@ -277,7 +279,7 @@ export function renderDependencies(item) {
       btn.title = 'Dependent: ' + dep.id;
       btn.addEventListener('click', function () { setRoute(dep.id); });
       li.appendChild(btn);
-      li.appendChild(node('span', 'status-badge status-' + itemStatus(dep), itemStatus(dep)));
+      li.appendChild(node('span', 'status-badge status-' + itemStatus(dep), formatStatusLabel(itemStatus(dep))));
       list.appendChild(li);
     });
   }
@@ -312,7 +314,7 @@ export function renderDependencies(item) {
       relLi.appendChild(relBtn);
 
       if (relStatus) {
-        relLi.appendChild(node('span', 'status-badge status-' + relStatus, relStatus));
+        relLi.appendChild(node('span', 'status-badge status-' + relStatus, formatStatusLabel(relStatus)));
       }
 
       var relRm = node('button', 'dep-remove-btn', '✕');
@@ -805,7 +807,7 @@ export function renderDetail() {
   text(els.title, item.title || '(untitled)');
 
   clear(els.summary);
-  addSummary(itemStatus(item), 'status-badge status-' + itemStatus(item));
+  addSummary(formatStatusLabel(itemStatus(item)), 'status-badge status-' + itemStatus(item));
   if (priority(item) !== 'unset') addSummary(priority(item) + ' priority', 'priority-' + priority(item));
   addSummary(date(item.timestamp, true));
   if (tags(item).length) addSummary(tags(item).join(' · '));

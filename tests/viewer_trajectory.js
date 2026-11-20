@@ -2679,6 +2679,17 @@ async function runHarness() {
     console.log('PASS: Dialog aria-labelledby and backdrop light-dismiss verified');
   }
 
+  console.log('\n--- 32. Testing Human-Readable Status Labels and Typography Rules ---');
+  {
+    assert.strictEqual(testExports.formatStatusLabel('in_progress'), 'In progress', 'in_progress formats cleanly');
+    assert.strictEqual(testExports.formatStatusLabel('created'), 'Backlog', 'created formats as Backlog');
+    const cssSrc32 = fs.readFileSync(path.join(__dirname, '..', 'src', 'assets', 'app.css'), 'utf8');
+    assert.ok(cssSrc32.includes('max-width: 68ch'), 'Prose caps reading measure within 60-75ch');
+    assert.ok(cssSrc32.includes('text-wrap: balance') && cssSrc32.includes('text-wrap: pretty'), 'Headings balance and prose uses pretty wrap');
+    assert.ok(cssSrc32.includes('font-size: 1rem'), 'Mobile inputs enforce 16px floor to prevent iOS zoom');
+    console.log('PASS: Human-readable status labels and typography rules verified');
+  }
+
   console.log('\n========================================');
   console.log('ALL VIEWER TRAJECTORY TESTS PASSED (0)');
   console.log('========================================');

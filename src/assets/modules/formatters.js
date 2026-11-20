@@ -20,6 +20,22 @@ export function node(tag, className, value) {
   return n;
 }
 
+var STATUS_LABELS = {
+  created: 'Backlog',
+  planned: 'Planned',
+  in_progress: 'In progress',
+  blocked: 'Blocked',
+  done: 'Done',
+  closed: 'Closed',
+  cancelled: 'Cancelled'
+};
+
+export function formatStatusLabel(status) {
+  var key = String(status || '').toLowerCase();
+  if (STATUS_LABELS[key]) return STATUS_LABELS[key];
+  return key ? key.replace(/_/g, ' ') : '';
+}
+
 export function date(value, long) {
   var n = Number(value);
   if (!isFinite(n)) return '';
@@ -28,7 +44,7 @@ export function date(value, long) {
     ? { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }
     : { month: 'short', day: 'numeric' };
   try {
-    return new Date(n).toLocaleDateString(undefined, opts);
+    return new Intl.DateTimeFormat(undefined, opts).format(new Date(n));
   } catch (_) {
     return new Date(n).toISOString();
   }
