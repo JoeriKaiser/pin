@@ -516,6 +516,16 @@ export function openWorktreeModal(item, busyId) {
   text(els.worktreeTargetId, targetId);
   text(els.worktreePromptTargetId, targetId);
 
+  if (els.worktreeInteractiveCheckbox) {
+    var savedInteractive = false;
+    try {
+      if (typeof localStorage !== 'undefined' && localStorage && typeof localStorage.getItem === 'function') {
+        savedInteractive = localStorage.getItem('pin-interactive-default') === 'true';
+      }
+    } catch (_) {}
+    els.worktreeInteractiveCheckbox.checked = savedInteractive;
+  }
+
   if (els.worktreeRunnerSummary) {
     var runner = state.runner || {};
     var model = runner.model

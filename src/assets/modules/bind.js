@@ -20,6 +20,11 @@ import {
   appendTrajectoryContextRow, setAgentCallbacks, announceAgentStatus
 } from './agent.js';
 import { bindRunnerUi, closeRunnerDialog } from './runner.js';
+import { bindAlertsUi, setAlertCallbacks, closeAlertsDialog } from './alerts.js';
+import {
+  bindReplyInboxUi, setReplyInboxCallbacks, openReplyModal, closeReplyModal,
+  submitReplyModal, isReplyModalOpen, syncReplyModalIfOpen, stepReplyQueue
+} from './reply-inbox.js';
 
 var bootCallbacks = {
   refreshData: function () {},
@@ -30,11 +35,12 @@ export function setBindCallbacks(cbs) {
   if (cbs) Object.assign(bootCallbacks, cbs);
 }
 
-export function sendRunItem(id, useWorktree, errorPrefix, optMode) {
+export function sendRunItem(id, useWorktree, errorPrefix, optMode, interactive) {
   var mode = (optMode === 'idea' || (typeof errorPrefix === 'string' && errorPrefix.indexOf('Idea') !== -1)) ? 'idea' : undefined;
-  showToast(mode === 'idea' ? 'Starting Idea agent...' : 'Starting agent...', false);
+  showToast(mode === 'idea' ? 'Starting Idea agent...' : (interactive ? 'Starting interactive agent...' : 'Starting agent...'), false);
   var payload = useWorktree ? { use_worktree: true } : {};
   if (mode) payload.mode = mode;
+  if (interactive) payload.interactive = true;
   return sendRun(id, payload)
     .then(function (res) {
       if (!res.ok) {
@@ -108,6 +114,7 @@ export function sendAgentChatMessage(itemId) {
   var message = els.agentChatInput.value.trim();
   if (!message) return;
   els.agentChatInput.value = '';
+  if (state.chatDrafts && itemId) delete state.chatDrafts[itemId];
   els.agentChatInput.disabled = true;
   if (els.btnAgentChatSend) els.btnAgentChatSend.disabled = true;
 
@@ -120,6 +127,7 @@ export function sendAgentChatMessage(itemId) {
       showToast(err.message || 'Failed to send message', true);
       if (els.agentChatInput) {
         els.agentChatInput.value = message;
+        if (state.chatDrafts && itemId) state.chatDrafts[itemId] = message;
         els.agentChatInput.disabled = false;
         els.agentChatInput.focus();
       }
@@ -385,18 +393,29 @@ export function bindForms() {
   if (els.btnShortcuts) els.btnShortcuts.addEventListener('click', openShortcutsModal);
   if (els.shortcutsModalCloseBtn) els.shortcutsModalCloseBtn.addEventListener('click', closeShortcutsModal);
   if (els.btnThemeToggle) els.btnThemeToggle.addEventListener('click', toggleTheme);
+  if (els.worktreeInteractiveCheckbox) {
+    els.worktreeInteractiveCheckbox.addEventListener('change', function () {
+      try {
+        if (typeof localStorage !== 'undefined' && localStorage && typeof localStorage.setItem === 'function') {
+          localStorage.setItem('pin-interactive-default', String(!!els.worktreeInteractiveCheckbox.checked));
+        }
+      } catch (_) {}
+    });
+  }
   if (els.btnWorktreePrimary) {
     els.btnWorktreePrimary.addEventListener('click', function () {
       var item = state.pendingWorktreeItem;
+      var interactive = !!(els.worktreeInteractiveCheckbox && els.worktreeInteractiveCheckbox.checked);
       closeWorktreeModal();
-      if (item) sendRunItem(item.id, false);
+      if (item) sendRunItem(item.id, false, undefined, undefined, interactive);
     });
   }
   if (els.btnWorktreeConfirm) {
     els.btnWorktreeConfirm.addEventListener('click', function () {
       var item = state.pendingWorktreeItem;
+      var interactive = !!(els.worktreeInteractiveCheckbox && els.worktreeInteractiveCheckbox.checked);
       closeWorktreeModal();
-      if (item) sendRunItem(item.id, true, 'Worktree start failed: ');
+      if (item) sendRunItem(item.id, true, 'Worktree start failed: ', undefined, interactive);
     });
   }
 }
@@ -434,6 +453,15 @@ export function bindAgent() {
     });
   }
   if (els.agentChatInput) {
+    els.agentChatInput.addEventListener('input', function () {
+      if (state.currentStreamingId) {
+        state.chatDrafts = state.chatDrafts || {};
+        state.chatDrafts[state.currentStreamingId] = els.agentChatInput.value;
+      }
+    });
+    els.agentChatInput.addEventListener('paste', function (e) {
+      handleScreenshotPaste(e, els.agentChatInput);
+    });
     els.agentChatInput.addEventListener('keydown', function (e) {
       if (e.key === 'Enter' && !e.shiftKey) {
         if (e.isComposing || e.keyCode === 229 || e.repeat) return;
@@ -457,7 +485,10 @@ export function bindAgent() {
   if (els.btnCopyToolOutput) els.btnCopyToolOutput.addEventListener('click', copyToolOutput);
 }
 
+var globalShortcutsBound = false;
 export function bindGlobalShortcuts() {
+  if (globalShortcutsBound) return;
+  globalShortcutsBound = true;
   document.addEventListener('keydown', function (event) {
     if (els.specModal && (els.specModal.open || els.specModal.hasAttribute('open'))) {
       if (event.key === 'Escape') { event.preventDefault(); closeSpecModal(); }
@@ -475,6 +506,17 @@ export function bindGlobalShortcuts() {
         event.preventDefault();
         if (els.runnerSaveBtn && !els.runnerSaveBtn.disabled) els.runnerSaveBtn.click();
       }
+      return;
+    }
+    if (isReplyModalOpen()) {
+      if (event.key === 'Escape') { event.preventDefault(); closeReplyModal(); }
+      else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) { event.preventDefault(); submitReplyModal(); }
+      else if (event.altKey && event.key === 'ArrowRight') { event.preventDefault(); stepReplyQueue(1); }
+      else if (event.altKey && event.key === 'ArrowLeft') { event.preventDefault(); stepReplyQueue(-1); }
+      return;
+    }
+    if (els.alertsDialog && (els.alertsDialog.open || els.alertsDialog.hasAttribute('open'))) {
+      if (event.key === 'Escape') { event.preventDefault(); closeAlertsDialog(); }
       return;
     }
     if (els.worktreeModal && (els.worktreeModal.open || els.worktreeModal.hasAttribute('open'))) {
@@ -542,6 +584,7 @@ export function bindGlobalShortcuts() {
     }
     if (input || event.metaKey || event.ctrlKey || event.altKey) return;
     if (event.key === 'n' || event.key === 'c') { event.preventDefault(); openSpecModal(); return; }
+    if (event.key === 'r') { event.preventDefault(); openReplyModal(); return; }
     if (event.key === '?' || (event.key === '/' && event.shiftKey)) { event.preventDefault(); openShortcutsModal(); return; }
     if (event.key === 't') { event.preventDefault(); toggleTheme(); return; }
     if (event.key !== 'j' && event.key !== 'k' && event.key !== 'Enter') return;
@@ -613,6 +656,7 @@ export function bind(options) {
   // Wire callbacks into earlier modules
   setAgentsViewCallbacks({
     openAgentDrawer: openAgentDrawer,
+    openReplyModal: openReplyModal,
     updateActiveRuns: updateActiveRuns,
     setViewMode: setViewMode,
     setRoute: setRoute
@@ -624,6 +668,7 @@ export function bind(options) {
     openWorktreeModal: openWorktreeModal,
     openCloseModal: openCloseModal,
     openAgentDrawer: openAgentDrawer,
+    openReplyModal: openReplyModal,
     closeAgentDrawer: closeAgentDrawer,
     sendCommitPrItem: sendCommitPrItem,
     refreshData: function () { bootCallbacks.refreshData(); },
@@ -636,6 +681,7 @@ export function bind(options) {
     openWorktreeModal: openWorktreeModal,
     openBlockedModal: openBlockedModal,
     openAgentDrawer: openAgentDrawer,
+    openReplyModal: openReplyModal,
     openCompleteModal: openCompleteModal,
     sendCommitPrItem: sendCommitPrItem,
     openCloseModal: openCloseModal,
@@ -649,6 +695,23 @@ export function bind(options) {
   });
   setAgentCallbacks({
     refreshData: function () { bootCallbacks.refreshData(); },
+    renderBoard: renderBoard,
+    renderDetail: renderDetail,
+    renderAgentsTable: renderAgentsTable
+  });
+
+  setAlertCallbacks({
+    openReplyForItem: openReplyModal,
+    openAgentDrawer: openAgentDrawer,
+    onWaitingUpdated: syncReplyModalIfOpen,
+    renderBoard: renderBoard,
+    renderDetail: renderDetail,
+    renderAgentsTable: renderAgentsTable
+  });
+
+  setReplyInboxCallbacks({
+    openAgentDrawer: openAgentDrawer,
+    updateActiveRuns: updateActiveRuns,
     renderBoard: renderBoard,
     renderDetail: renderDetail,
     renderAgentsTable: renderAgentsTable
@@ -674,5 +737,7 @@ export function bind(options) {
   bindForms();
   bindAgent();
   bindRunnerUi();
+  bindAlertsUi();
+  bindReplyInboxUi();
   bindGlobalShortcuts();
 }

@@ -18,6 +18,8 @@ export var state = {
   filters: { text: '', status: '', type: '', kind: '', priority: '', project: '' },
   activeRuns: new Set(),
   activeRunsInfo: [],
+  waitingRuns: new Set(),
+  chatDrafts: {},
   currentStream: null,
   currentStreamingId: null,
   pendingWorktreeItem: null,
@@ -82,6 +84,26 @@ export function find(id) {
     if (state.items[j].id && state.items[j].id.indexOf(id) === 0) return state.items[j];
   }
   return null;
+}
+
+export function getRunInfo(id) {
+  if (!id || !Array.isArray(state.activeRunsInfo)) return null;
+  for (var i = 0; i < state.activeRunsInfo.length; i++) {
+    var r = state.activeRunsInfo[i];
+    if (r && (r.item_id === id || (r.item_id && r.item_id.indexOf(id) === 0))) return r;
+  }
+  return null;
+}
+
+export function isRunInteractive(runInfo) {
+  return !!(runInfo && (runInfo.interactive || runInfo.mode === 'idea'));
+}
+
+export function isRunWaiting(id) {
+  if (!id) return false;
+  if (state.waitingRuns && state.waitingRuns.has(id)) return true;
+  var info = getRunInfo(id);
+  return !!(info && info.waiting_for_user);
 }
 
 export function hasUnresolvedPrereqs(item) {

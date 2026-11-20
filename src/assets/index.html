@@ -13,6 +13,8 @@
   <div class="identity"><strong>pin</strong><span id="scope"></span></div>
   <label class="search"><span class="visually-hidden">Search items</span><input id="search" type="search" placeholder="Search items" autocomplete="off" spellcheck="false"><kbd>/</kbd></label>
   <div class="topbar-actions">
+    <button id="btn-needs-reply" class="control needs-reply-btn" type="button" title="Prompts waiting for your reply (r)" hidden><span class="needs-reply-dot" aria-hidden="true"></span><span id="needs-reply-count">1 needs reply</span></button>
+    <button id="btn-alerts-toggle" class="control alerts-btn" type="button" title="Alert settings" aria-label="Alert settings"><span class="alerts-status-dot" aria-hidden="true"></span>Alerts</button>
     <button id="btn-runner" class="control runner-btn" type="button" title="Runner settings">Runner <span id="runner-summary" class="runner-summary">agent:omp</span></button>
     <button id="btn-sync-git" class="control" type="button" title="Sync Git merge status">Sync Git</button>
     <button id="btn-update" class="control action-btn-update" type="button" title="Update pin" hidden>Update to <span id="update-version"></span></button>
@@ -37,6 +39,21 @@
   <label id="project-wrap" hidden>Project<input id="project-filter" list="projects" placeholder="All projects" autocomplete="off"><datalist id="projects"></datalist></label>
   <button id="clear-filters" class="text-button" type="button">Clear</button>
 </div>
+
+<div id="needs-reply-banner" class="needs-reply-banner" role="region" aria-label="Prompts needing reply" hidden>
+  <div class="needs-reply-banner-main">
+    <span class="needs-reply-dot" aria-hidden="true"></span>
+    <span class="needs-reply-banner-label">Needs reply</span>
+    <strong id="needs-reply-banner-title" class="needs-reply-banner-title"></strong>
+    <span id="needs-reply-banner-preview" class="needs-reply-banner-preview"></span>
+    <span id="needs-reply-banner-more" class="needs-reply-banner-more" hidden></span>
+  </div>
+  <div class="needs-reply-banner-actions">
+    <button id="btn-needs-reply-banner-view" class="control action-btn-small" type="button">View Run</button>
+    <button id="btn-needs-reply-banner-action" class="action-btn primary action-btn-small" type="button">Reply</button>
+  </div>
+</div>
+<div id="alert-announcer" class="visually-hidden" aria-live="assertive" aria-atomic="true"></div>
 
 <main id="workspace" class="workspace mode-board">
   <section id="board" class="board-view" aria-label="Board">
@@ -227,6 +244,7 @@
           </div>
         </div>
         <div id="agent-chat-container" class="agent-chat-container" hidden>
+          <div id="agent-chat-helpers" class="agent-chat-helpers" hidden></div>
           <div class="agent-chat-input-row">
             <textarea id="agent-chat-input" class="agent-chat-input" rows="2" placeholder="Reply to agent or explore ideas… (Press Enter to send, Shift+Enter for newline)" aria-label="Message to agent"></textarea>
             <div class="agent-chat-actions">
@@ -395,6 +413,72 @@
   </div>
 </dialog>
 
+<dialog id="reply-modal" class="action-dialog reply-modal">
+  <div class="dialog-content reply-modal-content">
+    <div class="dialog-header">
+      <div class="reply-modal-title-group">
+        <span class="needs-reply-dot" aria-hidden="true"></span>
+        <h2 id="reply-modal-title">Needs Reply</h2>
+        <span id="reply-modal-id" class="agent-badge-id"></span>
+        <span id="reply-modal-mode" class="badge badge-mode-idea">Idea</span>
+        <span id="reply-modal-waiting" class="reply-modal-waiting">Waiting</span>
+      </div>
+      <button id="btn-reply-close" class="dialog-close" type="button" aria-label="Close">✕</button>
+    </div>
+    <div id="reply-modal-queue" class="reply-modal-queue" role="tablist" aria-label="Waiting prompts" hidden></div>
+    <div id="reply-modal-error" class="dialog-error" hidden></div>
+    <div class="dialog-body reply-modal-body">
+      <div class="reply-modal-prompt-wrap">
+        <div class="reply-modal-section-label">Agent prompt</div>
+        <div id="reply-modal-message" class="prose reply-modal-message"></div>
+      </div>
+      <div class="reply-modal-composer">
+        <div class="reply-modal-composer-header">
+          <label for="reply-modal-input" class="reply-modal-section-label">Your reply</label>
+          <div id="reply-modal-helpers" class="reply-modal-helpers"></div>
+        </div>
+        <textarea id="reply-modal-input" class="reply-modal-input" rows="5" placeholder="Write your reply… (Paste screenshots directly, Cmd/Ctrl+Enter to send)"></textarea>
+      </div>
+    </div>
+    <div class="dialog-footer reply-modal-footer">
+      <button id="btn-reply-open-trajectory" class="control text-button" type="button">Open Full Trajectory</button>
+      <div class="reply-modal-footer-right">
+        <span class="spec-modal-hint">Cmd+Enter to send</span>
+        <button id="btn-reply-finish" class="control" type="button">Finish Discussion</button>
+        <button id="btn-reply-send" class="action-btn primary" type="button">Send Reply</button>
+      </div>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="alerts-dialog" class="action-dialog alerts-dialog">
+  <div class="dialog-content">
+    <div class="dialog-header">
+      <h2>Prompt Alerts</h2>
+      <button id="btn-alerts-close" class="dialog-close" type="button" aria-label="Close">✕</button>
+    </div>
+    <div class="dialog-body">
+      <p class="runner-hint">Choose how pin alerts you when an interactive agent pauses for your reply.</p>
+      <label class="worktree-interactive-toggle">
+        <input id="alerts-sound-checkbox" type="checkbox" checked>
+        <span>Play a gentle chime when a prompt needs your reply</span>
+      </label>
+      <label class="worktree-interactive-toggle">
+        <input id="alerts-desktop-checkbox" type="checkbox" checked>
+        <span>Show OS desktop notifications in background tabs</span>
+      </label>
+      <p id="alerts-desktop-status" class="runner-model-status" aria-live="polite"></p>
+      <div class="alerts-dialog-tools">
+        <button id="btn-alerts-request-perm" class="control" type="button">Enable Desktop Alerts</button>
+        <button id="btn-alerts-test" class="control text-button" type="button">Test Alert</button>
+      </div>
+    </div>
+    <div class="dialog-footer">
+      <button id="btn-alerts-done" class="action-btn primary" type="button">Done</button>
+    </div>
+  </div>
+</dialog>
+
 <dialog id="worktree-modal" class="action-dialog">
   <div class="dialog-content">
     <div class="dialog-header">
@@ -404,6 +488,10 @@
     <div class="dialog-body">
       <p id="worktree-busy-msg">The primary repository is already running task <span id="worktree-busy-id" class="agent-badge-id"></span>. Start this task in an isolated Git worktree under .pin_worktrees/<span id="worktree-target-id" class="agent-badge-id"></span>?</p>
       <p id="worktree-prompt-msg" hidden>Start this task inside an isolated Git worktree based off the up-to-date main branch under .pin_worktrees/<span id="worktree-prompt-target-id" class="agent-badge-id"></span>, or run in the primary checkout?</p>
+      <label class="worktree-interactive-toggle">
+        <input id="worktree-interactive-checkbox" type="checkbox">
+        <span>Interactive session (pause for replies before completing)</span>
+      </label>
       <p id="worktree-runner-summary" class="worktree-runner-summary"></p>
     </div>
     <div class="dialog-footer">
@@ -436,6 +524,7 @@
         <dl class="shortcuts-list">
           <div class="shortcut-row"><dt><kbd>/</kbd></dt><dd>Focus search box</dd></div>
           <div class="shortcut-row"><dt><kbd>n</kbd> or <kbd>c</kbd></dt><dd>Create new task</dd></div>
+          <div class="shortcut-row"><dt><kbd>r</kbd></dt><dd>Reply to waiting agent prompt</dd></div>
           <div class="shortcut-row"><dt><kbd>t</kbd></dt><dd>Toggle theme</dd></div>
           <div class="shortcut-row"><dt><kbd>?</kbd></dt><dd>Open keyboard shortcuts</dd></div>
           <div class="shortcut-row"><dt><kbd>Cmd</kbd>/<kbd>Ctrl</kbd> + <kbd>Enter</kbd></dt><dd>Submit active dialog form</dd></div>

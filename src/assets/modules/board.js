@@ -1,4 +1,4 @@
-import { state, find, itemStatus, itemType, priority, hasUnresolvedPrereqs, updateShown } from './state.js';
+import { state, find, itemStatus, itemType, priority, hasUnresolvedPrereqs, updateShown, isRunWaiting } from './state.js';
 import { els } from './dom.js';
 import { sendAction, ensureActionOk } from './api.js';
 import { node, text, clear, showToast } from './formatters.js';
@@ -10,6 +10,7 @@ var callbacks = {
   openWorktreeModal: function () {},
   openCloseModal: function () {},
   openAgentDrawer: function () {},
+  openReplyModal: function () {},
   closeAgentDrawer: function () {},
   sendCommitPrItem: function () {},
   refreshData: function () {},
@@ -115,10 +116,28 @@ export function buildBoardCard(item) {
   }
 
   if (state.activeRuns.has(item.id)) {
-    var runBadge = node('span', 'card-running-indicator');
-    runBadge.appendChild(node('span', 'card-running-dot'));
-    runBadge.appendChild(document.createTextNode('Running Agent'));
-    meta.appendChild(runBadge);
+    var waiting = isRunWaiting(item.id);
+    if (waiting) {
+      card.classList.add('card-waiting-reply');
+      var waitBadge = node('span', 'card-waiting-indicator');
+      waitBadge.appendChild(node('span', 'needs-reply-dot'));
+      waitBadge.appendChild(document.createTextNode('Needs reply'));
+      meta.appendChild(waitBadge);
+
+      var replyBtn = node('button', 'btn-reply-card', 'Reply');
+      replyBtn.type = 'button';
+      replyBtn.setAttribute('aria-label', 'Reply to agent for ' + (item.title || item.id));
+      replyBtn.addEventListener('click', function (e) {
+        if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+        callbacks.openReplyModal(item.id);
+      });
+      meta.appendChild(replyBtn);
+    } else {
+      var runBadge = node('span', 'card-running-indicator');
+      runBadge.appendChild(node('span', 'card-running-dot'));
+      runBadge.appendChild(document.createTextNode('Running Agent'));
+      meta.appendChild(runBadge);
+    }
 
     var viewRunBtn = node('button', 'btn-view-run', 'View Run');
     viewRunBtn.type = 'button';
@@ -251,7 +270,7 @@ export function setViewMode(mode) {
 }
 
 export function computeRenderKey(item) {
-  return (item.revision || '') + ':' + (item.title || '') + ':' + itemStatus(item) + ':' + itemType(item) + ':' + priority(item) + ':' + (hasUnresolvedPrereqs(item) ? '1' : '0') + ':' + (item.archived_at || '') + ':' + (state.activeRuns && state.activeRuns.has(item.id)) + ':' + (item.git_status || '') + ':' + (item.pr_number || '') + ':' + (item.pr_url || '') + ':' + (item.claim_expires_at || '') + ':' + (item.claimed_by || '');
+  return (item.revision || '') + ':' + (item.title || '') + ':' + itemStatus(item) + ':' + itemType(item) + ':' + priority(item) + ':' + (hasUnresolvedPrereqs(item) ? '1' : '0') + ':' + (item.archived_at || '') + ':' + (state.activeRuns && state.activeRuns.has(item.id)) + ':' + (isRunWaiting(item.id) ? '1' : '0') + ':' + (item.git_status || '') + ':' + (item.pr_number || '') + ':' + (item.pr_url || '') + ':' + (item.claim_expires_at || '') + ':' + (item.claimed_by || '');
 }
 
 export function renderBoard() {

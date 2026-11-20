@@ -1,10 +1,12 @@
 import { els } from './dom.js';
-import { state, find } from './state.js';
+import { state, find, isRunInteractive } from './state.js';
 import { clear, node, text, showToast } from './formatters.js';
 import { sendCancel } from './api.js';
+import { summarizeQuestionPreview } from './alerts.js';
 
 var callbacks = {
   openAgentDrawer: function () {},
+  openReplyModal: function () {},
   updateActiveRuns: function () {},
   setViewMode: function () {},
   setRoute: function () {}
@@ -55,7 +57,14 @@ export function stopAgentsTicker() {
   }
 }
 
-function getRunActivity(itemId) {
+function getRunActivity(run) {
+  if (run && run.waiting_for_user) {
+    return summarizeQuestionPreview(run.last_message, 90);
+  }
+  if (run && run.last_activity) {
+    return run.last_activity;
+  }
+  var itemId = run && run.item_id;
   var traj = (state.currentStreamingId === itemId ? state.trajectory : (state.trajectoryCache && state.trajectoryCache[itemId] && state.trajectoryCache[itemId].trajectory));
   if (traj && traj.toolCalls) {
     var calls = Object.values(traj.toolCalls);
@@ -107,8 +116,20 @@ export function renderAgentsTable() {
 
   clear(els.agentsTableBody);
 
-  runs.forEach(function (run) {
-    var row = node('tr', 'agent-row');
+  var sortedRuns = runs.slice().sort(function (a, b) {
+    var wa = a && a.waiting_for_user ? 1 : 0;
+    var wb = b && b.waiting_for_user ? 1 : 0;
+    if (wa !== wb) return wb - wa;
+    if (wa && wb) {
+      var ta = a.waiting_since || a.started_at || 0;
+      var tb = b.waiting_since || b.started_at || 0;
+      if (ta !== tb) return ta - tb;
+    }
+    return String((a && a.item_id) || '').localeCompare(String((b && b.item_id) || ''));
+  });
+
+  sortedRuns.forEach(function (run) {
+    var row = node('tr', 'agent-row' + (run.waiting_for_user ? ' agent-row-waiting' : ''));
     row.dataset.itemId = run.item_id;
 
     var itm = find(run.item_id);
@@ -131,7 +152,7 @@ export function renderAgentsTable() {
 
     // 2. Mode
     var modeCell = node('td', 'agent-col-mode');
-    var modeLabel = 'Implement';
+    var modeLabel = run.interactive ? 'Implement · Interactive' : 'Implement';
     var modeClass = 'badge-mode-implement';
     if (run.mode === 'commit_pr') {
       modeLabel = 'Commit & PR';
@@ -177,14 +198,35 @@ export function renderAgentsTable() {
 
     // 6. Activity
     var actCell = node('td', 'agent-col-activity');
-    var activityText = getRunActivity(run.item_id);
-    var actSpan = node('span', 'agent-activity', activityText);
-    actSpan.title = activityText;
-    actCell.appendChild(actSpan);
+    var activityText = getRunActivity(run);
+    if (run.waiting_for_user) {
+      var waitWrap = node('div', 'agent-activity-waiting');
+      var waitPill = node('span', 'card-waiting-indicator');
+      waitPill.appendChild(node('span', 'needs-reply-dot'));
+      waitPill.appendChild(document.createTextNode('Needs reply'));
+      waitWrap.appendChild(waitPill);
+      var actSpan = node('span', 'agent-activity', activityText);
+      actSpan.title = run.last_message || activityText;
+      waitWrap.appendChild(actSpan);
+      actCell.appendChild(waitWrap);
+    } else {
+      var runActSpan = node('span', 'agent-activity', activityText);
+      runActSpan.title = activityText;
+      actCell.appendChild(runActSpan);
+    }
     row.appendChild(actCell);
 
     // 7. Actions
     var actBtnsCell = node('td', 'agent-col-actions');
+
+    if (run.waiting_for_user) {
+      var replyBtn = node('button', 'action-btn primary action-btn-small btn-reply-run', 'Reply');
+      replyBtn.type = 'button';
+      replyBtn.addEventListener('click', function () {
+        if (callbacks.openReplyModal) callbacks.openReplyModal(run.item_id);
+      });
+      actBtnsCell.appendChild(replyBtn);
+    }
 
     // View Run
     var viewRunBtn = node('button', 'control text-button btn-view-run', 'View Run');
@@ -194,8 +236,8 @@ export function renderAgentsTable() {
     });
     actBtnsCell.appendChild(viewRunBtn);
 
-    // Open Chat (Idea mode)
-    if (run.mode === 'idea') {
+    // Open Chat (interactive runs)
+    if (isRunInteractive(run)) {
       var openChatBtn = node('button', 'control text-button btn-open-chat', 'Open Chat');
       openChatBtn.type = 'button';
       openChatBtn.addEventListener('click', function () {

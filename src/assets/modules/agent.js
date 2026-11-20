@@ -1,10 +1,13 @@
 import { BASE } from './config.js';
-import { state, find, itemStatus } from './state.js';
+import { state, find, itemStatus, getRunInfo, isRunInteractive } from './state.js';
 import { els, $ } from './dom.js';
 import { fetchRuns, fetchItemLog } from './api.js';
 import { text, clear, node, stripAnsi, cleanThoughtText } from './formatters.js';
+import { renderMarkdownSnippet } from './markdown.js';
 import { setViewMode } from './board.js';
 import { setRoute } from './router.js';
+import { syncWaitingAlerts } from './alerts.js';
+import { renderQuickHelpersInto } from './reply-inbox.js';
 var callbacks = { refreshData: function () {}, renderBoard: function () {}, renderDetail: function () {}, renderAgentsTable: function () {} };
 export function setAgentCallbacks(cbs) { if (cbs) Object.assign(callbacks, cbs); }
 
@@ -19,6 +22,47 @@ function setStatusPill(status, cls) {
   if (els.agentStatusPill) {
     text(els.agentStatusPill, status);
     els.agentStatusPill.className = 'agent-status-pill ' + (cls || '');
+  }
+}
+
+export function syncAgentChatControls(itemId, interactive, waiting, mode, restoreDraft, lastMessage) {
+  if (!els.agentChatContainer) return;
+  if (!interactive) {
+    els.agentChatContainer.hidden = true;
+    if (els.agentChatHelpers) els.agentChatHelpers.hidden = true;
+    return;
+  }
+  els.agentChatContainer.hidden = false;
+  if (els.agentChatInput) {
+    if (restoreDraft) {
+      els.agentChatInput.value = (state.chatDrafts && itemId && state.chatDrafts[itemId]) || '';
+    }
+    els.agentChatInput.disabled = !waiting;
+    els.agentChatInput.placeholder = waiting
+      ? 'Reply to agent… (Press Enter to send, Shift+Enter for newline)'
+      : 'Agent is working… reply box unlocks when it pauses for input';
+  }
+  if (els.btnAgentChatSend) {
+    els.btnAgentChatSend.disabled = !waiting;
+  }
+  if (els.btnAgentFinishIdea) {
+    els.btnAgentFinishIdea.disabled = false;
+    text(els.btnAgentFinishIdea, mode === 'implement' ? 'Finish & Complete' : 'Finish Discussion');
+  }
+  if (els.agentChatHelpers) {
+    if (waiting) {
+      var runInfo = getRunInfo(itemId);
+      var msgForHelpers = lastMessage || (runInfo && runInfo.last_message) || '';
+      renderQuickHelpersInto(els.agentChatHelpers, els.agentChatInput, msgForHelpers, function () {
+        if (itemId && els.agentChatInput) {
+          state.chatDrafts = state.chatDrafts || {};
+          state.chatDrafts[itemId] = els.agentChatInput.value;
+        }
+      });
+      els.agentChatHelpers.hidden = false;
+    } else {
+      els.agentChatHelpers.hidden = true;
+    }
   }
 }
 
@@ -54,11 +98,21 @@ export function updateActiveRuns() {
       }
 
       var newSet = new Set(data.running);
+      var newWaitingSet = new Set(
+        Array.isArray(data.waiting)
+          ? data.waiting
+          : state.activeRunsInfo.filter(function (r) { return r && r.waiting_for_user; }).map(function (r) { return r.item_id; })
+      );
       var changed = newSet.size !== state.activeRuns.size;
       if (!changed) {
         newSet.forEach(function (id) { if (!state.activeRuns.has(id)) changed = true; });
       }
-      if (changed) {
+      var waitingChanged = !state.waitingRuns || newWaitingSet.size !== state.waitingRuns.size;
+      if (!waitingChanged && state.waitingRuns) {
+        newWaitingSet.forEach(function (id) { if (!state.waitingRuns.has(id)) waitingChanged = true; });
+      }
+      syncWaitingAlerts({ notify: true });
+      if (changed || waitingChanged) {
         state.activeRuns = newSet;
         callbacks.renderBoard();
         callbacks.renderDetail();
@@ -118,6 +172,10 @@ export function updateDurationDisplay() {
 }
 
 export function closeAgentDrawer() {
+  if (state.currentStreamingId && els.agentChatInput && typeof els.agentChatInput.value === 'string') {
+    state.chatDrafts = state.chatDrafts || {};
+    state.chatDrafts[state.currentStreamingId] = els.agentChatInput.value;
+  }
   if (state.trajectory && state.trajectory.timer) { clearInterval(state.trajectory.timer); state.trajectory.timer = null; }
   if (state.currentStream) { state.currentStream.close(); state.currentStream = null; }
   if (state.currentStreamingId) cacheTrajectory(state.currentStreamingId);
@@ -126,6 +184,7 @@ export function closeAgentDrawer() {
   if (els.proposal) els.proposal.hidden = false;
   if (els.tabTaskSpec) els.tabTaskSpec.classList.add('active');
   if (els.tabAgentTrajectory) els.tabAgentTrajectory.classList.remove('active');
+  syncWaitingAlerts({ notify: false });
 }
 
 function cacheTrajectory(itemId) {
@@ -148,14 +207,29 @@ function createTrajectory(timingStart, now) {
   return {
     startTime: timingStart ? (timingStart * 1000) : now, startedAt: timingStart, finishedAt: null, turns: 0, calls: 0, timer: null,
     steps: [{ lane: 'input', label: 'Start' }], activeAssistantRow: null, activeAssistantTextEl: null,
+    activeAssistantKind: null, activeAssistantRaw: '',
     intervals: { input: [{ start: now, end: now + 50 }], model: [], tools: [] }, currentModelInterval: null,
     toolIntervals: {}, toolCalls: {}, toolRows: {}, filterQuery: ''
   };
 }
 
+function resetActiveAssistantRow() {
+  if (!state.trajectory) return;
+  state.trajectory.activeAssistantRow = null;
+  state.trajectory.activeAssistantTextEl = null;
+  state.trajectory.activeAssistantKind = null;
+  state.trajectory.activeAssistantRaw = '';
+}
+
 export function openAgentDrawer(itemId) {
   state.trajectoryCache = state.trajectoryCache || {};
-  if (state.currentStreamingId && state.currentStreamingId !== itemId) cacheTrajectory(state.currentStreamingId);
+  state.chatDrafts = state.chatDrafts || {};
+  if (state.currentStreamingId && state.currentStreamingId !== itemId) {
+    if (els.agentChatInput && typeof els.agentChatInput.value === 'string') {
+      state.chatDrafts[state.currentStreamingId] = els.agentChatInput.value;
+    }
+    cacheTrajectory(state.currentStreamingId);
+  }
   if (state.currentStream) { state.currentStream.close(); state.currentStream = null; }
   state.currentStreamingId = itemId;
 
@@ -169,15 +243,23 @@ export function openAgentDrawer(itemId) {
   state.readerTab = 'trajectory';
   if (els.tabAgentTrajectory) els.tabAgentTrajectory.classList.add('active'); if (els.tabTaskSpec) els.tabTaskSpec.classList.remove('active');
   if (els.proposal) els.proposal.hidden = true; if (els.agentDrawer) els.agentDrawer.hidden = false;
+  syncWaitingAlerts({ notify: false });
 
   var itm = find(itemId);
   if (els.agentTaskTitle) text(els.agentTaskTitle, (itm && itm.title) ? itm.title : '');
   if (els.agentItemId) { text(els.agentItemId, itemId.slice(0, 8)); els.agentItemId.dataset.fullId = itemId; }
   if (els.agentLogInfo) text(els.agentLogInfo, 'Logs: .pin_vault/runs/' + itemId + '.log');
   var isRunning = state.activeRuns && state.activeRuns.has(itemId);
+  var runInfo = getRunInfo(itemId);
+  var runInteractive = isRunInteractive(runInfo);
+  var runWaiting = !!(runInfo && runInfo.waiting_for_user);
   var itemSt = itm ? itemStatus(itm) : '';
-  var pillCls = isRunning ? '' : (itemSt === 'in_progress' ? 'status-interrupted' : ((itemSt === 'done' || itemSt === 'closed') ? 'status-completed' : ''));
-  var pillText = isRunning ? 'Running' : (itemSt === 'in_progress' ? 'Interrupted' : ((itemSt === 'done' || itemSt === 'closed') ? 'Completed' : 'Idle'));
+  var pillCls = isRunning
+    ? (runWaiting ? 'status-waiting' : 'status-running')
+    : (itemSt === 'in_progress' ? 'status-interrupted' : ((itemSt === 'done' || itemSt === 'closed') ? 'status-completed' : ''));
+  var pillText = isRunning
+    ? (runWaiting ? 'Waiting for reply' : 'Running')
+    : (itemSt === 'in_progress' ? 'Interrupted' : ((itemSt === 'done' || itemSt === 'closed') ? 'Completed' : 'Idle'));
   setStatusPill(pillText, pillCls);
   if (els.btnCancelAgent) els.btnCancelAgent.disabled = !isRunning;
   if (isRunning) {
@@ -222,14 +304,7 @@ export function openAgentDrawer(itemId) {
   if (isRunning) {
     updateDurationDisplay();
     state.trajectory.timer = setInterval(updateDurationDisplay, 1000);
-    if (els.agentChatContainer) {
-      els.agentChatContainer.hidden = false;
-      if (els.agentChatInput) {
-        els.agentChatInput.value = '';
-        els.agentChatInput.disabled = true;
-      }
-      if (els.btnAgentChatSend) els.btnAgentChatSend.disabled = true;
-    }
+    syncAgentChatControls(itemId, runInteractive, runWaiting, runInfo && runInfo.mode, true);
   } else if (els.agentChatContainer) {
     els.agentChatContainer.hidden = true;
   }
@@ -354,21 +429,37 @@ export function handleAgentStreamEvent(data) {
     state.trajectory.prUrl = data.pr_url;
     if (data.pr_number != null) state.trajectory.prNumber = data.pr_number;
   }
-  if (data.type === 'waiting_for_user') {
-    if (els.agentChatContainer) {
-      els.agentChatContainer.hidden = false;
-      if (els.agentChatInput) { els.agentChatInput.disabled = false; els.agentChatInput.focus(); }
-      if (els.btnAgentChatSend) els.btnAgentChatSend.disabled = false;
+  if (data.type === 'run_state') {
+    var rsInteractive = !!(data.interactive || data.mode === 'idea');
+    var rsWaiting = !!data.waiting_for_user;
+    syncAgentChatControls(state.currentStreamingId, rsInteractive, rsWaiting, data.mode, false, data.last_message);
+    if (rsWaiting) {
+      setStatusPill('Waiting for reply', 'status-waiting');
+    } else if (state.activeRuns && state.currentStreamingId && state.activeRuns.has(state.currentStreamingId)) {
+      setStatusPill('Running', 'status-running');
     }
-    setStatusPill('Waiting for reply', 'status-running');
+    return;
+  }
+  if (data.type === 'waiting_for_user') {
+    resetActiveAssistantRow();
+    var activeInfo = getRunInfo(state.currentStreamingId);
+    syncAgentChatControls(state.currentStreamingId, true, true, activeInfo && activeInfo.mode, false, data.message);
+    if (els.agentChatInput && typeof els.agentChatInput.focus === 'function') {
+      els.agentChatInput.focus();
+    }
+    setStatusPill('Waiting for reply', 'status-waiting');
     appendTrajectoryContextRow('Agent is waiting for your reply.');
     announceAgentStatus('Agent is waiting for your reply.');
     scrollTrajectoryStreamToBottom();
     return;
   }
   if (data.type === 'user_message') {
+    resetActiveAssistantRow();
     var content = data.text || (data.update && data.update.content) || '';
     if (content) appendTrajectoryUserRow(content);
+    var msgRunInfo = getRunInfo(state.currentStreamingId);
+    syncAgentChatControls(state.currentStreamingId, true, false, msgRunInfo && msgRunInfo.mode, false);
+    setStatusPill('Running', 'status-running');
     return;
   }
   if (data.type === 'run_timing') {
@@ -387,7 +478,9 @@ export function handleAgentStreamEvent(data) {
 
   if (updateType === 'plan') {
     renderAgentPlan(update);
-  } else if (updateType === 'agent_thought_chunk' || updateType === 'agent_message_chunk') {
+  } else if (updateType === 'agent_thought_chunk' || updateType === 'agent_message_chunk' || updateType === 'agent_message') {
+    var isMessage = updateType === 'agent_message_chunk' || updateType === 'agent_message';
+    var chunkKind = isMessage ? 'message' : 'thought';
     var rawThought = extractThoughtContent(update);
     appendAgentThought(rawThought);
     var cleaned = cleanThoughtText(rawThought);
@@ -400,19 +493,21 @@ export function handleAgentStreamEvent(data) {
     }
     if (!state.trajectory) return;
 
-    if (!state.trajectory.activeAssistantRow) {
+    if (!state.trajectory.activeAssistantRow || state.trajectory.activeAssistantKind !== chunkKind) {
       state.trajectory.turns++;
       if (els.metricTurns) text(els.metricTurns, 'Turns: ' + state.trajectory.turns);
-      var row = node('div', 'trajectory-row trajectory-row-assistant');
+      var row = node('div', 'trajectory-row trajectory-row-assistant ' + (isMessage ? 'trajectory-row-message' : 'trajectory-row-thought'));
       row.appendChild(node('div', 'trajectory-gutter', '●'));
-      row.appendChild(node('span', 'trajectory-badge badge-assistant', 'ASSISTANT'));
+      row.appendChild(node('span', 'trajectory-badge badge-assistant' + (isMessage ? '' : ' badge-thought'), isMessage ? 'ASSISTANT' : 'THOUGHT'));
       var body = node('div', 'trajectory-body');
-      var thoughtEl = node('div', 'trajectory-thought-text');
-      body.appendChild(thoughtEl);
+      var textEl = node('div', isMessage ? 'trajectory-message-text prose' : 'trajectory-thought-text');
+      body.appendChild(textEl);
       row.appendChild(body);
       if (els.trajectoryStream) els.trajectoryStream.appendChild(row);
       state.trajectory.activeAssistantRow = row;
-      state.trajectory.activeAssistantTextEl = thoughtEl;
+      state.trajectory.activeAssistantTextEl = textEl;
+      state.trajectory.activeAssistantKind = chunkKind;
+      state.trajectory.activeAssistantRaw = '';
 
       var mNow = Date.now();
       state.trajectory.intervals.model.push({ start: mNow, end: mNow });
@@ -426,13 +521,18 @@ export function handleAgentStreamEvent(data) {
     }
 
     if (cleaned && state.trajectory.activeAssistantTextEl) {
-      var aNodes = state.trajectory.activeAssistantTextEl.childNodes || state.trajectory.activeAssistantTextEl.children;
-      var aLast = aNodes && aNodes.length > 0 ? aNodes[aNodes.length - 1] : null;
-      if (aLast && (aLast.nodeType === 3 || typeof aLast.textContent === 'string') && aLast.parentNode === state.trajectory.activeAssistantTextEl) {
-        aLast.textContent = (aLast.textContent || '') + cleaned;
-        if (aLast.nodeValue !== undefined) aLast.nodeValue = aLast.textContent;
+      if (isMessage) {
+        state.trajectory.activeAssistantRaw = (state.trajectory.activeAssistantRaw || '') + cleaned;
+        renderMarkdownSnippet(state.trajectory.activeAssistantRaw, state.trajectory.activeAssistantTextEl);
       } else {
-        state.trajectory.activeAssistantTextEl.appendChild(document.createTextNode(cleaned));
+        var aNodes = state.trajectory.activeAssistantTextEl.childNodes || state.trajectory.activeAssistantTextEl.children;
+        var aLast = aNodes && aNodes.length > 0 ? aNodes[aNodes.length - 1] : null;
+        if (aLast && (aLast.nodeType === 3 || typeof aLast.textContent === 'string') && aLast.parentNode === state.trajectory.activeAssistantTextEl) {
+          aLast.textContent = (aLast.textContent || '') + cleaned;
+          if (aLast.nodeValue !== undefined) aLast.nodeValue = aLast.textContent;
+        } else {
+          state.trajectory.activeAssistantTextEl.appendChild(document.createTextNode(cleaned));
+        }
       }
     }
     scrollTrajectoryStreamToBottom();
@@ -447,8 +547,7 @@ export function handleAgentStreamEvent(data) {
       state.trajectory.currentModelInterval.end = Date.now();
       state.trajectory.currentModelInterval = null;
     }
-    state.trajectory.activeAssistantRow = null;
-    state.trajectory.activeAssistantTextEl = null;
+    resetActiveAssistantRow();
     state.trajectory.calls++;
     if (els.metricCalls) text(els.metricCalls, 'Calls: ' + state.trajectory.calls);
 

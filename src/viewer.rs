@@ -103,6 +103,8 @@ struct ActionPayload {
     #[serde(default, alias = "confirm_worktree", alias = "worktree")]
     pub use_worktree: Option<bool>,
     #[serde(default)]
+    pub interactive: Option<bool>,
+    #[serde(default)]
     to: Option<Status>,
     #[serde(default)]
     actor: Option<String>,
@@ -146,6 +148,8 @@ struct RunPayload {
     pub use_worktree: Option<bool>,
     #[serde(default)]
     pub mode: Option<String>,
+    #[serde(default)]
+    pub interactive: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -498,6 +502,16 @@ const ASSETS: &[(&str, &str, &str)] = &[
         "modules/agents-view.js",
         "text/javascript; charset=utf-8",
         MODULES_AGENTS_VIEW_JS,
+    ),
+    (
+        "modules/alerts.js",
+        "text/javascript; charset=utf-8",
+        MODULES_ALERTS_JS,
+    ),
+    (
+        "modules/reply-inbox.js",
+        "text/javascript; charset=utf-8",
+        MODULES_REPLY_INBOX_JS,
     ),
     (
         "modules/bind.js",
@@ -1423,10 +1437,11 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                 match mutation_result {
                     Ok(updated_meta) => {
                         if is_starting_run {
-                            if let Err(err) = snapshot
-                                .acp_manager
-                                .start_run(id, payload.use_worktree.unwrap_or(false))
-                            {
+                            if let Err(err) = snapshot.acp_manager.start_run_interactive(
+                                id,
+                                payload.use_worktree.unwrap_or(false),
+                                payload.interactive.unwrap_or(false),
+                            ) {
                                 // The mutation already moved the item. A run
                                 // that never launched must not strand it.
                                 rollback_failed_start(&snapshot, &filename, &updated_meta);
@@ -1537,6 +1552,7 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                     RunPayload {
                         use_worktree: None,
                         mode: None,
+                        interactive: None,
                     }
                 };
 
@@ -1568,9 +1584,11 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                             .acp_manager
                             .start_idea_run(id, payload.use_worktree.unwrap_or(false))
                     } else {
-                        snapshot
-                            .acp_manager
-                            .start_run(id, payload.use_worktree.unwrap_or(false))
+                        snapshot.acp_manager.start_run_interactive(
+                            id,
+                            payload.use_worktree.unwrap_or(false),
+                            payload.interactive.unwrap_or(false),
+                        )
                     }
                 };
                 match run_result {
@@ -1683,11 +1701,13 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                     serde_json::from_slice(&body_bytes).unwrap_or(RunPayload {
                         use_worktree: None,
                         mode: Some("idea".to_string()),
+                        interactive: Some(true),
                     })
                 } else {
                     RunPayload {
                         use_worktree: None,
                         mode: Some("idea".to_string()),
+                        interactive: Some(true),
                     }
                 };
 
@@ -2055,14 +2075,24 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
         #[derive(Serialize)]
         struct RunsOutput {
             running: Vec<String>,
+            waiting: Vec<String>,
+            waiting_count: usize,
             primary_busy: Option<String>,
             timings: std::collections::HashMap<String, i64>,
             runs: Vec<crate::acp::ActiveRunInfo>,
         }
         let (running, timings) = snapshot.acp_manager.running_items_with_timing();
         let runs = snapshot.acp_manager.active_runs_info();
+        let waiting: Vec<String> = runs
+            .iter()
+            .filter(|r| r.waiting_for_user)
+            .map(|r| r.item_id.clone())
+            .collect();
+        let waiting_count = waiting.len();
         let out = RunsOutput {
             running,
+            waiting,
+            waiting_count,
             primary_busy: snapshot.acp_manager.is_primary_busy(),
             timings,
             runs,
@@ -2464,6 +2494,71 @@ pub fn open_browser(url: &str) {
     }
 }
 
+pub fn resolve_notify_command(explicit: Option<String>) -> Option<String> {
+    explicit
+        .or_else(|| env::var("PIN_NOTIFY_CMD").ok())
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
+fn spawn_notify_command(cmd_template: &str, event: &serde_json::Value, base_url: &str) {
+    let cmd_str = cmd_template.to_string();
+    let item_id = event
+        .get("id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let item_title = event
+        .get("title")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or(&item_id)
+        .to_string();
+    let run_mode = event
+        .get("mode")
+        .and_then(|v| v.as_str())
+        .unwrap_or("idea")
+        .to_string();
+    let raw_msg = event
+        .get("message")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Waiting for your reply");
+    let compact: String = raw_msg.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut end = compact.len().min(300);
+    while end > 0 && !compact.is_char_boundary(end) {
+        end -= 1;
+    }
+    let message = compact[..end].to_string();
+    let viewer_url = if item_id.is_empty() {
+        base_url.to_string()
+    } else {
+        format!("{base_url}#/item/{item_id}")
+    };
+
+    thread::spawn(move || {
+        let mut cmd = if cfg!(target_os = "windows") {
+            let mut c = Command::new("cmd");
+            c.args(["/C", &cmd_str]);
+            c
+        } else {
+            let mut c = Command::new("sh");
+            c.args(["-c", &cmd_str]);
+            c
+        };
+        let _ = cmd
+            .env("PIN_EVENT", "waiting_for_user")
+            .env("PIN_ITEM_ID", &item_id)
+            .env("PIN_ITEM_TITLE", &item_title)
+            .env("PIN_RUN_MODE", &run_mode)
+            .env("PIN_MESSAGE", &message)
+            .env("PIN_VIEWER_URL", &viewer_url)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    });
+}
+
 pub fn serve_view(
     mut snapshot: ViewSnapshot,
     port: u16,
@@ -2472,6 +2567,7 @@ pub fn serve_view(
     acp_command: Option<String>,
     acp_actor: Option<String>,
     acp_model: Option<String>,
+    notify_command: Option<String>,
 ) -> io::Result<()> {
     let repo_path = crate::acp::WorktreeManager::resolve_repo_path(&snapshot.vault_path);
     snapshot.repo_path = repo_path.clone();
@@ -2536,6 +2632,8 @@ pub fn serve_view(
         shared_snapshot.acp_manager.add_global_listener(acp_tx);
         let b = Arc::clone(&shared_snapshot.broadcaster);
         let watcher_snap = Arc::clone(&shared_snapshot);
+        let notify_cmd = resolve_notify_command(notify_command);
+        let notify_base_url = base_url.clone();
         thread::spawn(move || {
             while let Ok(event) = acp_rx.recv() {
                 let event_type = event.get("type").and_then(|v| v.as_str()).unwrap_or("");
@@ -2547,6 +2645,13 @@ pub fn serve_view(
                     b.broadcast(event);
                     b.broadcast(serde_json::json!({ "type": "git_updated" }));
                     b.broadcast(serde_json::json!({ "type": "vault_changed" }));
+                } else if event_type == "run_waiting" {
+                    if let Some(cmd) = notify_cmd.as_deref() {
+                        spawn_notify_command(cmd, &event, &notify_base_url);
+                    }
+                    b.broadcast(event);
+                } else if event_type == "run_resumed" {
+                    b.broadcast(event);
                 }
             }
         });
@@ -2729,12 +2834,23 @@ mod tests {
         let payload: RunPayload = serde_json::from_str(json).unwrap();
         assert_eq!(payload.mode.as_deref(), Some("idea"));
         assert_eq!(payload.use_worktree, Some(true));
+        assert_eq!(payload.interactive, None);
+
+        let json_interactive = r#"{"use_worktree":false,"interactive":true}"#;
+        let payload_int: RunPayload = serde_json::from_str(json_interactive).unwrap();
+        assert_eq!(payload_int.use_worktree, Some(false));
+        assert_eq!(payload_int.interactive, Some(true));
     }
     #[test]
     fn test_runs_output_serialization() {
         let run_info = crate::acp::ActiveRunInfo {
             item_id: "item-1".to_string(),
             mode: "implement".to_string(),
+            interactive: true,
+            waiting_for_user: true,
+            waiting_since: Some(1234600),
+            last_message: Some("Ready to proceed?".to_string()),
+            last_activity: Some("Waiting for reply".to_string()),
             is_primary_worktree: false,
             worktree_path: Some("/tmp/wt".to_string()),
             started_at: 1234567,
@@ -2744,6 +2860,8 @@ mod tests {
         #[derive(Serialize)]
         struct TestRunsOutput {
             running: Vec<String>,
+            waiting: Vec<String>,
+            waiting_count: usize,
             primary_busy: Option<String>,
             timings: std::collections::HashMap<String, i64>,
             runs: Vec<crate::acp::ActiveRunInfo>,
@@ -2752,14 +2870,23 @@ mod tests {
         timings.insert("item-1".to_string(), 1234567);
         let out = TestRunsOutput {
             running: vec!["item-1".to_string()],
+            waiting: vec!["item-1".to_string()],
+            waiting_count: 1,
             primary_busy: None,
             timings,
             runs: vec![run_info],
         };
         let json = serde_json::to_value(&out).unwrap();
         assert_eq!(json["running"][0], "item-1");
+        assert_eq!(json["waiting"][0], "item-1");
+        assert_eq!(json["waiting_count"], 1);
         assert_eq!(json["runs"][0]["item_id"], "item-1");
         assert_eq!(json["runs"][0]["mode"], "implement");
+        assert_eq!(json["runs"][0]["interactive"], true);
+        assert_eq!(json["runs"][0]["waiting_for_user"], true);
+        assert_eq!(json["runs"][0]["waiting_since"], 1234600);
+        assert_eq!(json["runs"][0]["last_message"], "Ready to proceed?");
+        assert_eq!(json["runs"][0]["last_activity"], "Waiting for reply");
         assert_eq!(json["runs"][0]["is_primary_worktree"], false);
         assert_eq!(json["runs"][0]["worktree_path"], "/tmp/wt");
         assert_eq!(json["runs"][0]["started_at"], 1234567);
@@ -2961,5 +3088,41 @@ mod tests {
         assert!(resp2.starts_with("HTTP/1.1 200 OK\r\n"), "got: {resp2}");
         assert!(resp2.contains("Content-Type: text/event-stream"));
         assert!(!resp2.contains("Access-Control-Allow-Origin: *"));
+    }
+
+    #[test]
+    fn test_spawn_notify_command_exports_waiting_env_vars() {
+        let dir = tempfile::tempdir().unwrap();
+        let out_file = dir.path().join("notify.txt");
+        let cmd = format!(
+            "printf '%s|%s|%s|%s|%s|%s' \"$PIN_EVENT\" \"$PIN_ITEM_ID\" \"$PIN_ITEM_TITLE\" \"$PIN_RUN_MODE\" \"$PIN_MESSAGE\" \"$PIN_VIEWER_URL\" > '{}'",
+            out_file.display()
+        );
+        let evt = serde_json::json!({
+            "type": "run_waiting",
+            "id": "0123456789ab",
+            "title": "Design Auth Flow",
+            "mode": "idea",
+            "message": "1. Cookie or token?\n2. Rotate daily?"
+        });
+
+        spawn_notify_command(&cmd, &evt, "http://127.0.0.1:4321/tok/");
+
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut content = String::new();
+        while Instant::now() < deadline {
+            if let Ok(c) = std::fs::read_to_string(&out_file) {
+                if !c.is_empty() {
+                    content = c;
+                    break;
+                }
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
+
+        assert_eq!(
+            content,
+            "waiting_for_user|0123456789ab|Design Auth Flow|idea|1. Cookie or token? 2. Rotate daily?|http://127.0.0.1:4321/tok/#/item/0123456789ab"
+        );
     }
 }

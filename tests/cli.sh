@@ -1278,4 +1278,135 @@ view_sync_res=$(curl -s -S -X POST -H "Origin: $sync_origin" -H 'Content-Type: a
 assert_contains "$view_sync_res" '"status":"ok"'
 assert_contains "$view_sync_res" '"synced":[]'
 stop_view
+
+# 7. Interactive implement run lifecycle, /runs waiting state, and --notify-command hook
+int_vault="$TMP/interactive-vault"
+mkdir -p "$int_vault"
+int_item_json=$(PIN_VAULT="$int_vault" PIN_PROJECT=int-demo "$PIN_BIN" add '# Interactive prompt test' --type task --status planned --format json)
+int_item_id=$(printf '%s' "$int_item_json" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+int_notify_log="$TMP/int-notify.log"
+int_agent="$TMP/mock-interactive-agent.sh"
+cat > "$int_agent" <<'EOF'
+#!/bin/sh
+turn=0
+while IFS= read -r line; do
+  req_id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  case "$line" in
+    *initialize*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentCapabilities":{}}}\n' "$req_id"
+      ;;
+    *session/new*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"int-sess-1"}}\n' "$req_id"
+      ;;
+    *session/prompt*)
+      turn=$((turn + 1))
+      if [ "$turn" -eq 1 ]; then
+        printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"int-sess-1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"1. Use SSE?\\n2. Enable chime?"}}}}\n'
+      else
+        printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"int-sess-1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"## Summary\\nImplemented interactive alerts.\\n\\n## Verification\\nAll checks passed."}}}}\n'
+      fi
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "$req_id"
+      ;;
+    *session/cancel*)
+      exit 0
+      ;;
+  esac
+done
+EOF
+chmod +x "$int_agent"
+
+int_view_log="$TMP/int-view.log"
+PIN_VAULT="$int_vault" "$PIN_BIN" view --no-open --format json \
+    --acp-command "$int_agent" \
+    --notify-command "printf '%s|%s|%s\n' \"\$PIN_EVENT\" \"\$PIN_ITEM_ID\" \"\$PIN_MESSAGE\" >> '$int_notify_log'" \
+    >"$int_view_log" 2>&1 &
+int_view_pid=$!
+
+int_view_url=""
+for _ in $(seq 1 100); do
+    if [ -s "$int_view_log" ]; then
+        int_view_url=$(sed -n 's/.*"url":"\([^"]*\)".*/\1/p' "$int_view_log" | head -n 1)
+        if [ -n "$int_view_url" ]; then
+            break
+        fi
+    fi
+    sleep 0.1
+done
+[ -n "$int_view_url" ] || fail "interactive viewer did not start"
+int_origin=$(printf '%s' "$int_view_url" | cut -d/ -f1-3)
+
+# Start interactive implement run
+int_start=$(curl -s -S -X POST \
+    -H "Origin: $int_origin" -H 'Content-Type: application/json' -H 'X-Pin-Action: true' \
+    -d '{"use_worktree":false,"interactive":true}' \
+    "${int_view_url}items/${int_item_id}/run")
+assert_contains "$int_start" '"status":"started"'
+
+# Wait for GET /runs to report waiting_for_user=true and last_message
+int_runs=""
+for _ in $(seq 1 100); do
+    int_runs=$(curl -s -S "${int_view_url}runs")
+    case "$int_runs" in
+        *'"waiting_count":1'*'"waiting_for_user":true'*)
+            break
+            ;;
+    esac
+    sleep 0.1
+done
+assert_contains "$int_runs" '"waiting_count":1'
+assert_contains "$int_runs" '"interactive":true'
+assert_contains "$int_runs" '1. Use SSE?'
+
+# Verify --notify-command fired with waiting env vars
+notify_seen=""
+for _ in $(seq 1 50); do
+    if [ -s "$int_notify_log" ]; then
+        notify_seen=$(cat "$int_notify_log")
+        break
+    fi
+    sleep 0.1
+done
+assert_contains "$notify_seen" "waiting_for_user|${int_item_id}|1. Use SSE? 2. Enable chime?"
+
+# Reply via POST /message
+int_msg=$(curl -s -S -X POST \
+    -H "Origin: $int_origin" -H 'Content-Type: application/json' -H 'X-Pin-Action: true' \
+    -d '{"message":"1. Yes\n2. Yes"}' \
+    "${int_view_url}items/${int_item_id}/message")
+assert_contains "$int_msg" '"status":"sent"'
+
+# Wait for second turn's summary message to appear in /runs
+int_runs2=""
+for _ in $(seq 1 100); do
+    int_runs2=$(curl -s -S "${int_view_url}runs")
+    case "$int_runs2" in
+        *'Implemented interactive alerts.'*)
+            break
+            ;;
+    esac
+    sleep 0.1
+done
+assert_contains "$int_runs2" 'Implemented interactive alerts.'
+
+# Finish interactive run and confirm completion
+int_fin=$(curl -s -S -X POST \
+    -H "Origin: $int_origin" -H 'Content-Type: application/json' -H 'X-Pin-Action: true' \
+    "${int_view_url}items/${int_item_id}/finish")
+assert_contains "$int_fin" '"status":"finished"'
+
+for _ in $(seq 1 100); do
+    cur_runs=$(curl -s -S "${int_view_url}runs")
+    case "$cur_runs" in
+        *'"running":[]'*)
+            break
+            ;;
+    esac
+    sleep 0.1
+done
+int_read=$(PIN_VAULT="$int_vault" "$PIN_BIN" read "$int_item_id")
+assert_contains "$int_read" 'status: "done"'
+assert_contains "$int_read" 'Implemented interactive alerts.'
+
+kill "$int_view_pid" 2>/dev/null || true
+wait "$int_view_pid" 2>/dev/null || true
 echo "CLI tests passed"

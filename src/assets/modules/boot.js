@@ -9,6 +9,7 @@ import { renderDetail } from './detail.js';
 import { updateActiveRuns } from './agent.js';
 import { bind } from './bind.js';
 import { loadRunnerSettings, handleRunnerSettingsEvent } from './runner.js';
+import { handleGlobalWaitingEvent } from './alerts.js';
 
 export function setupFilters() {
   fillSelect(els.status, unique(itemStatus), 'Any status', ORDER.status);
@@ -150,6 +151,9 @@ export function connectEvents() {
         } else if (msg.type === 'runner_settings') {
           handleRunnerSettingsEvent(msg.settings);
           updateActiveRuns();
+        } else if (msg.type === 'run_waiting' || msg.type === 'run_resumed') {
+          handleGlobalWaitingEvent(msg);
+          updateActiveRuns();
         } else if (msg.type === 'run_started' || msg.type === 'run_finished') {
           if (msg.type === 'run_finished' && msg.id && msg.pr_url) {
             var itm = find(msg.id);
@@ -187,6 +191,13 @@ export function boot() {
   loadRunnerSettings();
 
   load(true).then(function () {
+    if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+      document.addEventListener('visibilitychange', function () {
+        if (!document.hidden) {
+          updateActiveRuns();
+        }
+      });
+    }
     setInterval(function () {
       if (typeof document !== 'undefined' && !document.hidden) {
         refreshData();

@@ -2096,6 +2096,336 @@ async function runHarness() {
   global.fetch = origFetch17;
   console.log('PASS: Deep links, multi-term search, renderKey invalidation, and HTTP error handling verified');
 
+  console.log('\n--- 18. Testing Interactive Implement Run Option ---');
+  const wtCheckbox = document.getElementById('worktree-interactive-checkbox');
+  localStorageMock.setItem('pin-interactive-default', 'true');
+  openWorktreeModal({ id: 'item-int-1', title: 'Interactive Implement' }, null);
+  assert.strictEqual(wtCheckbox.checked, true, 'worktree modal restores persisted interactive preference');
+  let capturedRunBody = null;
+  const origFetch18 = fetchStub;
+  fetchStub = function (url, opts) {
+    if (url.includes('items/item-int-1/run')) {
+      capturedRunBody = JSON.parse(opts.body);
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        headers: { get: () => null },
+        json: () => Promise.resolve({ status: 'started' })
+      });
+    }
+    return Promise.resolve({ ok: true, status: 200, headers: { get: () => null }, json: () => Promise.resolve({ running: [], runs: [] }) });
+  };
+  document.getElementById('btn-worktree-confirm').click();
+  await new Promise(r => setTimeout(r, 20));
+  assert.ok(capturedRunBody, 'confirming worktree modal dispatches /run');
+  assert.strictEqual(capturedRunBody.use_worktree, true, 'worktree flag sent');
+  assert.strictEqual(capturedRunBody.interactive, true, 'interactive flag sent when checked');
+  fetchStub = origFetch18;
+  localStorageMock.removeItem('pin-interactive-default');
+  console.log('PASS: Interactive implement run option verified');
+
+  console.log('\n--- 19. Testing Trajectory Chat State Sync and Draft Persistence ---');
+  const chatContainer19 = document.getElementById('agent-chat-container');
+  const chatInput19 = document.getElementById('agent-chat-input');
+  const chatSend19 = document.getElementById('btn-agent-chat-send');
+  const finishBtn19 = document.getElementById('btn-agent-finish-idea');
+  const statusPill19 = document.getElementById('agent-status-pill');
+
+  // Non-interactive active run hides chat composer
+  testExports.state.activeRuns = new Set(['non-int-run', 'int-impl-run']);
+  testExports.state.activeRunsInfo = [
+    { item_id: 'non-int-run', mode: 'implement', interactive: false, waiting_for_user: false, started_at: 100 },
+    { item_id: 'int-impl-run', mode: 'implement', interactive: true, waiting_for_user: true, started_at: 200 }
+  ];
+  finishBtn19.disabled = true;
+  openAgentDrawer('non-int-run');
+  assert.strictEqual(chatContainer19.hidden, true, 'non-interactive run hides chat composer');
+
+  // Interactive implement run shows composer, re-enables finish button with implement label, restores draft
+  testExports.state.chatDrafts['int-impl-run'] = 'Draft answer in progress';
+  openAgentDrawer('int-impl-run');
+  assert.strictEqual(chatContainer19.hidden, false, 'interactive run shows chat composer');
+  assert.strictEqual(chatInput19.disabled, false, 'waiting run unlocks chat input');
+  assert.strictEqual(chatInput19.value, 'Draft answer in progress', 'saved draft restored on open');
+  assert.strictEqual(finishBtn19.disabled, false, 'finish button re-enabled for new run');
+  assert.strictEqual(finishBtn19.textContent, 'Finish & Complete', 'interactive implement finish label');
+  assert.ok(statusPill19.className.includes('status-waiting'), 'waiting status pill uses warning style');
+
+  // Replaying user_message resets waiting state back to running
+  handleAgentStreamEvent({ type: 'user_message', update: { content: 'Go ahead' } });
+  assert.strictEqual(chatInput19.disabled, true, 'user_message locks input while agent works');
+  assert.strictEqual(chatSend19.disabled, true, 'user_message disables send while agent works');
+  assert.strictEqual(statusPill19.textContent, 'Running', 'user_message resets status pill to Running');
+
+  // run_state frame authoritatively unlocks composer on late subscribe
+  handleAgentStreamEvent({ type: 'run_state', mode: 'implement', interactive: true, waiting_for_user: true });
+  assert.strictEqual(chatInput19.disabled, false, 'run_state waiting_for_user unlocks input');
+  assert.strictEqual(statusPill19.textContent, 'Waiting for reply', 'run_state updates status pill');
+
+  closeAgentDrawer();
+  testExports.state.activeRuns = new Set();
+  testExports.state.activeRunsInfo = [];
+  console.log('PASS: Trajectory chat state sync and draft persistence verified');
+
+  console.log('\n--- 20. Testing Markdown Assistant Messages vs Thoughts ---');
+  openAgentDrawer('item-md-traj');
+  handleAgentStreamEvent({ type: 'agent_thought_chunk', update: 'Checking files silently...' });
+  handleAgentStreamEvent({ type: 'agent_message_chunk', update: '1. **First question?**\n' });
+  handleAgentStreamEvent({ type: 'agent_message_chunk', update: '2. Second question?' });
+  const trajEl20 = document.getElementById('agent-trajectory-stream');
+  const thoughtRows20 = findAllDescendants(trajEl20, '.trajectory-row-thought');
+  const messageRows20 = findAllDescendants(trajEl20, '.trajectory-row-message');
+  assert.strictEqual(thoughtRows20.length, 1, 'thought chunk creates separate thought row');
+  assert.strictEqual(messageRows20.length, 1, 'consecutive message chunks merge into one assistant message row');
+  assert.ok(messageRows20[0].textContent.includes('First question?') && messageRows20[0].textContent.includes('Second question?'), 'message row preserves streamed text');
+  closeAgentDrawer();
+  console.log('PASS: Markdown assistant messages vs thoughts verified');
+
+  console.log('\n--- 21. Testing Global Needs-Reply Alerts, Title, Favicon, and Desktop Notifications ---');
+  testExports.resetAlertStateForTests();
+  let desktopNotifs = [];
+  function MockNotification(title, opts) {
+    this.title = title;
+    this.opts = opts;
+    this.closed = false;
+    this.close = () => { this.closed = true; };
+    desktopNotifs.push(this);
+  }
+  MockNotification.permission = 'granted';
+  MockNotification.requestPermission = () => Promise.resolve('granted');
+  mockWindow.Notification = MockNotification;
+  global.Notification = MockNotification;
+
+  const iconEl21 = documentMock.querySelector('link[rel="icon"]');
+  testExports.state.items = [
+    { id: 'wait-item-1', title: 'Auth Session Design', status: 'in_progress', type: 'idea', revision: 1 }
+  ];
+  testExports.state.activeRuns = new Set(['wait-item-1']);
+  testExports.state.activeRunsInfo = [
+    { item_id: 'wait-item-1', mode: 'idea', interactive: true, waiting_for_user: false, started_at: 1000 }
+  ];
+  testExports.setViewMode('board');
+  testExports.handleGlobalWaitingEvent({
+    type: 'run_waiting',
+    id: 'wait-item-1',
+    title: 'Auth Session Design',
+    mode: 'idea',
+    waiting_since: 1050,
+    message: '1. **Cookie or Bearer?**\n2. Should tokens rotate?'
+  });
+  assert.strictEqual(documentMock.title, '(1) Needs reply - pin', 'document.title shows waiting count');
+  assert.ok((iconEl21.getAttribute('href') || '').includes('%23d97706'), 'favicon switches to amber attention badge');
+  assert.strictEqual(documentMock.getElementById('btn-needs-reply').hidden, false, 'topbar needs-reply pill shown');
+  assert.strictEqual(documentMock.getElementById('needs-reply-banner').hidden, false, 'needs-reply banner shown');
+  assert.ok(documentMock.getElementById('needs-reply-banner-preview').textContent.includes('Cookie or Bearer?'), 'banner previews question');
+  assert.strictEqual(desktopNotifs.length, 1, 'desktop notification fired once');
+  assert.ok(desktopNotifs[0].title.includes('Auth Session Design'), 'desktop notification includes item title');
+
+  // Re-syncing same waiting_since must not duplicate notifications
+  testExports.syncWaitingAlerts({ notify: true });
+  assert.strictEqual(desktopNotifs.length, 1, 'duplicate sync does not re-notify same turn');
+
+  // Resuming clears title, banner, and pill
+  testExports.handleGlobalWaitingEvent({ type: 'run_resumed', id: 'wait-item-1', mode: 'idea' });
+  assert.strictEqual(documentMock.title, 'pin', 'document.title restored after resume');
+  assert.strictEqual(documentMock.getElementById('btn-needs-reply').hidden, true, 'topbar needs-reply pill hidden after resume');
+  assert.strictEqual(documentMock.getElementById('needs-reply-banner').hidden, true, 'banner hidden after resume');
+
+  delete mockWindow.Notification;
+  delete global.Notification;
+  testExports.state.activeRuns = new Set();
+  testExports.state.activeRunsInfo = [];
+  console.log('PASS: Global needs-reply alerts, title, favicon, and desktop notifications verified');
+
+  console.log('\n--- 22. Testing Quick-Reply Inbox Modal and Numbered-Question Helpers ---');
+  const parsedQs = testExports.extractNumberedQuestions(
+    'Before proceeding:\n1. Should we use SSE?\n2. Keep default sound on?\n3. Auto-advance queue?'
+  );
+  assert.strictEqual(parsedQs.length, 3, 'extracts 3 numbered questions');
+  assert.strictEqual(testExports.buildNumberedScaffold(parsedQs), '1. \n2. \n3. ', 'builds numbered scaffold');
+  assert.strictEqual(testExports.extractNumberedQuestions('Just one sentence.').length, 0, 'ignores non-numbered prose');
+
+  testExports.state.items = [
+    { id: 'q-item-1', title: 'First Waiting Prompt', status: 'in_progress', type: 'idea', revision: 1 },
+    { id: 'q-item-2', title: 'Second Waiting Prompt', status: 'in_progress', type: 'task', revision: 1 }
+  ];
+  testExports.state.activeRuns = new Set(['q-item-1', 'q-item-2']);
+  testExports.state.activeRunsInfo = [
+    {
+      item_id: 'q-item-1',
+      mode: 'idea',
+      interactive: true,
+      waiting_for_user: true,
+      waiting_since: 100,
+      last_message: '1. Active only?\n2. Quick table?'
+    },
+    {
+      item_id: 'q-item-2',
+      mode: 'implement',
+      interactive: true,
+      waiting_for_user: true,
+      waiting_since: 200,
+      last_message: 'Ready to commit changes?'
+    }
+  ];
+  testExports.syncWaitingAlerts({ notify: false });
+
+  // Press 'r' shortcut to open Quick-Reply modal for oldest waiting item
+  documentMock.dispatchEvent({
+    type: 'keydown',
+    key: 'r',
+    target: documentMock.body,
+    preventDefault() {}
+  });
+  assert.strictEqual(testExports.isReplyModalOpen(), true, 'r shortcut opens Quick-Reply modal');
+  assert.strictEqual(testExports.getActiveReplyItemId(), 'q-item-1', 'opens oldest waiting item first');
+  const queueEl22 = documentMock.getElementById('reply-modal-queue');
+  assert.strictEqual(queueEl22.hidden, false, 'queue bar visible when 2 prompts wait');
+  assert.strictEqual(queueEl22.children.length, 2, 'queue lists both waiting prompts');
+
+  // Click scaffold button -> fills 1. \n2.
+  const helpersEl22 = documentMock.getElementById('reply-modal-helpers');
+  const scaffoldBtn22 = helpersEl22.children.find(c => c.textContent.includes('Scaffold 2 answers'));
+  assert.ok(scaffoldBtn22, 'scaffold button offered for numbered questions');
+  scaffoldBtn22.click();
+  const replyInput22 = documentMock.getElementById('reply-modal-input');
+  assert.strictEqual(replyInput22.value, '1. \n2. ', 'scaffold populates reply textarea');
+
+  // Send reply to q-item-1 -> should send POST /message and auto-advance to q-item-2
+  replyInput22.value = '1. Yes\n2. Quick table';
+  let sentReplies22 = [];
+  const origFetch22 = fetchStub;
+  fetchStub = function (url, opts) {
+    if (url.includes('/message')) {
+      sentReplies22.push({ url, body: JSON.parse(opts.body) });
+      return Promise.resolve({ ok: true, status: 200, headers: { get: () => null }, json: () => Promise.resolve({ status: 'sent' }) });
+    }
+    return Promise.resolve({ ok: true, status: 200, headers: { get: () => null }, json: () => Promise.resolve({ running: ['q-item-1', 'q-item-2'], waiting: ['q-item-2'], runs: testExports.state.activeRunsInfo }) });
+  };
+  await testExports.submitReplyModal();
+  assert.strictEqual(sentReplies22.length, 1, 'POST /message sent for first item');
+  assert.ok(sentReplies22[0].url.includes('q-item-1/message'), 'sent to q-item-1');
+  assert.strictEqual(sentReplies22[0].body.message, '1. Yes\n2. Quick table');
+  assert.strictEqual(testExports.isReplyModalOpen(), true, 'modal stays open for next waiting prompt');
+  assert.strictEqual(testExports.getActiveReplyItemId(), 'q-item-2', 'auto-advanced to second waiting prompt');
+  assert.strictEqual(documentMock.getElementById('btn-reply-finish').textContent, 'Finish & Complete', 'finish button reflects implement mode');
+
+  // Reply to second item -> modal closes cleanly
+  replyInput22.value = 'Yes, go ahead';
+  await testExports.submitReplyModal();
+  assert.strictEqual(sentReplies22.length, 2, 'POST /message sent for second item');
+  assert.strictEqual(testExports.isReplyModalOpen(), false, 'modal closes when waiting queue is empty');
+
+  fetchStub = origFetch22;
+  testExports.state.activeRuns = new Set();
+  testExports.state.activeRunsInfo = [];
+  testExports.syncWaitingAlerts({ notify: false });
+  console.log('PASS: Quick-Reply inbox modal and numbered-question helpers verified');
+
+  console.log('\n--- 23. Testing Waiting Prompt Visibility Across Board, Agents Table, and Detail View ---');
+  testExports.state.items = [
+    { id: 'run-alpha', title: 'Alpha Running', status: 'in_progress', type: 'task', revision: 1 },
+    { id: 'run-beta', title: 'Beta Waiting', status: 'in_progress', type: 'task', revision: 1 }
+  ];
+  testExports.state.activeRuns = new Set(['run-alpha', 'run-beta']);
+  testExports.state.activeRunsInfo = [
+    { item_id: 'run-alpha', mode: 'implement', interactive: false, waiting_for_user: false, last_activity: 'bash: cargo test', started_at: 100 },
+    { item_id: 'run-beta', mode: 'implement', interactive: true, waiting_for_user: true, waiting_since: 150, last_message: 'Should we keep backwards compat?', started_at: 120 }
+  ];
+  testExports.syncWaitingAlerts({ notify: false });
+
+  // Board card highlights waiting state and shows Reply button
+  const waitingCard23 = testExports.buildBoardCard(testExports.state.items[1]);
+  assert.ok(waitingCard23.className.includes('card-waiting-reply'), 'waiting board card has highlight class');
+  assert.ok(findDescendant(waitingCard23, '.card-waiting-indicator'), 'waiting board card shows Needs reply indicator');
+  const cardReplyBtn23 = findDescendant(waitingCard23, '.btn-reply-card');
+  assert.ok(cardReplyBtn23, 'waiting board card renders Reply button');
+
+  // renderKey changes when waiting state changes
+  const rkWaiting = testExports.computeRenderKey(testExports.state.items[1]);
+  testExports.state.activeRunsInfo[1].waiting_for_user = false;
+  testExports.syncWaitingAlerts({ notify: false });
+  const rkRunning = testExports.computeRenderKey(testExports.state.items[1]);
+  assert.notStrictEqual(rkWaiting, rkRunning, 'computeRenderKey invalidates when waiting state toggles');
+
+  // Restore waiting and verify Agents table sorts waiting row first + shows Reply & Open Chat
+  testExports.state.activeRunsInfo[1].waiting_for_user = true;
+  testExports.syncWaitingAlerts({ notify: false });
+  testExports.renderAgentsTable();
+  const tbody23 = documentMock.getElementById('agents-table-body');
+  assert.strictEqual(tbody23.children.length, 2, 'agents table renders both runs');
+  assert.strictEqual(tbody23.children[0].dataset.itemId, 'run-beta', 'waiting run sorted first in agents table');
+  assert.ok(tbody23.children[0].className.includes('agent-row-waiting'), 'waiting row has highlight class');
+  assert.ok(tbody23.children[0].textContent.includes('Implement · Interactive'), 'interactive implement run displays interactive mode label');
+  assert.ok(findDescendant(tbody23.children[0], '.btn-reply-run'), 'waiting row has Reply button');
+  assert.ok(findDescendant(tbody23.children[0], '.btn-open-chat'), 'interactive implement run shows Open Chat button');
+  assert.ok(tbody23.children[1].textContent.includes('bash: cargo test'), 'running row displays server last_activity');
+
+  // Detail view shows Needs reply badge and Reply to Agent action
+  testExports.state.selected = 'run-beta';
+  testExports.renderDetail();
+  assert.strictEqual(documentMock.getElementById('reader-trajectory-badge').textContent, 'Needs reply', 'trajectory tab badge says Needs reply');
+  assert.ok(documentMock.getElementById('worker-card').textContent.includes('Should we keep backwards compat?'), 'worker card previews question');
+  assert.ok(documentMock.getElementById('proposal-actions').textContent.includes('Reply to Agent'), 'detail actions show Reply to Agent');
+
+  testExports.state.activeRuns = new Set();
+  testExports.state.activeRunsInfo = [];
+  testExports.syncWaitingAlerts({ notify: false });
+  console.log('PASS: Waiting prompt visibility across board, agents table, and detail view verified');
+
+  console.log('\n--- 24. Testing Live Quick-Reply Queue Sync and Trajectory Reply Helpers ---');
+  testExports.state.items = [
+    { id: 'sync-q-1', title: 'Prompt One', status: 'in_progress', type: 'idea', revision: 1 },
+    { id: 'sync-q-2', title: 'Prompt Two', status: 'in_progress', type: 'task', revision: 1 }
+  ];
+  testExports.state.activeRuns = new Set(['sync-q-1']);
+  testExports.state.activeRunsInfo = [
+    { item_id: 'sync-q-1', mode: 'idea', interactive: true, waiting_for_user: true, waiting_since: 100, last_message: '1. Option A?\n2. Option B?' }
+  ];
+  testExports.syncWaitingAlerts({ notify: false });
+  testExports.openReplyModal('sync-q-1');
+  const replyInput24 = documentMock.getElementById('reply-modal-input');
+  replyInput24.value = 'Draft for prompt one';
+
+  // Second prompt starts waiting while modal is open -> queue updates without clobbering draft
+  testExports.handleGlobalWaitingEvent({
+    type: 'run_waiting',
+    id: 'sync-q-2',
+    title: 'Prompt Two',
+    mode: 'implement',
+    waiting_since: 200,
+    message: 'Confirm migration?'
+  });
+  assert.strictEqual(documentMock.getElementById('reply-modal-queue').hidden, false, 'queue bar appears live when second prompt waits');
+  assert.strictEqual(documentMock.getElementById('reply-modal-queue').children.length, 2, 'queue lists both items');
+  assert.strictEqual(replyInput24.value, 'Draft for prompt one', 'live queue sync preserves unsent draft');
+
+  // Alt+ArrowRight steps to second prompt in queue
+  documentMock.dispatchEvent({
+    type: 'keydown',
+    key: 'ArrowRight',
+    altKey: true,
+    target: replyInput24,
+    preventDefault() {}
+  });
+  assert.strictEqual(testExports.getActiveReplyItemId(), 'sync-q-2', 'Alt+ArrowRight advances to second waiting prompt');
+  testExports.closeReplyModal();
+
+  // Trajectory drawer shows numbered-question scaffold helper when waiting
+  openAgentDrawer('sync-q-1');
+  handleAgentStreamEvent({ type: 'waiting_for_user', message: '1. Option A?\n2. Option B?' });
+  const chatHelpers24 = documentMock.getElementById('agent-chat-helpers');
+  assert.strictEqual(chatHelpers24.hidden, false, 'trajectory chat helpers shown when waiting');
+  assert.ok(chatHelpers24.textContent.includes('Scaffold 2 answers'), 'trajectory chat helpers offer numbered scaffold');
+  handleAgentStreamEvent({ type: 'user_message', update: { content: '1. A\n2. B' } });
+  assert.strictEqual(chatHelpers24.hidden, true, 'trajectory chat helpers hide once user replies');
+  closeAgentDrawer();
+
+  testExports.state.activeRuns = new Set();
+  testExports.state.activeRunsInfo = [];
+  testExports.syncWaitingAlerts({ notify: false });
+  console.log('PASS: Live quick-reply queue sync and trajectory reply helpers verified');
+
   console.log('\n========================================');
   console.log('ALL VIEWER TRAJECTORY TESTS PASSED (0)');
   console.log('========================================');

@@ -104,9 +104,14 @@ impl std::error::Error for AcpManagerError {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunMode {
-    Implement { use_worktree: bool },
+    Implement {
+        use_worktree: bool,
+        interactive: bool,
+    },
     CommitPr,
-    Idea { use_worktree: bool },
+    Idea {
+        use_worktree: bool,
+    },
 }
 
 impl From<std::io::Error> for AcpManagerError {
@@ -133,6 +138,15 @@ impl From<AcpError> for AcpManagerError {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct RunLiveState {
+    pub waiting_for_user: bool,
+    pub waiting_since: Option<i64>,
+    pub current_turn_message: String,
+    pub last_message: Option<String>,
+    pub last_activity: Option<String>,
+}
+
 #[derive(Clone)]
 pub struct ActiveRun {
     pub item_id: String,
@@ -146,11 +160,20 @@ pub struct ActiveRun {
     pub prompt_sender: Option<Sender<String>>,
     pub mode: RunMode,
     pub runner: RunnerSettings,
+    pub live_state: Arc<Mutex<RunLiveState>>,
 }
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct ActiveRunInfo {
     pub item_id: String,
     pub mode: String,
+    pub interactive: bool,
+    pub waiting_for_user: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub waiting_since: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_activity: Option<String>,
     pub is_primary_worktree: bool,
     pub worktree_path: Option<String>,
     pub started_at: i64,
@@ -385,30 +408,19 @@ impl AcpManager {
     }
     pub fn active_runs_info(&self) -> Vec<ActiveRunInfo> {
         if let Ok(runs) = self.active_runs.lock() {
-            let mut list: Vec<ActiveRunInfo> = runs
-                .values()
-                .map(|run| {
-                    let mode_str = match run.mode {
-                        RunMode::Implement { .. } => "implement",
-                        RunMode::CommitPr => "commit_pr",
-                        RunMode::Idea { .. } => "idea",
-                    };
-                    ActiveRunInfo {
-                        item_id: run.item_id.clone(),
-                        mode: mode_str.to_string(),
-                        is_primary_worktree: run.is_primary_worktree,
-                        worktree_path: run.worktree_path.as_ref().map(|p| p.display().to_string()),
-                        started_at: run.started_at,
-                        actor: run.runner.actor.clone(),
-                        model: run.runner.model.clone(),
-                    }
-                })
-                .collect();
+            let mut list: Vec<ActiveRunInfo> =
+                runs.values().map(active_run_info_from_run).collect();
             list.sort_by(|a, b| a.item_id.cmp(&b.item_id));
             list
         } else {
             Vec::new()
         }
+    }
+
+    pub fn get_active_run_info(&self, item_id: &str) -> Option<ActiveRunInfo> {
+        let runs = self.active_runs.lock().ok()?;
+        let key = resolve_run_key(&runs, item_id)?;
+        runs.get(&key).map(active_run_info_from_run)
     }
 
     fn resolve_transcript_path(&self, item_id: &str) -> Option<PathBuf> {
@@ -461,7 +473,7 @@ impl AcpManager {
         item_id: &str,
         writer: &mut W,
     ) -> std::io::Result<(usize, bool, Option<Receiver<serde_json::Value>>)> {
-        // 1. Active run: snapshot buffer and subscribe atomically before releasing locks.
+        // 1. Active run: snapshot buffer, live run state, and subscribe atomically before releasing locks.
         let active_snapshot = if let Ok(runs) = self.active_runs.lock() {
             if let Some(key) = resolve_run_key(&runs, item_id) {
                 if let Some(run) = runs.get(&key) {
@@ -470,11 +482,12 @@ impl AcpManager {
                         .lock()
                         .map(|buf| buf.clone())
                         .unwrap_or_default();
+                    let info = active_run_info_from_run(run);
                     let (tx, rx) = mpsc::channel();
                     if let Ok(mut subs) = run.subscribers.lock() {
                         subs.push(tx);
                     }
-                    Some((buffered, rx))
+                    Some((buffered, info, rx))
                 } else {
                     None
                 }
@@ -485,8 +498,23 @@ impl AcpManager {
             None
         };
 
-        if let Some((buffered, rx)) = active_snapshot {
-            let (count, has_finished) = write_value_events_as_sse(&buffered, writer)?;
+        if let Some((buffered, info, rx)) = active_snapshot {
+            let (mut count, has_finished) = write_value_events_as_sse(&buffered, writer)?;
+            if !has_finished {
+                let state_frame = serde_json::json!({
+                    "type": "run_state",
+                    "mode": info.mode,
+                    "interactive": info.interactive,
+                    "waiting_for_user": info.waiting_for_user,
+                    "waiting_since": info.waiting_since,
+                    "last_message": info.last_message,
+                });
+                let payload = serde_json::to_string(&state_frame).unwrap_or_default();
+                writer.write_all(b"data: ")?;
+                writer.write_all(payload.as_bytes())?;
+                writer.write_all(b"\n\n")?;
+                count += 1;
+            }
             return Ok((count, has_finished, Some(rx)));
         }
 
@@ -604,7 +632,22 @@ impl AcpManager {
     }
 
     pub fn start_run(&self, item_id: &str, use_worktree: bool) -> Result<(), AcpManagerError> {
-        self.start_run_mode(item_id, RunMode::Implement { use_worktree })
+        self.start_run_interactive(item_id, use_worktree, false)
+    }
+
+    pub fn start_run_interactive(
+        &self,
+        item_id: &str,
+        use_worktree: bool,
+        interactive: bool,
+    ) -> Result<(), AcpManagerError> {
+        self.start_run_mode(
+            item_id,
+            RunMode::Implement {
+                use_worktree,
+                interactive,
+            },
+        )
     }
 
     pub fn start_commit_pr_run(&self, item_id: &str) -> Result<(), AcpManagerError> {
@@ -616,6 +659,12 @@ impl AcpManager {
     }
 
     pub fn send_message(&self, item_id: &str, message: &str) -> Result<(), AcpManagerError> {
+        let trimmed = message.trim();
+        if trimmed.is_empty() {
+            return Err(AcpManagerError::Workflow(
+                "Message cannot be empty".to_string(),
+            ));
+        }
         let runs = self
             .active_runs
             .lock()
@@ -623,7 +672,7 @@ impl AcpManager {
         if let Some(key) = resolve_run_key(&runs, item_id) {
             if let Some(run) = runs.get(&key) {
                 if let Some(sender) = &run.prompt_sender {
-                    sender.send(message.to_string()).map_err(|_| {
+                    sender.send(trimmed.to_string()).map_err(|_| {
                         AcpManagerError::Client("Run prompt receiver closed".to_string())
                     })?;
                     return Ok(());
@@ -657,7 +706,9 @@ impl AcpManager {
         let runner = self.runner_settings();
 
         let will_use_primary = match mode {
-            RunMode::Implement { use_worktree } | RunMode::Idea { use_worktree } => !use_worktree,
+            RunMode::Implement { use_worktree, .. } | RunMode::Idea { use_worktree } => {
+                !use_worktree
+            }
             RunMode::CommitPr => {
                 !WorktreeManager::worktree_path(&self.repo_path, &canonical_id).exists()
                     && !WorktreeManager::is_git_repo(&self.repo_path)
@@ -686,7 +737,7 @@ impl AcpManager {
         let expected_wt = WorktreeManager::worktree_path(&self.repo_path, &canonical_id);
         let wt_existed_before = expected_wt.exists();
         let (work_dir, worktree_path, is_primary) = match mode {
-            RunMode::Implement { use_worktree } | RunMode::Idea { use_worktree } => {
+            RunMode::Implement { use_worktree, .. } | RunMode::Idea { use_worktree } => {
                 if use_worktree {
                     let wt = WorktreeManager::provision_worktree(&self.repo_path, &canonical_id)
                         .map_err(|e| AcpManagerError::Worktree(e.to_string()))?;
@@ -797,14 +848,20 @@ impl AcpManager {
         }
 
         let prompt_text = match mode {
-            RunMode::Implement { .. } => build_session_prompt(
-                title,
-                &canonical_id,
-                &kind.to_string(),
-                priority,
-                acceptance_criteria.as_deref(),
-                body,
-            ),
+            RunMode::Implement { interactive, .. } => {
+                let mut prompt = build_session_prompt(
+                    title,
+                    &canonical_id,
+                    &kind.to_string(),
+                    priority,
+                    acceptance_criteria.as_deref(),
+                    body,
+                );
+                if interactive {
+                    prompt.push_str("\n\n## Interactive Session\nThis run is interactive. If requirements, tradeoffs, or scope are ambiguous, ask focused clarifying questions and pause for the user's reply before changing code. After implementing and verifying, summarize your changes under '## Summary' and '## Verification' and pause so the user can review or ask for follow-ups before completing the run.");
+                }
+                prompt
+            }
             RunMode::CommitPr => build_commit_pr_prompt(
                 title,
                 &canonical_id,
@@ -861,13 +918,23 @@ impl AcpManager {
         let event_buffer = Arc::new(Mutex::new(Vec::new()));
         let subscribers = Arc::new(Mutex::new(Vec::new()));
         let cancel_requested = Arc::new(AtomicBool::new(false));
+        let live_state = Arc::new(Mutex::new(RunLiveState::default()));
         let started_at = chrono::Utc::now().timestamp();
 
         // 8. Insert ActiveRun into active_runs
         let (prompt_tx, prompt_rx) = mpsc::channel::<String>();
-        let prompt_sender = match mode {
-            RunMode::Idea { .. } => Some(prompt_tx),
-            _ => None,
+        let is_interactive = matches!(
+            mode,
+            RunMode::Idea { .. }
+                | RunMode::Implement {
+                    interactive: true,
+                    ..
+                }
+        );
+        let prompt_sender = if is_interactive {
+            Some(prompt_tx)
+        } else {
+            None
         };
 
         let active_run = ActiveRun {
@@ -882,6 +949,7 @@ impl AcpManager {
             prompt_sender,
             mode,
             runner: runner.clone(),
+            live_state: Arc::clone(&live_state),
         };
 
         {
@@ -889,10 +957,12 @@ impl AcpManager {
                 runs.insert(canonical_id.clone(), active_run);
             }
         }
+        let mode_str = run_mode_label(mode);
         if let Ok(mut subs) = self.global_subscribers.lock() {
             let start_evt = serde_json::json!({
                 "type": "run_started",
-                "id": canonical_id
+                "id": canonical_id,
+                "mode": mode_str,
             });
             subs.retain(|tx| tx.send(start_evt.clone()).is_ok());
         }
@@ -901,9 +971,11 @@ impl AcpManager {
         let worker_event_buffer = Arc::clone(&event_buffer);
         let worker_subscribers = Arc::clone(&subscribers);
         let worker_cancel = Arc::clone(&cancel_requested);
+        let worker_live_state = Arc::clone(&live_state);
         let worker_vault_path = self.vault_path.clone();
         let worker_repo_path = self.repo_path.clone();
         let worker_item_id = canonical_id.clone();
+        let worker_title = title.to_string();
         let worker_filename = filename.clone();
         let worker_active_runs = Arc::clone(&self.active_runs);
         let worker_completed_runs = Arc::clone(&self.completed_runs);
@@ -917,12 +989,14 @@ impl AcpManager {
             let client_event_rx = worker_client.subscribe();
             let fwd_buffer = Arc::clone(&worker_event_buffer);
             let fwd_subs = Arc::clone(&worker_subscribers);
+            let fwd_live = Arc::clone(&worker_live_state);
             let disk_events_path = worker_vault_path
                 .join("runs")
                 .join(format!("{worker_item_id}.events.jsonl"));
             let fwd_disk_path = disk_events_path.clone();
             thread::spawn(move || {
                 while let Ok(event) = client_event_rx.recv() {
+                    record_live_event(&fwd_live, &event);
                     push_event(&fwd_buffer, &fwd_subs, Some(&fwd_disk_path), event);
                 }
             });
@@ -978,20 +1052,21 @@ impl AcpManager {
                     return Err("Run cancelled during prompt".to_string());
                 }
 
-                if matches!(mode, RunMode::Idea { .. }) {
+                if is_interactive {
                     let mut last_stop_reason = prompt_res
                         .stop_reason
                         .unwrap_or_else(|| "end_turn".to_string());
 
-                    let waiting_event = serde_json::json!({
-                        "type": "waiting_for_user",
-                        "stopReason": last_stop_reason,
-                    });
-                    push_event(
+                    enter_waiting_state(
+                        &worker_live_state,
                         &worker_event_buffer,
                         &worker_subscribers,
+                        &worker_global_subscribers,
                         Some(&disk_events_path),
-                        waiting_event,
+                        &worker_item_id,
+                        &worker_title,
+                        mode_str,
+                        &last_stop_reason,
                     );
 
                     while let Ok(user_msg) = worker_prompt_rx.recv() {
@@ -1000,11 +1075,26 @@ impl AcpManager {
                         }
                         let trimmed = user_msg.trim();
                         if trimmed == "__FINISH__" {
+                            clear_waiting_state(
+                                &worker_live_state,
+                                &worker_global_subscribers,
+                                &worker_item_id,
+                                mode_str,
+                                "Finishing",
+                            );
                             break;
                         }
                         if trimmed.is_empty() {
                             continue;
                         }
+
+                        clear_waiting_state(
+                            &worker_live_state,
+                            &worker_global_subscribers,
+                            &worker_item_id,
+                            mode_str,
+                            "Running",
+                        );
 
                         let user_event = serde_json::json!({
                             "type": "user_message",
@@ -1033,15 +1123,16 @@ impl AcpManager {
                             .stop_reason
                             .unwrap_or_else(|| "end_turn".to_string());
 
-                        let waiting_event = serde_json::json!({
-                            "type": "waiting_for_user",
-                            "stopReason": last_stop_reason,
-                        });
-                        push_event(
+                        enter_waiting_state(
+                            &worker_live_state,
                             &worker_event_buffer,
                             &worker_subscribers,
+                            &worker_global_subscribers,
                             Some(&disk_events_path),
-                            waiting_event,
+                            &worker_item_id,
+                            &worker_title,
+                            mode_str,
+                            &last_stop_reason,
                         );
                     }
 
@@ -1412,6 +1503,199 @@ pub fn build_idea_prompt(
     prompt_parts.push("\n## Instructions\nYou are in IDEA mode. Your objective is to explore the codebase and collaborate with the user to turn this idea into a clean, comprehensive specification ticket.\n\n1. Explore the codebase:\n   - Use tools (read files, search/grep, inspect directory structure) to understand existing patterns, architecture, dependencies, and relevant files.\n   - Ground your advice in real code evidence.\n\n2. Ask questions & clarify:\n   - Ask the user focused questions about requirements, tradeoffs, edge cases, scope, and interfaces.\n   - Work through ambiguity together until an implementation plan covering all bases from A to Z is established.\n\n3. Create the ticket in the backlog:\n   - When you and the user agree on the plan, use a tool call (such as `pin add` via bash tool) to create the ticket in the backlog (`--type task`, `--kind <kind>`, `--status created`).\n   - Ensure the ticket details contain:\n     * Title\n     * Problem & Context\n     * Implementation Proposal (covering all bases from A to Z)\n     * Acceptance Criteria checklist (`- [ ] ...`)\n   - Announce the created ticket ID and details to the user.".to_string());
 
     prompt_parts.join("\n")
+}
+
+fn run_mode_label(mode: RunMode) -> &'static str {
+    match mode {
+        RunMode::Implement { .. } => "implement",
+        RunMode::CommitPr => "commit_pr",
+        RunMode::Idea { .. } => "idea",
+    }
+}
+
+fn active_run_info_from_run(run: &ActiveRun) -> ActiveRunInfo {
+    let live = run.live_state.lock().map(|s| s.clone()).unwrap_or_default();
+    ActiveRunInfo {
+        item_id: run.item_id.clone(),
+        mode: run_mode_label(run.mode).to_string(),
+        interactive: run.prompt_sender.is_some(),
+        waiting_for_user: live.waiting_for_user,
+        waiting_since: live.waiting_since,
+        last_message: live.last_message,
+        last_activity: live.last_activity,
+        is_primary_worktree: run.is_primary_worktree,
+        worktree_path: run.worktree_path.as_ref().map(|p| p.display().to_string()),
+        started_at: run.started_at,
+        actor: run.runner.actor.clone(),
+        model: run.runner.model.clone(),
+    }
+}
+
+fn truncate_utf8(s: &str, max_bytes: usize) -> String {
+    if s.len() <= max_bytes {
+        return s.to_string();
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    s[..end].to_string()
+}
+
+fn record_live_event(live_state: &Arc<Mutex<RunLiveState>>, event: &serde_json::Value) {
+    let Some(params) = event.get("params") else {
+        return;
+    };
+    let update = params.get("update").unwrap_or(params);
+    if is_assistant_message(update) {
+        let mut chunks = Vec::new();
+        extract_text_from_value(update, &mut chunks);
+        if !chunks.is_empty() {
+            if let Ok(mut live) = live_state.lock() {
+                const MAX_TURN_BYTES: usize = 16 * 1024;
+                for chunk in chunks {
+                    if live.current_turn_message.len() >= MAX_TURN_BYTES {
+                        break;
+                    }
+                    let remaining = MAX_TURN_BYTES - live.current_turn_message.len();
+                    if chunk.len() <= remaining {
+                        live.current_turn_message.push_str(&chunk);
+                    } else {
+                        live.current_turn_message
+                            .push_str(&truncate_utf8(&chunk, remaining));
+                    }
+                }
+            }
+        }
+        return;
+    }
+
+    let kind = update
+        .get("sessionUpdate")
+        .or_else(|| update.get("type"))
+        .and_then(|v| v.as_str());
+    if matches!(kind, Some("tool_call") | Some("tool_call_update")) {
+        let label = update
+            .get("title")
+            .or_else(|| update.get("name"))
+            .or_else(|| update.get("tool"))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        if let Some(tool_label) = label {
+            if let Ok(mut live) = live_state.lock() {
+                live.last_activity = Some(truncate_utf8(tool_label, 120));
+            }
+        }
+    }
+}
+
+fn extract_last_turn_message(events: &[serde_json::Value]) -> Option<String> {
+    let start_idx = events
+        .iter()
+        .rposition(|e| e.get("type").and_then(|v| v.as_str()) == Some("user_message"))
+        .map(|i| i + 1)
+        .unwrap_or(0);
+    let mut chunks = Vec::new();
+    for event in &events[start_idx..] {
+        let Some(params) = event.get("params") else {
+            continue;
+        };
+        let update = params.get("update").unwrap_or(params);
+        if is_assistant_message(update) {
+            extract_text_from_value(update, &mut chunks);
+        }
+    }
+    let combined = chunks.concat();
+    let trimmed = combined.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(truncate_utf8(trimmed, 4000))
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn enter_waiting_state(
+    live_state: &Arc<Mutex<RunLiveState>>,
+    event_buffer: &Arc<Mutex<Vec<serde_json::Value>>>,
+    subscribers: &Arc<Mutex<Vec<Sender<serde_json::Value>>>>,
+    global_subscribers: &Arc<Mutex<Vec<Sender<serde_json::Value>>>>,
+    disk_path: Option<&Path>,
+    item_id: &str,
+    item_title: &str,
+    mode_str: &str,
+    stop_reason: &str,
+) {
+    // Allow trailing stdout chunks already queued in the forwarding thread to land.
+    thread::sleep(Duration::from_millis(25));
+    let waiting_since = chrono::Utc::now().timestamp();
+    let buffer_fallback = event_buffer
+        .lock()
+        .ok()
+        .and_then(|buf| extract_last_turn_message(&buf));
+    let last_message = if let Ok(mut live) = live_state.lock() {
+        let from_turn = live.current_turn_message.trim().to_string();
+        let captured = if !from_turn.is_empty() {
+            Some(truncate_utf8(&from_turn, 4000))
+        } else {
+            buffer_fallback
+        };
+        live.waiting_for_user = true;
+        live.waiting_since = Some(waiting_since);
+        live.last_message = captured;
+        live.last_activity = Some("Waiting for reply".to_string());
+        live.last_message.clone()
+    } else {
+        buffer_fallback
+    };
+
+    let mut waiting_event = serde_json::json!({
+        "type": "waiting_for_user",
+        "stopReason": stop_reason,
+        "waitingSince": waiting_since,
+    });
+    if let Some(msg) = &last_message {
+        waiting_event["message"] = serde_json::Value::String(msg.clone());
+    }
+    push_event(event_buffer, subscribers, disk_path, waiting_event);
+
+    if let Ok(mut subs) = global_subscribers.lock() {
+        let mut evt = serde_json::json!({
+            "type": "run_waiting",
+            "id": item_id,
+            "title": item_title,
+            "mode": mode_str,
+            "waiting_since": waiting_since,
+        });
+        if let Some(msg) = &last_message {
+            evt["message"] = serde_json::Value::String(msg.clone());
+        }
+        subs.retain(|tx| tx.send(evt.clone()).is_ok());
+    }
+}
+
+fn clear_waiting_state(
+    live_state: &Arc<Mutex<RunLiveState>>,
+    global_subscribers: &Arc<Mutex<Vec<Sender<serde_json::Value>>>>,
+    item_id: &str,
+    mode_str: &str,
+    activity: &str,
+) {
+    if let Ok(mut live) = live_state.lock() {
+        live.waiting_for_user = false;
+        live.waiting_since = None;
+        live.current_turn_message.clear();
+        live.last_activity = Some(activity.to_string());
+    }
+    if let Ok(mut subs) = global_subscribers.lock() {
+        let evt = serde_json::json!({
+            "type": "run_resumed",
+            "id": item_id,
+            "mode": mode_str,
+        });
+        subs.retain(|tx| tx.send(evt.clone()).is_ok());
+    }
 }
 
 fn resolve_run_key(runs: &HashMap<String, ActiveRun>, id: &str) -> Option<String> {
@@ -2002,6 +2286,8 @@ mod tests {
         );
         let res = mgr.send_message("nonexistent", "hello");
         assert!(matches!(res, Err(AcpManagerError::ItemNotFound(_))));
+        let empty_res = mgr.send_message("nonexistent", "   \n\t  ");
+        assert!(matches!(empty_res, Err(AcpManagerError::Workflow(_))));
     }
 
     #[test]
@@ -2035,6 +2321,14 @@ mod tests {
             actor: "agent:test".to_string(),
             model: Some("mock/fast".to_string()),
         };
+        let (tx, _rx) = mpsc::channel();
+        let live1 = Arc::new(Mutex::new(RunLiveState {
+            waiting_for_user: true,
+            waiting_since: Some(250),
+            current_turn_message: String::new(),
+            last_message: Some("Which option do you prefer?".to_string()),
+            last_activity: Some("Waiting for reply".to_string()),
+        }));
         let run1 = ActiveRun {
             item_id: "item-b".to_string(),
             client: Arc::clone(&client),
@@ -2044,9 +2338,10 @@ mod tests {
             subscribers: Arc::new(Mutex::new(Vec::new())),
             started_at: 200,
             cancel_requested: Arc::new(AtomicBool::new(false)),
-            prompt_sender: None,
+            prompt_sender: Some(tx),
             mode: RunMode::Idea { use_worktree: true },
             runner: runner.clone(),
+            live_state: live1,
         };
         let run2 = ActiveRun {
             item_id: "item-a".to_string(),
@@ -2060,6 +2355,7 @@ mod tests {
             prompt_sender: None,
             mode: RunMode::CommitPr,
             runner,
+            live_state: Arc::new(Mutex::new(RunLiveState::default())),
         };
 
         {
@@ -2073,6 +2369,10 @@ mod tests {
         // Verified sorted by item_id
         assert_eq!(info[0].item_id, "item-a");
         assert_eq!(info[0].mode, "commit_pr");
+        assert!(!info[0].interactive);
+        assert!(!info[0].waiting_for_user);
+        assert_eq!(info[0].waiting_since, None);
+        assert_eq!(info[0].last_message, None);
         assert!(info[0].is_primary_worktree);
         assert_eq!(info[0].worktree_path, None);
         assert_eq!(info[0].started_at, 100);
@@ -2081,11 +2381,224 @@ mod tests {
 
         assert_eq!(info[1].item_id, "item-b");
         assert_eq!(info[1].mode, "idea");
+        assert!(info[1].interactive);
+        assert!(info[1].waiting_for_user);
+        assert_eq!(info[1].waiting_since, Some(250));
+        assert_eq!(
+            info[1].last_message.as_deref(),
+            Some("Which option do you prefer?")
+        );
+        assert_eq!(info[1].last_activity.as_deref(), Some("Waiting for reply"));
         assert!(!info[1].is_primary_worktree);
         assert_eq!(info[1].worktree_path.as_deref(), Some("/tmp/wt-b"));
         assert_eq!(info[1].started_at, 200);
         assert_eq!(info[1].actor, "agent:test");
         assert_eq!(info[1].model.as_deref(), Some("mock/fast"));
+    }
+
+    #[test]
+    fn test_interactive_run_broadcasts_waiting_and_resumed() {
+        let vault_dir = tempfile::tempdir().unwrap();
+        let repo_dir = tempfile::tempdir().unwrap();
+        let item_id = "0123456789ab";
+        let item_body = "---\nschema: 2\nid: \"0123456789ab\"\ntitle: \"Interactive Spec\"\ntype: \"idea\"\nstatus: \"created\"\n---\n# Interactive Spec\n";
+        fs::write(vault_dir.path().join(format!("{item_id}.md")), item_body).unwrap();
+
+        let script_path = repo_dir.path().join("mock_interactive_acp.sh");
+        let script = r###"#!/bin/sh
+turn=0
+while IFS= read -r line; do
+  req_id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  case "$line" in
+    *initialize*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentCapabilities":{}}}\n' "$req_id"
+      ;;
+    *session/new*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"sess-int-1"}}\n' "$req_id"
+      ;;
+    *session/prompt*)
+      turn=$((turn + 1))
+      if [ "$turn" -eq 1 ]; then
+        printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess-int-1","update":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"internal reasoning"}}}}\n'
+        printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess-int-1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"1. Should we use SSE?\\n2. Should we add sound?"}}}}\n'
+      else
+        printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess-int-1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"## Summary\\nAgreed on SSE and sound.\\n\\n## Verification\\nConfirmed with user."}}}}\n'
+      fi
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "$req_id"
+      ;;
+    *session/cancel*)
+      exit 0
+      ;;
+  esac
+done
+"###;
+        fs::write(&script_path, script).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        let mgr = AcpManager::new(
+            vault_dir.path().to_path_buf(),
+            repo_dir.path().to_path_buf(),
+            Some(script_path.to_string_lossy().to_string()),
+        );
+        let (global_tx, global_rx) = mpsc::channel();
+        mgr.add_global_listener(global_tx);
+
+        mgr.start_idea_run(item_id, false).unwrap();
+
+        let mut saw_waiting = None;
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            if let Ok(evt) = global_rx.recv_timeout(Duration::from_millis(200)) {
+                if evt.get("type").and_then(|v| v.as_str()) == Some("run_waiting") {
+                    saw_waiting = Some(evt);
+                    break;
+                }
+            }
+        }
+        let waiting_evt = saw_waiting.expect("expected run_waiting global event");
+        assert_eq!(waiting_evt["id"], item_id);
+        assert_eq!(waiting_evt["title"], "Interactive Spec");
+        assert_eq!(waiting_evt["mode"], "idea");
+        assert!(waiting_evt["message"]
+            .as_str()
+            .unwrap()
+            .contains("1. Should we use SSE?"));
+        assert!(!waiting_evt["message"]
+            .as_str()
+            .unwrap()
+            .contains("internal reasoning"));
+
+        let info = mgr
+            .get_active_run_info(item_id)
+            .expect("active run info present");
+        assert!(info.interactive);
+        assert!(info.waiting_for_user);
+        assert!(info.waiting_since.is_some());
+        assert_eq!(info.last_activity.as_deref(), Some("Waiting for reply"));
+
+        // Late subscriber receives authoritative run_state frame
+        let mut sse_out = Vec::new();
+        let (_count, _finished, _sub) = mgr
+            .stream_events_and_subscribe(item_id, &mut sse_out)
+            .unwrap();
+        let sse_text = String::from_utf8(sse_out).unwrap();
+        assert!(sse_text.contains("\"type\":\"run_state\""));
+        assert!(sse_text.contains("\"waiting_for_user\":true"));
+
+        // Send user reply -> expect run_resumed then second run_waiting
+        mgr.send_message(item_id, "1. Yes\n2. Yes").unwrap();
+
+        let mut saw_resumed = false;
+        let mut saw_second_waiting = false;
+        let deadline2 = std::time::Instant::now() + Duration::from_secs(5);
+        while std::time::Instant::now() < deadline2 && !(saw_resumed && saw_second_waiting) {
+            if let Ok(evt) = global_rx.recv_timeout(Duration::from_millis(200)) {
+                match evt.get("type").and_then(|v| v.as_str()) {
+                    Some("run_resumed") => saw_resumed = true,
+                    Some("run_waiting") => saw_second_waiting = true,
+                    _ => {}
+                }
+            }
+        }
+        assert!(saw_resumed, "expected run_resumed global event");
+        assert!(saw_second_waiting, "expected second run_waiting event");
+
+        mgr.finish_run(item_id).unwrap();
+        let mut saw_finished = false;
+        let deadline3 = std::time::Instant::now() + Duration::from_secs(5);
+        while std::time::Instant::now() < deadline3 {
+            if let Ok(evt) = global_rx.recv_timeout(Duration::from_millis(200)) {
+                if evt.get("type").and_then(|v| v.as_str()) == Some("run_finished") {
+                    saw_finished = true;
+                    break;
+                }
+            }
+        }
+        assert!(saw_finished, "expected run_finished global event");
+    }
+
+    #[test]
+    fn test_interactive_implement_run_pauses_until_finished() {
+        let vault_dir = tempfile::tempdir().unwrap();
+        let repo_dir = tempfile::tempdir().unwrap();
+        let item_id = "0123456789ac";
+        let item_body = "---\nschema: 2\nid: \"0123456789ac\"\ntitle: \"Interactive Task\"\ntype: \"task\"\nstatus: \"planned\"\n---\n# Interactive Task\n";
+        fs::write(vault_dir.path().join(format!("{item_id}.md")), item_body).unwrap();
+
+        let script_path = repo_dir.path().join("mock_impl_interactive.sh");
+        let script = r###"#!/bin/sh
+while IFS= read -r line; do
+  req_id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  case "$line" in
+    *initialize*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentCapabilities":{}}}\n' "$req_id"
+      ;;
+    *session/new*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"sess-impl-1"}}\n' "$req_id"
+      ;;
+    *session/prompt*)
+      printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess-impl-1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Need your confirmation before editing."}}}}\n'
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "$req_id"
+      ;;
+    *session/cancel*)
+      exit 0
+      ;;
+  esac
+done
+"###;
+        fs::write(&script_path, script).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        let mgr = AcpManager::new(
+            vault_dir.path().to_path_buf(),
+            repo_dir.path().to_path_buf(),
+            Some(script_path.to_string_lossy().to_string()),
+        );
+        let (global_tx, global_rx) = mpsc::channel();
+        mgr.add_global_listener(global_tx);
+
+        mgr.start_run_interactive(item_id, false, true).unwrap();
+
+        let mut saw_waiting = false;
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            if let Ok(evt) = global_rx.recv_timeout(Duration::from_millis(200)) {
+                if evt.get("type").and_then(|v| v.as_str()) == Some("run_waiting") {
+                    assert_eq!(evt["mode"], "implement");
+                    saw_waiting = true;
+                    break;
+                }
+            }
+        }
+        assert!(
+            saw_waiting,
+            "interactive implement run should pause with run_waiting"
+        );
+        let info = mgr.get_active_run_info(item_id).unwrap();
+        assert_eq!(info.mode, "implement");
+        assert!(info.interactive);
+        assert!(info.waiting_for_user);
+
+        mgr.finish_run(item_id).unwrap();
+        let mut saw_finished = false;
+        let deadline2 = std::time::Instant::now() + Duration::from_secs(5);
+        while std::time::Instant::now() < deadline2 {
+            if let Ok(evt) = global_rx.recv_timeout(Duration::from_millis(200)) {
+                if evt.get("type").and_then(|v| v.as_str()) == Some("run_finished") {
+                    saw_finished = true;
+                    break;
+                }
+            }
+        }
+        assert!(saw_finished);
     }
 
     #[test]
