@@ -1,7 +1,7 @@
 import { state, find } from './state.js';
 import { els, $ } from './dom.js';
 import { sendCancel, sendRun, sendCommitPr, sendMessage, sendFinish, sendUpdate, sendSync } from './api.js';
-import { text, showToast } from './formatters.js';
+import { text, clear, node, showToast, formatStatusLabel } from './formatters.js';
 import { setRoute, applyRoute, setOnRouteChanged } from './router.js';
 import { insertSnippetIntoTextarea, handleScreenshotPaste } from './media.js';
 import { handleCardDrop, setViewMode, setBoardCallbacks, renderBoard } from './board.js';
@@ -244,8 +244,70 @@ function updateFilterToggleLabel() {
   text(els.filterToggle, active > 0 ? 'Filters (' + active + ')' : 'Filters');
 }
 
+function renderActiveFilterChips() {
+  if (!els.activeFilters) return;
+  clear(els.activeFilters);
+  var chips = [];
+  if (state.filters.text && state.filters.text.trim()) {
+    chips.push({ key: 'text', label: 'Search: "' + state.filters.text.trim() + '"' });
+  }
+  if (state.filters.status) {
+    chips.push({ key: 'status', label: 'Status: ' + formatStatusLabel(state.filters.status) });
+  }
+  if (state.filters.type) {
+    chips.push({ key: 'type', label: 'Type: ' + state.filters.type });
+  }
+  if (state.filters.kind) {
+    chips.push({ key: 'kind', label: 'Kind: ' + state.filters.kind });
+  }
+  if (state.filters.priority) {
+    chips.push({ key: 'priority', label: 'Priority: ' + state.filters.priority });
+  }
+  if (state.filters.project && state.filters.project.trim()) {
+    chips.push({ key: 'project', label: 'Project: ' + state.filters.project.trim() });
+  }
+
+  if (!chips.length) {
+    els.activeFilters.hidden = true;
+    return;
+  }
+
+  els.activeFilters.hidden = false;
+  chips.forEach(function (chip) {
+    var btn = node('button', 'filter-chip');
+    btn.type = 'button';
+    btn.dataset.filterKey = chip.key;
+    btn.setAttribute('aria-label', 'Remove ' + chip.label + ' filter');
+    btn.appendChild(node('span', 'filter-chip-label', chip.label));
+    var x = node('span', 'filter-chip-x', '×');
+    x.setAttribute('aria-hidden', 'true');
+    btn.appendChild(x);
+    btn.addEventListener('click', function () {
+      state.filters[chip.key] = '';
+      if (chip.key === 'text' && els.search) els.search.value = '';
+      if (chip.key === 'status' && els.status) els.status.value = '';
+      if (chip.key === 'type' && els.type) els.type.value = '';
+      if (chip.key === 'kind' && els.kind) els.kind.value = '';
+      if (chip.key === 'priority' && els.priority) els.priority.value = '';
+      if (chip.key === 'project' && els.project) els.project.value = '';
+      applyFilters();
+    });
+    els.activeFilters.appendChild(btn);
+  });
+
+  if (chips.length > 1) {
+    var clearAllBtn = node('button', 'text-button filter-chip-clear', 'Clear all');
+    clearAllBtn.type = 'button';
+    clearAllBtn.addEventListener('click', function () {
+      if (els.clear && els.clear.click) els.clear.click();
+    });
+    els.activeFilters.appendChild(clearAllBtn);
+  }
+}
+
 function applyFilters() {
   updateFilterToggleLabel();
+  renderActiveFilterChips();
   renderList();
   renderBoard();
 }

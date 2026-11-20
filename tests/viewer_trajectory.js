@@ -2719,6 +2719,32 @@ async function runHarness() {
     console.log('PASS: Actionable empty states and consistent copy verified');
   }
 
+  console.log('\n--- 35. Testing Active Filter Summary Chips Bar ---');
+  {
+    const statusSel35 = documentMock.getElementById('status-filter');
+    const prioSel35 = documentMock.getElementById('priority-filter');
+    const chipsBar35 = documentMock.getElementById('active-filters');
+    statusSel35.value = 'in_progress';
+    statusSel35.dispatchEvent({ type: 'change' });
+    prioSel35.value = 'high';
+    prioSel35.dispatchEvent({ type: 'change' });
+    assert.strictEqual(chipsBar35.hidden, false, 'Active filters bar shows when filters are active');
+    assert.ok(chipsBar35.textContent.includes('Status: In progress'), 'Chip displays formatted status label');
+    assert.ok(chipsBar35.textContent.includes('Priority: high'), 'Chip displays priority filter');
+    assert.ok(chipsBar35.textContent.includes('Clear all'), 'Multiple active filters show Clear all button');
+
+    const statusChip35 = chipsBar35.children.find(c => c.dataset && c.dataset.filterKey === 'status');
+    assert.ok(statusChip35, 'Status chip has filterKey dataset');
+    statusChip35.click();
+    assert.strictEqual(testExports.state.filters.status, '', 'Clicking status chip clears status filter');
+    assert.strictEqual(testExports.state.filters.priority, 'high', 'Other filters stay active');
+
+    const prioChip35 = chipsBar35.children.find(c => c.dataset && c.dataset.filterKey === 'priority');
+    prioChip35.click();
+    assert.strictEqual(chipsBar35.hidden, true, 'Active filters bar hides when last filter is removed');
+    console.log('PASS: Active filter summary chips bar verified');
+  }
+
   console.log('\n========================================');
   console.log('ALL VIEWER TRAJECTORY TESTS PASSED (0)');
   console.log('========================================');

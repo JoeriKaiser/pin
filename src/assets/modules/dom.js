@@ -107,6 +107,7 @@ export var els = {
   count: $('count'),
   filterToggle: $('filter-toggle'),
   filters: $('filters'),
+  activeFilters: $('active-filters'),
   status: $('status-filter'),
   type: $('type-filter'),
   kind: $('kind-filter'),
