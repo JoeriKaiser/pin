@@ -2745,6 +2745,17 @@ async function runHarness() {
     console.log('PASS: Active filter summary chips bar verified');
   }
 
+  console.log('\n--- 36. Testing 1/2/3 View Mode Keyboard Shortcuts ---');
+  {
+    documentMock.dispatchEvent({ type: 'keydown', key: '3', target: documentMock.body, preventDefault() {} });
+    assert.strictEqual(testExports.state.viewMode, 'agents', 'Pressing 3 switches to agents view');
+    documentMock.dispatchEvent({ type: 'keydown', key: '2', target: documentMock.body, preventDefault() {} });
+    assert.strictEqual(testExports.state.viewMode, 'detail', 'Pressing 2 switches to detail view');
+    documentMock.dispatchEvent({ type: 'keydown', key: '1', target: documentMock.body, preventDefault() {} });
+    assert.strictEqual(testExports.state.viewMode, 'board', 'Pressing 1 switches to board view');
+    console.log('PASS: 1/2/3 view mode keyboard shortcuts verified');
+  }
+
   console.log('\n========================================');
   console.log('ALL VIEWER TRAJECTORY TESTS PASSED (0)');
   console.log('========================================');

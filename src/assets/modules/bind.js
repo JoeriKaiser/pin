@@ -652,6 +652,9 @@ export function bindGlobalShortcuts() {
       }
     }
     if (input || event.metaKey || event.ctrlKey || event.altKey) return;
+    if (event.key === '1') { event.preventDefault(); setViewMode('board'); return; }
+    if (event.key === '2') { event.preventDefault(); setViewMode('detail'); return; }
+    if (event.key === '3') { event.preventDefault(); setViewMode('agents'); return; }
     if (event.key === 'n' || event.key === 'c') { event.preventDefault(); openSpecModal(); return; }
     if (event.key === 'r') { event.preventDefault(); openReplyModal(); return; }
     if (event.key === '?' || (event.key === '/' && event.shiftKey)) { event.preventDefault(); openShortcutsModal(); return; }

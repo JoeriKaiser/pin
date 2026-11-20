@@ -22,9 +22,9 @@
     <button id="btn-shortcuts" class="control icon-control" type="button" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts"><svg class="ui-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="6.25"/><path d="M6.25 6.25a1.85 1.85 0 0 1 3.4.95c0 1.15-1.65 1.4-1.65 2.3"/><circle cx="8" cy="11.75" r="0.6" fill="currentColor" stroke="none"/></svg></button>
     <button id="btn-theme-toggle" class="control icon-control" type="button" title="Toggle theme (t)" aria-label="Toggle theme"><svg class="ui-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="5.75"/><path d="M8 2.25v11.5A5.75 5.75 0 0 0 8 2.25Z" fill="currentColor" stroke="none"/></svg></button>
     <div class="view-switch" role="group" aria-label="View mode">
-      <button id="view-board-btn" class="control view-btn" type="button" aria-pressed="true">Board</button>
-      <button id="view-detail-btn" class="control view-btn" type="button" aria-pressed="false">Detail</button>
-      <button id="view-agents-btn" class="control view-btn" type="button" aria-pressed="false">Agents <span id="agents-count-badge" class="badge-mini" hidden>0</span></button>
+      <button id="view-board-btn" class="control view-btn" type="button" aria-pressed="true" title="Board view (1)">Board</button>
+      <button id="view-detail-btn" class="control view-btn" type="button" aria-pressed="false" title="Detail view (2)">Detail</button>
+      <button id="view-agents-btn" class="control view-btn" type="button" aria-pressed="false" title="Agents view (3)">Agents <span id="agents-count-badge" class="badge-mini" hidden>0</span></button>
     </div>
     <button id="filter-toggle" class="control" type="button" aria-expanded="false" aria-controls="filters">Filters</button>
     <span id="count" class="count" aria-live="polite">Loading…</span>
@@ -524,6 +524,7 @@
       <div class="shortcuts-section">
         <h3>Navigation</h3>
         <dl class="shortcuts-list">
+          <div class="shortcut-row"><dt><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd></dt><dd>Switch to board, detail, or agents view</dd></div>
           <div class="shortcut-row"><dt><kbd>j</kbd> / <kbd>k</kbd></dt><dd>Select next / previous item</dd></div>
           <div class="shortcut-row"><dt><kbd>↑</kbd> <kbd>↓</kbd></dt><dd>Navigate cards within column</dd></div>
           <div class="shortcut-row"><dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Navigate cards across columns</dd></div>
@@ -537,6 +538,7 @@
           <div class="shortcut-row"><dt><kbd>/</kbd></dt><dd>Focus search box</dd></div>
           <div class="shortcut-row"><dt><kbd>n</kbd> or <kbd>c</kbd></dt><dd>Create new task</dd></div>
           <div class="shortcut-row"><dt><kbd>r</kbd></dt><dd>Reply to waiting agent prompt</dd></div>
+          <div class="shortcut-row"><dt><kbd>Alt</kbd> + <kbd>←</kbd> / <kbd>→</kbd></dt><dd>Step between waiting prompts in reply modal</dd></div>
           <div class="shortcut-row"><dt><kbd>t</kbd></dt><dd>Toggle theme</dd></div>
           <div class="shortcut-row"><dt><kbd>?</kbd></dt><dd>Open keyboard shortcuts</dd></div>
           <div class="shortcut-row"><dt><kbd>Cmd</kbd>/<kbd>Ctrl</kbd> + <kbd>Enter</kbd></dt><dd>Submit active dialog form</dd></div>
