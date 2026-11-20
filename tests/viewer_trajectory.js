@@ -2649,6 +2649,19 @@ async function runHarness() {
     console.log('PASS: Single-pointer board card status move control verified');
   }
 
+  console.log('\n--- 30. Testing Single Primary Action per Detail View ---');
+  {
+    const statuses30 = ['created', 'planned', 'in_progress', 'blocked', 'done', 'closed'];
+    statuses30.forEach(st => {
+      testExports.renderActions({ id: 'act-' + st, title: 'Item ' + st, status: st, type: 'task', revision: 1 });
+      const primaryBtns = documentMock.getElementById('proposal-actions').children.filter(c =>
+        c.classList && c.classList.contains('primary')
+      );
+      assert.ok(primaryBtns.length <= 1, `Status ${st} renders at most 1 primary filled button (got ${primaryBtns.length})`);
+    });
+    console.log('PASS: Single primary action per detail view verified');
+  }
+
   console.log('\n========================================');
   console.log('ALL VIEWER TRAJECTORY TESTS PASSED (0)');
   console.log('========================================');

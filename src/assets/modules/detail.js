@@ -542,7 +542,7 @@ export function renderActions(item) {
         });
       }
     }
-    btn('Complete with Evidence', !state.activeRuns.has(item.id), function () {
+    btn('Complete with Evidence', false, function () {
       callbacks.openCompleteModal(item);
     });
     btn('Mark Blocked', false, function () {
@@ -676,15 +676,15 @@ export function renderHandoff(item) {
   }
 
   if (st === 'blocked') {
-    addField('blocker', 'Blocker:', 'Blocked', 'handoff-pill-blocker', h.blocker, false);
-    addField('verification', 'Verification evidence:', 'Evidence', 'handoff-pill-verification', h.verification, false);
-    addField('progress', 'Progress:', null, null, h.progress, false);
-    addField('next', 'Next steps:', null, null, h.next, false);
+    addField('blocker', 'Blocker', 'Blocked', 'handoff-pill-blocker', h.blocker, false);
+    addField('verification', 'Verification', 'Verified', 'handoff-pill-verification', h.verification, false);
+    addField('progress', 'Progress', null, null, h.progress, false);
+    addField('next', 'Next steps', null, null, h.next, false);
   } else {
-    addField('verification', 'Verification evidence:', 'Evidence', 'handoff-pill-verification', h.verification, false);
-    addField('progress', 'Progress:', null, null, h.progress, false);
-    addField('next', 'Next steps:', null, null, h.next, false);
-    addField('blocker', 'Blocker:', 'Blocker', 'handoff-pill-blocker', h.blocker, false);
+    addField('verification', 'Verification', 'Verified', 'handoff-pill-verification', h.verification, false);
+    addField('progress', 'Progress', null, null, h.progress, false);
+    addField('next', 'Next steps', null, null, h.next, false);
+    addField('blocker', 'Blocker', 'Blocked', 'handoff-pill-blocker', h.blocker, false);
   }
 }
 
