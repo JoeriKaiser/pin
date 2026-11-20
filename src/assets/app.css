@@ -1060,7 +1060,7 @@ a {
   outline-offset: 1px;
 }
 
-.reply-modal-footer {
+.dialog-footer.reply-modal-footer {
   justify-content: space-between;
   flex-wrap: wrap;
   gap: var(--space-2);
@@ -2019,10 +2019,17 @@ a {
   }
 }
 
+.board-card-actions {
+  margin-inline-start: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  flex-wrap: wrap;
+}
+
 .btn-view-run,
 .btn-commit-pr,
 .btn-pr-link {
-  margin-inline-start: auto;
   padding: 0 var(--space-2);
   height: var(--badge-height);
   font-size: var(--text-2xs);
@@ -2167,18 +2174,22 @@ a {
 
 .quick-add-header {
   display: flex;
-  gap: var(--space-2);
+  gap: var(--space-1-5);
   align-items: center;
+  min-width: 0;
 }
 
 .quick-add-header-actions {
   display: flex;
   gap: var(--space-1);
   align-items: center;
+  flex-shrink: 0;
 }
 
 .quick-add-input {
-  flex: 1;
+  flex: 1 1 0;
+  min-width: 0;
+  width: 0;
   height: var(--control-height);
   border: 1px solid var(--control-border);
   border-radius: var(--radius-sm);
@@ -2280,8 +2291,16 @@ a {
 .quick-add-footer {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1-5);
+  align-items: stretch;
+  gap: var(--space-2);
   margin-top: var(--space-1);
+}
+
+.quick-add-hint {
+  font-size: var(--text-2xs);
+  font-family: var(--font-mono);
+  color: var(--muted);
+  text-align: start;
 }
 
 .quick-add-buttons {
@@ -2289,13 +2308,6 @@ a {
   justify-content: flex-end;
   gap: var(--space-2);
   align-items: center;
-}
-
-.quick-add-hint {
-  font-size: var(--text-2xs);
-  color: var(--faint);
-  font-family: var(--font-mono);
-  text-align: center;
 }
 
 /* --------------------------------------------------------------------------
@@ -4534,6 +4546,10 @@ footer {
 }
 
 @media (max-width: 1200px) {
+  :root {
+    --index: 18rem;
+  }
+
   .topbar {
     grid-template-columns: auto minmax(7rem, 12rem) 1fr;
     gap: var(--space-2);
@@ -4546,6 +4562,16 @@ footer {
 
   .control {
     padding: 0 var(--space-2);
+  }
+
+  .split-detail {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-6);
+    padding: var(--space-5) var(--space-6);
+  }
+
+  .inspector-rail {
+    position: static;
   }
 }
 

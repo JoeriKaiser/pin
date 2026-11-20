@@ -171,6 +171,7 @@ export function buildBoardCard(item) {
 
   if (state.activeRuns.has(item.id)) {
     var waiting = isRunWaiting(item.id);
+    var runActions = node('div', 'board-card-actions');
     if (waiting) {
       card.classList.add('card-waiting-reply');
       var waitBadge = node('span', 'card-waiting-indicator');
@@ -187,27 +188,29 @@ export function buildBoardCard(item) {
         if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
         callbacks.openReplyModal(item.id);
       });
-      meta.appendChild(replyBtn);
+      runActions.appendChild(replyBtn);
     } else {
       var runBadge = node('span', 'card-running-indicator');
       var runDot = node('span', 'card-running-dot');
       runDot.setAttribute('aria-hidden', 'true');
       runBadge.appendChild(runDot);
-      runBadge.appendChild(document.createTextNode('Running Agent'));
+      runBadge.appendChild(document.createTextNode('Running agent'));
       meta.appendChild(runBadge);
     }
 
-    var viewRunBtn = node('button', 'btn-view-run', 'View Run');
+    var viewRunBtn = node('button', 'btn-view-run', 'View run');
     viewRunBtn.type = 'button';
-    viewRunBtn.setAttribute('aria-label', 'View Run for ' + (item.title || item.id));
+    viewRunBtn.setAttribute('aria-label', 'View run for ' + (item.title || item.id));
     viewRunBtn.addEventListener('click', function (e) {
       if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
       callbacks.openAgentDrawer(item.id);
     });
-    meta.appendChild(viewRunBtn);
+    runActions.appendChild(viewRunBtn);
+    meta.appendChild(runActions);
   } else {
     var cardStatus = itemStatus(item);
     if (cardStatus === 'done' && !item.archived_at) {
+      var doneActions = node('div', 'board-card-actions');
       var isMerged = item.git_status === 'merged';
       var isPrOpen = !isMerged && (item.git_status === 'pr_open' || (item.pr_url && item.pr_url.length > 0));
       if (isPrOpen) {
@@ -222,7 +225,7 @@ export function buildBoardCard(item) {
         prLink.addEventListener('click', function (e) {
           if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
         });
-        meta.appendChild(prLink);
+        doneActions.appendChild(prLink);
       } else if (isMerged) {
         var mergedBadge = node('span', 'indicator-merged', 'Merged into main');
         mergedBadge.title = 'Merged into main branch';
@@ -236,7 +239,7 @@ export function buildBoardCard(item) {
           if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
           callbacks.sendCommitPrItem(item.id);
         });
-        meta.appendChild(commitPrBtn);
+        doneActions.appendChild(commitPrBtn);
       }
 
       var archiveBtn = node('button', 'btn-archive', 'Archive');
@@ -257,7 +260,8 @@ export function buildBoardCard(item) {
             showToast('Action failed: ' + err.message, true);
           });
       });
-      meta.appendChild(archiveBtn);
+      doneActions.appendChild(archiveBtn);
+      meta.appendChild(doneActions);
     }
   }
   card.appendChild(meta);
