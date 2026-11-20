@@ -91,8 +91,9 @@ export function buildBoardCard(item) {
   card.draggable = true;
 
   var header = node('div', 'board-card-header');
+  var headerMeta = node('div', 'board-card-header-meta');
   var idSpan = node('span', 'board-card-id', item.id.slice(0, 8));
-  header.appendChild(idSpan);
+  headerMeta.appendChild(idSpan);
 
   var prio = priority(item);
   if (prio !== 'unset') {
@@ -103,7 +104,47 @@ export function buildBoardCard(item) {
     dot.setAttribute('aria-hidden', 'true');
     prioPill.appendChild(dot);
     prioPill.appendChild(document.createTextNode(prioLabel));
-    header.appendChild(prioPill);
+    headerMeta.appendChild(prioPill);
+  }
+  header.appendChild(headerMeta);
+
+  var curStatus = itemStatus(item);
+  if (!item.archived_at) {
+    var moveSelect = node('select', 'card-move-select');
+    moveSelect.setAttribute('aria-label', 'Move ' + (item.title || item.id) + ' to column');
+    moveSelect.title = 'Move to another column';
+    var placeholderOpt = node('option', '', 'Move');
+    placeholderOpt.value = '';
+    placeholderOpt.selected = true;
+    placeholderOpt.disabled = true;
+    moveSelect.appendChild(placeholderOpt);
+    var targets = [
+      { value: 'created', label: 'Backlog' },
+      { value: 'planned', label: 'Planned' },
+      { value: 'in_progress', label: 'In progress' },
+      { value: 'blocked', label: 'Blocked' },
+      { value: 'done', label: 'Done' },
+      { value: 'closed', label: 'Closed' }
+    ];
+    targets.forEach(function (t) {
+      if (t.value === curStatus) return;
+      var opt = node('option', '', t.label);
+      opt.value = t.value;
+      moveSelect.appendChild(opt);
+    });
+    moveSelect.addEventListener('click', function (e) {
+      if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+    });
+    moveSelect.addEventListener('mousedown', function (e) {
+      if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+    });
+    moveSelect.addEventListener('change', function (e) {
+      if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+      var nextStatus = moveSelect.value;
+      moveSelect.value = '';
+      if (nextStatus) handleCardDrop(item.id, nextStatus);
+    });
+    header.appendChild(moveSelect);
   }
   card.appendChild(header);
 

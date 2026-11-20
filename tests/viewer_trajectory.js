@@ -2619,6 +2619,36 @@ async function runHarness() {
     console.log('PASS: Swimlane SVG viewBox bounds and clickable tool nodes verified');
   }
 
+  console.log('\n--- 29. Testing Single-Pointer Board Card Status Move Control (WCAG 2.5.7) ---');
+  {
+    const moveItem29 = { id: 'move-card-29', title: 'Moveable Card', status: 'created', type: 'task', revision: 1 };
+    testExports.state.items.push(moveItem29);
+    const moveCard29 = testExports.buildBoardCard(moveItem29);
+    const moveSel29 = moveCard29.querySelector('.card-move-select');
+    assert.ok(moveSel29, 'Board card includes single-pointer status move select');
+    assert.ok(moveSel29.getAttribute('aria-label').includes('Moveable Card'), 'Move select aria-label identifies the card');
+    const optValues29 = moveSel29.children.map(o => o.value).filter(Boolean);
+    assert.ok(!optValues29.includes('created'), 'Move select omits current status');
+    assert.ok(optValues29.includes('planned') && optValues29.includes('in_progress'), 'Move select offers target columns');
+
+    let movedPayload29 = null;
+    const prevFetch29 = fetchStub;
+    fetchStub = function (url, opts) {
+      if (url.includes('items/move-card-29/action')) {
+        movedPayload29 = JSON.parse(opts.body);
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ ok: true }) });
+      }
+      return prevFetch29(url, opts);
+    };
+    moveSel29.value = 'planned';
+    moveSel29.dispatchEvent({ type: 'change', stopPropagation() {} });
+    await new Promise(r => setTimeout(r, 20));
+    assert.ok(movedPayload29 && movedPayload29.to === 'planned', 'Selecting target column dispatches transition without dragging');
+    assert.strictEqual(moveSel29.value, '', 'Move select resets after dispatch');
+    fetchStub = prevFetch29;
+    console.log('PASS: Single-pointer board card status move control verified');
+  }
+
   console.log('\n========================================');
   console.log('ALL VIEWER TRAJECTORY TESTS PASSED (0)');
   console.log('========================================');
