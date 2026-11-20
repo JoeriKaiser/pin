@@ -603,9 +603,9 @@ a:hover {
   flex-shrink: 0;
   height: var(--top);
   display: grid;
-  grid-template-columns: var(--index) minmax(14rem, 28rem) 1fr;
+  grid-template-columns: auto minmax(10rem, 18rem) 1fr;
   align-items: center;
-  gap: var(--space-4);
+  gap: var(--space-3);
   padding: 0 var(--space-4);
   background: var(--surface);
   border-bottom: 1px solid var(--line);
@@ -689,7 +689,7 @@ a:hover {
   justify-self: end;
   display: flex;
   align-items: center;
-  gap: var(--space-2-5);
+  gap: var(--space-2);
   white-space: nowrap;
 }
 
@@ -916,6 +916,7 @@ a:hover {
   display: flex;
   flex-direction: column;
   gap: var(--space-1-5);
+  flex-shrink: 0;
 }
 
 .reply-modal-message {
@@ -940,6 +941,7 @@ a:hover {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+  flex-shrink: 0;
 }
 
 .reply-modal-composer-header {
@@ -1251,15 +1253,28 @@ a:hover {
 
 .agent-col-actions {
   display: flex;
-  gap: var(--space-2);
+  gap: var(--space-1-5);
   align-items: center;
+  flex-wrap: wrap;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--badge-height);
+  padding: 0 0.45rem;
+  border-radius: var(--radius-xs);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-none);
   white-space: nowrap;
 }
 
 .badge-mode-implement {
-  background: var(--status-in_progress-bg);
-  color: var(--status-in_progress-ink);
-  border: 1px solid var(--status-in_progress-border);
+  background: var(--status-inprogress-bg);
+  color: var(--status-inprogress-ink);
+  border: 1px solid var(--status-inprogress-border);
 }
 
 .badge-mode-commit-pr {
@@ -1656,7 +1671,7 @@ a:hover {
 }
 
 .agent-row-waiting td {
-  background: color-mix(in oklch, var(--warning) 45%, var(--surface));
+  background: color-mix(in srgb, var(--warning) 48%, var(--surface));
 }
 
 .agent-activity-waiting {
@@ -1670,7 +1685,7 @@ a:hover {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 20rem;
+  max-width: 12rem;
 }
 
 .worker-waiting-callout {
@@ -3663,10 +3678,12 @@ a:hover {
   color: var(--danger-ink);
 }
 
-.worktree-interactive-toggle {
+.worktree-interactive-toggle,
+.dialog-body label.worktree-interactive-toggle {
   display: flex;
   flex-direction: row;
   align-items: center;
+  justify-content: flex-start;
   gap: var(--space-2);
   margin: var(--space-2-5) 0;
   padding: var(--space-2) var(--space-2-5);
@@ -4059,9 +4076,21 @@ footer {
 /* --------------------------------------------------------------------------
    17. Responsive Layout & Accessibility
    -------------------------------------------------------------------------- */
-@media (max-width: 1439.98px) {
+@media (max-width: 1520px) {
   .runner-summary {
     display: none;
+  }
+}
+
+@media (max-width: 1200px) {
+  .topbar {
+    grid-template-columns: auto minmax(8rem, 14rem) 1fr;
+    gap: var(--space-2);
+    padding: 0 var(--space-3);
+  }
+
+  .control {
+    padding: 0 var(--space-2);
   }
 }
 
@@ -4105,15 +4134,44 @@ footer {
   }
 
   .needs-reply-banner {
-    flex-wrap: wrap;
-    padding: var(--space-2-5) var(--space-3);
+    flex-wrap: nowrap;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
   }
 
   .needs-reply-banner-title {
-    max-width: 12rem;
+    flex: 1 1 0;
+    max-width: none;
+    min-width: 0;
   }
 
   .needs-reply-banner-preview {
+    display: none;
+  }
+
+  .reply-modal {
+    width: calc(100vw - 1rem);
+    max-width: calc(100vw - 1rem);
+  }
+
+  .reply-modal-content {
+    max-height: 92vh;
+  }
+
+  .reply-modal-title-group h2 {
+    max-width: 16rem;
+  }
+
+  .reply-modal-message {
+    max-height: 11rem;
+    padding: var(--space-2-5) var(--space-3);
+  }
+
+  .reply-modal-input {
+    min-height: 4.5rem;
+  }
+
+  .reply-modal-footer .spec-modal-hint {
     display: none;
   }
 

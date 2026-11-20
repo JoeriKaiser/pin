@@ -6,6 +6,7 @@ var SOUND_KEY = 'pin-alerts-sound';
 var DESKTOP_KEY = 'pin-alerts-desktop';
 
 var notifiedKeys = new Set();
+var initialSyncDone = false;
 var callbacks = {
   openReplyForItem: function () {},
   openAgentDrawer: function () {},
@@ -100,6 +101,9 @@ export function updateDocumentAttention(waitingCount) {
 
 export function playAlertChime() {
   try {
+    if (typeof navigator !== 'undefined' && navigator.userActivation && !navigator.userActivation.hasBeenActive) {
+      return false;
+    }
     var AudioCtx = (typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext)) || null;
     if (!AudioCtx) return false;
     var ctx = new AudioCtx();
@@ -326,10 +330,17 @@ export function syncWaitingAlerts(options) {
   });
 
   if (opts.notify) {
-    waitingRuns.forEach(function (run) {
-      notifyRunWaiting(run);
-    });
+    if (!initialSyncDone) {
+      waitingRuns.forEach(function (run) {
+        notifiedKeys.add(run.item_id + ':' + (run.waiting_since || 0));
+      });
+    } else {
+      waitingRuns.forEach(function (run) {
+        notifyRunWaiting(run);
+      });
+    }
   }
+  initialSyncDone = true;
 
   updateDocumentAttention(waitingRuns.length);
   renderNeedsReplyControls(waitingRuns);
@@ -456,4 +467,5 @@ export function bindAlertsUi() {
 
 export function resetAlertStateForTests() {
   notifiedKeys.clear();
+  initialSyncDone = true;
 }
