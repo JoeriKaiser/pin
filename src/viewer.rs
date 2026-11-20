@@ -2055,14 +2055,24 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
         #[derive(Serialize)]
         struct RunsOutput {
             running: Vec<String>,
+            waiting: Vec<String>,
+            waiting_count: usize,
             primary_busy: Option<String>,
             timings: std::collections::HashMap<String, i64>,
             runs: Vec<crate::acp::ActiveRunInfo>,
         }
         let (running, timings) = snapshot.acp_manager.running_items_with_timing();
         let runs = snapshot.acp_manager.active_runs_info();
+        let waiting: Vec<String> = runs
+            .iter()
+            .filter(|r| r.waiting_for_user)
+            .map(|r| r.item_id.clone())
+            .collect();
+        let waiting_count = waiting.len();
         let out = RunsOutput {
             running,
+            waiting,
+            waiting_count,
             primary_busy: snapshot.acp_manager.is_primary_busy(),
             timings,
             runs,
@@ -2547,6 +2557,8 @@ pub fn serve_view(
                     b.broadcast(event);
                     b.broadcast(serde_json::json!({ "type": "git_updated" }));
                     b.broadcast(serde_json::json!({ "type": "vault_changed" }));
+                } else if event_type == "run_waiting" || event_type == "run_resumed" {
+                    b.broadcast(event);
                 }
             }
         });
@@ -2735,6 +2747,11 @@ mod tests {
         let run_info = crate::acp::ActiveRunInfo {
             item_id: "item-1".to_string(),
             mode: "implement".to_string(),
+            interactive: true,
+            waiting_for_user: true,
+            waiting_since: Some(1234600),
+            last_message: Some("Ready to proceed?".to_string()),
+            last_activity: Some("Waiting for reply".to_string()),
             is_primary_worktree: false,
             worktree_path: Some("/tmp/wt".to_string()),
             started_at: 1234567,
@@ -2744,6 +2761,8 @@ mod tests {
         #[derive(Serialize)]
         struct TestRunsOutput {
             running: Vec<String>,
+            waiting: Vec<String>,
+            waiting_count: usize,
             primary_busy: Option<String>,
             timings: std::collections::HashMap<String, i64>,
             runs: Vec<crate::acp::ActiveRunInfo>,
@@ -2752,14 +2771,23 @@ mod tests {
         timings.insert("item-1".to_string(), 1234567);
         let out = TestRunsOutput {
             running: vec!["item-1".to_string()],
+            waiting: vec!["item-1".to_string()],
+            waiting_count: 1,
             primary_busy: None,
             timings,
             runs: vec![run_info],
         };
         let json = serde_json::to_value(&out).unwrap();
         assert_eq!(json["running"][0], "item-1");
+        assert_eq!(json["waiting"][0], "item-1");
+        assert_eq!(json["waiting_count"], 1);
         assert_eq!(json["runs"][0]["item_id"], "item-1");
         assert_eq!(json["runs"][0]["mode"], "implement");
+        assert_eq!(json["runs"][0]["interactive"], true);
+        assert_eq!(json["runs"][0]["waiting_for_user"], true);
+        assert_eq!(json["runs"][0]["waiting_since"], 1234600);
+        assert_eq!(json["runs"][0]["last_message"], "Ready to proceed?");
+        assert_eq!(json["runs"][0]["last_activity"], "Waiting for reply");
         assert_eq!(json["runs"][0]["is_primary_worktree"], false);
         assert_eq!(json["runs"][0]["worktree_path"], "/tmp/wt");
         assert_eq!(json["runs"][0]["started_at"], 1234567);
