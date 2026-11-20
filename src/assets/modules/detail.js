@@ -1,9 +1,10 @@
-import { state, find, itemStatus, itemType, kind, priority, tags, matches, updateShown } from './state.js';
+import { state, find, itemStatus, itemType, kind, priority, tags, matches, updateShown, isRunWaiting, getRunInfo } from './state.js';
 import { els } from './dom.js';
 import { sendAction, ensureActionOk } from './api.js';
 import { node, text, clear, date, timeAgo, showToast } from './formatters.js';
 import { renderMarkdownSnippet, renderMarkdown } from './markdown.js';
 import { setRoute } from './router.js';
+import { summarizeQuestionPreview } from './alerts.js';
 
 
 var callbacks = {
@@ -12,6 +13,7 @@ var callbacks = {
   openWorktreeModal: function () {},
   openBlockedModal: function () {},
   openAgentDrawer: function () {},
+  openReplyModal: function () {},
   openCompleteModal: function () {},
   sendCommitPrItem: function () {},
   openCloseModal: function () {},
@@ -90,7 +92,13 @@ export function renderWorkerBox(item) {
   els.workerCard.appendChild(node('h3', '', 'Agent Run'));
 
   var header = node('div', 'worker-card-header');
-  if (state.activeRuns.has(item.id)) {
+  var waiting = state.activeRuns.has(item.id) && isRunWaiting(item.id);
+  if (waiting) {
+    var waitBadge = node('span', 'card-waiting-indicator');
+    waitBadge.appendChild(node('span', 'needs-reply-dot'));
+    waitBadge.appendChild(document.createTextNode('Needs reply'));
+    header.appendChild(waitBadge);
+  } else if (state.activeRuns.has(item.id)) {
     header.appendChild(node('span', 'worker-actor', item.claimed_by ? '@' + item.claimed_by : 'Agent running'));
   } else {
     header.appendChild(node('span', 'worker-actor', 'No active run'));
@@ -99,6 +107,19 @@ export function renderWorkerBox(item) {
     header.appendChild(node('span', 'worker-revision', 'rev ' + item.revision));
   }
   els.workerCard.appendChild(header);
+
+  if (waiting) {
+    var runInfo = getRunInfo(item.id);
+    var callout = node('div', 'worker-waiting-callout');
+    callout.appendChild(node('p', 'worker-waiting-preview', summarizeQuestionPreview(runInfo && runInfo.last_message, 160)));
+    var replyNowBtn = node('button', 'action-btn primary action-btn-small', 'Reply Now');
+    replyNowBtn.type = 'button';
+    replyNowBtn.addEventListener('click', function () {
+      callbacks.openReplyModal(item.id);
+    });
+    callout.appendChild(replyNowBtn);
+    els.workerCard.appendChild(callout);
+  }
 
   var meta = node('div', 'worker-meta');
   if (item.created_by) {
@@ -496,7 +517,13 @@ export function renderActions(item) {
 
   if (st === 'in_progress') {
     if (state.activeRuns.has(item.id)) {
-      btn('View Agent Run', true, function () {
+      var waitingInProgress = isRunWaiting(item.id);
+      if (waitingInProgress) {
+        btn('Reply to Agent', true, function () {
+          callbacks.openReplyModal(item.id);
+        });
+      }
+      btn('View Agent Run', !waitingInProgress, function () {
         callbacks.openAgentDrawer(item.id);
       });
     } else {
@@ -715,7 +742,15 @@ export function renderDetail() {
   }
 
   if (els.readerTabs) els.readerTabs.hidden = false;
-  if (els.readerTrajectoryBadge) els.readerTrajectoryBadge.hidden = !state.activeRuns.has(item.id);
+  if (els.readerTrajectoryBadge) {
+    var activeNow = state.activeRuns.has(item.id);
+    var waitingNow = activeNow && isRunWaiting(item.id);
+    els.readerTrajectoryBadge.hidden = !activeNow;
+    text(els.readerTrajectoryBadge, waitingNow ? 'Needs reply' : 'Running');
+    if (els.readerTrajectoryBadge.classList) {
+      els.readerTrajectoryBadge.classList.toggle('badge-waiting', waitingNow);
+    }
+  }
   setReaderTab(state.readerTab === 'trajectory' ? 'trajectory' : 'spec');
   var context = [];
   if (item.project) context.push(item.project);

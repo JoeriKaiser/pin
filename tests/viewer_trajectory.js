@@ -2322,6 +2322,56 @@ async function runHarness() {
   testExports.syncWaitingAlerts({ notify: false });
   console.log('PASS: Quick-Reply inbox modal and numbered-question helpers verified');
 
+  console.log('\n--- 23. Testing Waiting Prompt Visibility Across Board, Agents Table, and Detail View ---');
+  testExports.state.items = [
+    { id: 'run-alpha', title: 'Alpha Running', status: 'in_progress', type: 'task', revision: 1 },
+    { id: 'run-beta', title: 'Beta Waiting', status: 'in_progress', type: 'task', revision: 1 }
+  ];
+  testExports.state.activeRuns = new Set(['run-alpha', 'run-beta']);
+  testExports.state.activeRunsInfo = [
+    { item_id: 'run-alpha', mode: 'implement', interactive: false, waiting_for_user: false, last_activity: 'bash: cargo test', started_at: 100 },
+    { item_id: 'run-beta', mode: 'implement', interactive: true, waiting_for_user: true, waiting_since: 150, last_message: 'Should we keep backwards compat?', started_at: 120 }
+  ];
+  testExports.syncWaitingAlerts({ notify: false });
+
+  // Board card highlights waiting state and shows Reply button
+  const waitingCard23 = testExports.buildBoardCard(testExports.state.items[1]);
+  assert.ok(waitingCard23.className.includes('card-waiting-reply'), 'waiting board card has highlight class');
+  assert.ok(findDescendant(waitingCard23, '.card-waiting-indicator'), 'waiting board card shows Needs reply indicator');
+  const cardReplyBtn23 = findDescendant(waitingCard23, '.btn-reply-card');
+  assert.ok(cardReplyBtn23, 'waiting board card renders Reply button');
+
+  // renderKey changes when waiting state changes
+  const rkWaiting = testExports.computeRenderKey(testExports.state.items[1]);
+  testExports.state.activeRunsInfo[1].waiting_for_user = false;
+  testExports.syncWaitingAlerts({ notify: false });
+  const rkRunning = testExports.computeRenderKey(testExports.state.items[1]);
+  assert.notStrictEqual(rkWaiting, rkRunning, 'computeRenderKey invalidates when waiting state toggles');
+
+  // Restore waiting and verify Agents table sorts waiting row first + shows Reply & Open Chat
+  testExports.state.activeRunsInfo[1].waiting_for_user = true;
+  testExports.syncWaitingAlerts({ notify: false });
+  testExports.renderAgentsTable();
+  const tbody23 = documentMock.getElementById('agents-table-body');
+  assert.strictEqual(tbody23.children.length, 2, 'agents table renders both runs');
+  assert.strictEqual(tbody23.children[0].dataset.itemId, 'run-beta', 'waiting run sorted first in agents table');
+  assert.ok(tbody23.children[0].className.includes('agent-row-waiting'), 'waiting row has highlight class');
+  assert.ok(findDescendant(tbody23.children[0], '.btn-reply-run'), 'waiting row has Reply button');
+  assert.ok(findDescendant(tbody23.children[0], '.btn-open-chat'), 'interactive implement run shows Open Chat button');
+  assert.ok(tbody23.children[1].textContent.includes('bash: cargo test'), 'running row displays server last_activity');
+
+  // Detail view shows Needs reply badge and Reply to Agent action
+  testExports.state.selected = 'run-beta';
+  testExports.renderDetail();
+  assert.strictEqual(documentMock.getElementById('reader-trajectory-badge').textContent, 'Needs reply', 'trajectory tab badge says Needs reply');
+  assert.ok(documentMock.getElementById('worker-card').textContent.includes('Should we keep backwards compat?'), 'worker card previews question');
+  assert.ok(documentMock.getElementById('proposal-actions').textContent.includes('Reply to Agent'), 'detail actions show Reply to Agent');
+
+  testExports.state.activeRuns = new Set();
+  testExports.state.activeRunsInfo = [];
+  testExports.syncWaitingAlerts({ notify: false });
+  console.log('PASS: Waiting prompt visibility across board, agents table, and detail view verified');
+
   console.log('\n========================================');
   console.log('ALL VIEWER TRAJECTORY TESTS PASSED (0)');
   console.log('========================================');

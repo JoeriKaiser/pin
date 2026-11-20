@@ -1517,6 +1517,7 @@ a:hover {
 .type-badge,
 .lock-indicator,
 .card-running-indicator,
+.card-waiting-indicator,
 .badge-mini,
 .agent-badge-id,
 .item-badges [class*="priority-"] {
@@ -1620,6 +1621,75 @@ a:hover {
   background: var(--accent-subtle);
   color: var(--accent);
   font-weight: var(--weight-semibold);
+}
+
+.card-waiting-indicator {
+  background: var(--warning);
+  color: var(--warning-ink);
+  border: 1px solid var(--warning-border);
+  font-weight: var(--weight-semibold);
+  gap: var(--space-1);
+}
+
+.board-card.card-waiting-reply {
+  border-color: var(--warning-border);
+  box-shadow: 0 0 0 1px var(--warning-border), var(--shadow-xs);
+}
+
+.btn-reply-card {
+  height: var(--badge-height);
+  padding: 0 0.5rem;
+  border-radius: var(--radius-xs);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-none);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background var(--transition-fast);
+}
+
+.btn-reply-card:hover {
+  background: var(--accent-hover);
+}
+
+.agent-row-waiting td {
+  background: color-mix(in oklch, var(--warning) 45%, var(--surface));
+}
+
+.agent-activity-waiting {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.agent-activity-waiting .agent-activity {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 20rem;
+}
+
+.worker-waiting-callout {
+  margin-top: var(--space-2-5);
+  padding: var(--space-2-5) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--warning);
+  border: 1px solid var(--warning-border);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.worker-waiting-preview {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--warning-ink);
+  line-height: var(--leading-snug);
 }
 
 .card-running-dot {

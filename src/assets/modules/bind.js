@@ -651,6 +651,7 @@ export function bind(options) {
   // Wire callbacks into earlier modules
   setAgentsViewCallbacks({
     openAgentDrawer: openAgentDrawer,
+    openReplyModal: openReplyModal,
     updateActiveRuns: updateActiveRuns,
     setViewMode: setViewMode,
     setRoute: setRoute
@@ -662,6 +663,7 @@ export function bind(options) {
     openWorktreeModal: openWorktreeModal,
     openCloseModal: openCloseModal,
     openAgentDrawer: openAgentDrawer,
+    openReplyModal: openReplyModal,
     closeAgentDrawer: closeAgentDrawer,
     sendCommitPrItem: sendCommitPrItem,
     refreshData: function () { bootCallbacks.refreshData(); },
@@ -674,6 +676,7 @@ export function bind(options) {
     openWorktreeModal: openWorktreeModal,
     openBlockedModal: openBlockedModal,
     openAgentDrawer: openAgentDrawer,
+    openReplyModal: openReplyModal,
     openCompleteModal: openCompleteModal,
     sendCommitPrItem: sendCommitPrItem,
     openCloseModal: openCloseModal,
