@@ -13,6 +13,8 @@
   <div class="identity"><strong>pin</strong><span id="scope"></span></div>
   <label class="search"><span class="visually-hidden">Search items</span><input id="search" type="search" placeholder="Search items" autocomplete="off" spellcheck="false"><kbd>/</kbd></label>
   <div class="topbar-actions">
+    <button id="btn-needs-reply" class="control needs-reply-btn" type="button" title="Prompts waiting for your reply (r)" hidden><span class="needs-reply-dot" aria-hidden="true"></span><span id="needs-reply-count">1 needs reply</span></button>
+    <button id="btn-alerts-toggle" class="control alerts-btn" type="button" title="Alert settings" aria-label="Alert settings">Alerts</button>
     <button id="btn-runner" class="control runner-btn" type="button" title="Runner settings">Runner <span id="runner-summary" class="runner-summary">agent:omp</span></button>
     <button id="btn-sync-git" class="control" type="button" title="Sync Git merge status">Sync Git</button>
     <button id="btn-update" class="control action-btn-update" type="button" title="Update pin" hidden>Update to <span id="update-version"></span></button>
@@ -37,6 +39,21 @@
   <label id="project-wrap" hidden>Project<input id="project-filter" list="projects" placeholder="All projects" autocomplete="off"><datalist id="projects"></datalist></label>
   <button id="clear-filters" class="text-button" type="button">Clear</button>
 </div>
+
+<div id="needs-reply-banner" class="needs-reply-banner" role="region" aria-label="Prompts needing reply" hidden>
+  <div class="needs-reply-banner-main">
+    <span class="needs-reply-dot" aria-hidden="true"></span>
+    <span class="needs-reply-banner-label">Needs reply</span>
+    <strong id="needs-reply-banner-title" class="needs-reply-banner-title"></strong>
+    <span id="needs-reply-banner-preview" class="needs-reply-banner-preview"></span>
+    <span id="needs-reply-banner-more" class="needs-reply-banner-more" hidden></span>
+  </div>
+  <div class="needs-reply-banner-actions">
+    <button id="btn-needs-reply-banner-view" class="control action-btn-small" type="button">View Run</button>
+    <button id="btn-needs-reply-banner-action" class="action-btn primary action-btn-small" type="button">Reply</button>
+  </div>
+</div>
+<div id="alert-announcer" class="visually-hidden" aria-live="assertive" aria-atomic="true"></div>
 
 <main id="workspace" class="workspace mode-board">
   <section id="board" class="board-view" aria-label="Board">
@@ -391,6 +408,34 @@
     <div class="dialog-footer">
       <button id="btn-runner-cancel" class="control text-button" type="button">Cancel</button>
       <button id="btn-runner-save" class="action-btn primary" type="button">Save Runner</button>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="alerts-dialog" class="action-dialog alerts-dialog">
+  <div class="dialog-content">
+    <div class="dialog-header">
+      <h2>Prompt Alerts</h2>
+      <button id="btn-alerts-close" class="dialog-close" type="button" aria-label="Close">✕</button>
+    </div>
+    <div class="dialog-body">
+      <p class="runner-hint">Choose how pin alerts you when an interactive agent pauses for your reply.</p>
+      <label class="worktree-interactive-toggle">
+        <input id="alerts-sound-checkbox" type="checkbox" checked>
+        <span>Play a gentle chime when a prompt needs your reply</span>
+      </label>
+      <label class="worktree-interactive-toggle">
+        <input id="alerts-desktop-checkbox" type="checkbox" checked>
+        <span>Show OS desktop notifications in background tabs</span>
+      </label>
+      <p id="alerts-desktop-status" class="runner-model-status" aria-live="polite"></p>
+      <div class="alerts-dialog-tools">
+        <button id="btn-alerts-request-perm" class="control" type="button">Enable Desktop Alerts</button>
+        <button id="btn-alerts-test" class="control text-button" type="button">Test Alert</button>
+      </div>
+    </div>
+    <div class="dialog-footer">
+      <button id="btn-alerts-done" class="action-btn primary" type="button">Done</button>
     </div>
   </div>
 </dialog>

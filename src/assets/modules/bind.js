@@ -20,6 +20,7 @@ import {
   appendTrajectoryContextRow, setAgentCallbacks, announceAgentStatus
 } from './agent.js';
 import { bindRunnerUi, closeRunnerDialog } from './runner.js';
+import { bindAlertsUi, setAlertCallbacks, closeAlertsDialog } from './alerts.js';
 
 var bootCallbacks = {
   refreshData: function () {},
@@ -500,6 +501,10 @@ export function bindGlobalShortcuts() {
       }
       return;
     }
+    if (els.alertsDialog && (els.alertsDialog.open || els.alertsDialog.hasAttribute('open'))) {
+      if (event.key === 'Escape') { event.preventDefault(); closeAlertsDialog(); }
+      return;
+    }
     if (els.worktreeModal && (els.worktreeModal.open || els.worktreeModal.hasAttribute('open'))) {
       if (event.key === 'Escape') { event.preventDefault(); closeWorktreeModal(); }
       return;
@@ -677,6 +682,14 @@ export function bind(options) {
     renderAgentsTable: renderAgentsTable
   });
 
+  setAlertCallbacks({
+    openReplyForItem: function (itemId) { openAgentDrawer(itemId); },
+    openAgentDrawer: openAgentDrawer,
+    renderBoard: renderBoard,
+    renderDetail: renderDetail,
+    renderAgentsTable: renderAgentsTable
+  });
+
   setOnRouteChanged(function (selected) {
     if (selected && state.viewMode !== 'detail') {
       setViewMode('detail');
@@ -697,5 +710,6 @@ export function bind(options) {
   bindForms();
   bindAgent();
   bindRunnerUi();
+  bindAlertsUi();
   bindGlobalShortcuts();
 }

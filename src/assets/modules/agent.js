@@ -6,6 +6,7 @@ import { text, clear, node, stripAnsi, cleanThoughtText } from './formatters.js'
 import { renderMarkdownSnippet } from './markdown.js';
 import { setViewMode } from './board.js';
 import { setRoute } from './router.js';
+import { syncWaitingAlerts } from './alerts.js';
 var callbacks = { refreshData: function () {}, renderBoard: function () {}, renderDetail: function () {}, renderAgentsTable: function () {} };
 export function setAgentCallbacks(cbs) { if (cbs) Object.assign(callbacks, cbs); }
 
@@ -80,11 +81,21 @@ export function updateActiveRuns() {
       }
 
       var newSet = new Set(data.running);
+      var newWaitingSet = new Set(
+        Array.isArray(data.waiting)
+          ? data.waiting
+          : state.activeRunsInfo.filter(function (r) { return r && r.waiting_for_user; }).map(function (r) { return r.item_id; })
+      );
       var changed = newSet.size !== state.activeRuns.size;
       if (!changed) {
         newSet.forEach(function (id) { if (!state.activeRuns.has(id)) changed = true; });
       }
-      if (changed) {
+      var waitingChanged = !state.waitingRuns || newWaitingSet.size !== state.waitingRuns.size;
+      if (!waitingChanged && state.waitingRuns) {
+        newWaitingSet.forEach(function (id) { if (!state.waitingRuns.has(id)) waitingChanged = true; });
+      }
+      syncWaitingAlerts({ notify: true });
+      if (changed || waitingChanged) {
         state.activeRuns = newSet;
         callbacks.renderBoard();
         callbacks.renderDetail();
@@ -156,6 +167,7 @@ export function closeAgentDrawer() {
   if (els.proposal) els.proposal.hidden = false;
   if (els.tabTaskSpec) els.tabTaskSpec.classList.add('active');
   if (els.tabAgentTrajectory) els.tabAgentTrajectory.classList.remove('active');
+  syncWaitingAlerts({ notify: false });
 }
 
 function cacheTrajectory(itemId) {
@@ -214,6 +226,7 @@ export function openAgentDrawer(itemId) {
   state.readerTab = 'trajectory';
   if (els.tabAgentTrajectory) els.tabAgentTrajectory.classList.add('active'); if (els.tabTaskSpec) els.tabTaskSpec.classList.remove('active');
   if (els.proposal) els.proposal.hidden = true; if (els.agentDrawer) els.agentDrawer.hidden = false;
+  syncWaitingAlerts({ notify: false });
 
   var itm = find(itemId);
   if (els.agentTaskTitle) text(els.agentTaskTitle, (itm && itm.title) ? itm.title : '');

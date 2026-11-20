@@ -504,6 +504,11 @@ const ASSETS: &[(&str, &str, &str)] = &[
         MODULES_AGENTS_VIEW_JS,
     ),
     (
+        "modules/alerts.js",
+        "text/javascript; charset=utf-8",
+        MODULES_ALERTS_JS,
+    ),
+    (
         "modules/bind.js",
         "text/javascript; charset=utf-8",
         MODULES_BIND_JS,

@@ -2181,6 +2181,62 @@ async function runHarness() {
   closeAgentDrawer();
   console.log('PASS: Markdown assistant messages vs thoughts verified');
 
+  console.log('\n--- 21. Testing Global Needs-Reply Alerts, Title, Favicon, and Desktop Notifications ---');
+  testExports.resetAlertStateForTests();
+  let desktopNotifs = [];
+  function MockNotification(title, opts) {
+    this.title = title;
+    this.opts = opts;
+    this.closed = false;
+    this.close = () => { this.closed = true; };
+    desktopNotifs.push(this);
+  }
+  MockNotification.permission = 'granted';
+  MockNotification.requestPermission = () => Promise.resolve('granted');
+  mockWindow.Notification = MockNotification;
+  global.Notification = MockNotification;
+
+  const iconEl21 = documentMock.querySelector('link[rel="icon"]');
+  testExports.state.items = [
+    { id: 'wait-item-1', title: 'Auth Session Design', status: 'in_progress', type: 'idea', revision: 1 }
+  ];
+  testExports.state.activeRuns = new Set(['wait-item-1']);
+  testExports.state.activeRunsInfo = [
+    { item_id: 'wait-item-1', mode: 'idea', interactive: true, waiting_for_user: false, started_at: 1000 }
+  ];
+  testExports.setViewMode('board');
+  testExports.handleGlobalWaitingEvent({
+    type: 'run_waiting',
+    id: 'wait-item-1',
+    title: 'Auth Session Design',
+    mode: 'idea',
+    waiting_since: 1050,
+    message: '1. **Cookie or Bearer?**\n2. Should tokens rotate?'
+  });
+  assert.strictEqual(documentMock.title, '(1) Needs reply - pin', 'document.title shows waiting count');
+  assert.ok((iconEl21.getAttribute('href') || '').includes('%23d97706'), 'favicon switches to amber attention badge');
+  assert.strictEqual(documentMock.getElementById('btn-needs-reply').hidden, false, 'topbar needs-reply pill shown');
+  assert.strictEqual(documentMock.getElementById('needs-reply-banner').hidden, false, 'needs-reply banner shown');
+  assert.ok(documentMock.getElementById('needs-reply-banner-preview').textContent.includes('Cookie or Bearer?'), 'banner previews question');
+  assert.strictEqual(desktopNotifs.length, 1, 'desktop notification fired once');
+  assert.ok(desktopNotifs[0].title.includes('Auth Session Design'), 'desktop notification includes item title');
+
+  // Re-syncing same waiting_since must not duplicate notifications
+  testExports.syncWaitingAlerts({ notify: true });
+  assert.strictEqual(desktopNotifs.length, 1, 'duplicate sync does not re-notify same turn');
+
+  // Resuming clears title, banner, and pill
+  testExports.handleGlobalWaitingEvent({ type: 'run_resumed', id: 'wait-item-1', mode: 'idea' });
+  assert.strictEqual(documentMock.title, 'pin', 'document.title restored after resume');
+  assert.strictEqual(documentMock.getElementById('btn-needs-reply').hidden, true, 'topbar needs-reply pill hidden after resume');
+  assert.strictEqual(documentMock.getElementById('needs-reply-banner').hidden, true, 'banner hidden after resume');
+
+  delete mockWindow.Notification;
+  delete global.Notification;
+  testExports.state.activeRuns = new Set();
+  testExports.state.activeRunsInfo = [];
+  console.log('PASS: Global needs-reply alerts, title, favicon, and desktop notifications verified');
+
   console.log('\n========================================');
   console.log('ALL VIEWER TRAJECTORY TESTS PASSED (0)');
   console.log('========================================');

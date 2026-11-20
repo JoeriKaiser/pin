@@ -39,6 +39,11 @@ import {
   runnerSummaryText, bindRunnerUi, onRunnerCommandInput, harnessForCommand,
   renderRunnerHarness, setRunnerHarness
 } from './runner.js';
+import {
+  getWaitingRuns, syncWaitingAlerts, handleGlobalWaitingEvent,
+  getAlertPrefs, setAlertPrefs, openAlertsDialog, closeAlertsDialog,
+  summarizeQuestionPreview, resetAlertStateForTests
+} from './alerts.js';
 
 if (typeof window !== 'undefined') {
   window._test = {
@@ -120,5 +125,14 @@ if (typeof window !== 'undefined') {
     harnessForCommand: harnessForCommand,
     renderRunnerHarness: renderRunnerHarness,
     setRunnerHarness: setRunnerHarness,
+    getWaitingRuns: getWaitingRuns,
+    syncWaitingAlerts: syncWaitingAlerts,
+    handleGlobalWaitingEvent: handleGlobalWaitingEvent,
+    getAlertPrefs: getAlertPrefs,
+    setAlertPrefs: setAlertPrefs,
+    openAlertsDialog: openAlertsDialog,
+    closeAlertsDialog: closeAlertsDialog,
+    summarizeQuestionPreview: summarizeQuestionPreview,
+    resetAlertStateForTests: resetAlertStateForTests,
   };
 }

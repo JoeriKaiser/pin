@@ -16,6 +16,7 @@ pub const MODULES_DETAIL_JS: &str = include_str!("assets/modules/detail.js");
 pub const MODULES_FORMS_JS: &str = include_str!("assets/modules/forms.js");
 pub const MODULES_AGENT_JS: &str = include_str!("assets/modules/agent.js");
 pub const MODULES_AGENTS_VIEW_JS: &str = include_str!("assets/modules/agents-view.js");
+pub const MODULES_ALERTS_JS: &str = include_str!("assets/modules/alerts.js");
 pub const MODULES_BIND_JS: &str = include_str!("assets/modules/bind.js");
 pub const MODULES_BOOT_JS: &str = include_str!("assets/modules/boot.js");
 pub const MODULES_RUNNER_JS: &str = include_str!("assets/modules/runner.js");
