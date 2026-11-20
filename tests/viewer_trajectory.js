@@ -2662,6 +2662,23 @@ async function runHarness() {
     console.log('PASS: Single primary action per detail view verified');
   }
 
+  console.log('\n--- 31. Testing Dialog aria-labelledby and Backdrop Light-Dismiss ---');
+  {
+    const htmlSrc31 = fs.readFileSync(path.join(__dirname, '..', 'src', 'assets', 'index.html'), 'utf8');
+    const dialogTags = htmlSrc31.match(/<dialog\b[^>]*>/g) || [];
+    assert.ok(dialogTags.length >= 7, 'All 7 viewer dialogs exist');
+    dialogTags.forEach(tag => {
+      assert.ok(tag.includes('aria-labelledby='), `Dialog tag must have aria-labelledby: ${tag}`);
+    });
+
+    const scDlg = documentMock.getElementById('shortcuts-modal');
+    testExports.openShortcutsModal();
+    assert.strictEqual(scDlg.open, true, 'Shortcuts dialog opens');
+    scDlg.dispatchEvent({ type: 'click', target: scDlg });
+    assert.strictEqual(scDlg.open, false, 'Clicking dialog backdrop dismisses shortcuts dialog');
+    console.log('PASS: Dialog aria-labelledby and backdrop light-dismiss verified');
+  }
+
   console.log('\n========================================');
   console.log('ALL VIEWER TRAJECTORY TESTS PASSED (0)');
   console.log('========================================');

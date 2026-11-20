@@ -746,12 +746,48 @@ export function bind(options) {
   bindAlertsUi();
   bindReplyInboxUi();
   bindTablists();
+  bindDialogLightDismiss();
   if (els.toast) {
     els.toast.addEventListener('click', function () {
       els.toast.hidden = true;
     });
   }
   bindGlobalShortcuts();
+}
+
+function bindDialogLightDismiss() {
+  var pairs = [
+    [els.actionDialog, closeActionModal],
+    [els.specModal, closeSpecModal],
+    [els.runnerDialog, closeRunnerDialog],
+    [els.replyModal, closeReplyModal],
+    [els.alertsDialog, closeAlertsDialog],
+    [els.worktreeModal, closeWorktreeModal],
+    [els.shortcutsModal, closeShortcutsModal]
+  ];
+  var lastNonDialogFocus = null;
+  if (typeof document !== 'undefined' && document.addEventListener) {
+    document.addEventListener('focusin', function (e) {
+      if (e && e.target && (!e.target.closest || !e.target.closest('dialog'))) {
+        lastNonDialogFocus = e.target;
+      }
+    });
+  }
+  pairs.forEach(function (entry) {
+    var dlg = entry[0];
+    var onClose = entry[1];
+    if (!dlg || !dlg.addEventListener) return;
+    dlg.addEventListener('click', function (e) {
+      if (e && e.target === dlg) {
+        onClose();
+      }
+    });
+    dlg.addEventListener('close', function () {
+      if (lastNonDialogFocus && lastNonDialogFocus.isConnected && typeof lastNonDialogFocus.focus === 'function') {
+        try { lastNonDialogFocus.focus(); } catch (_) {}
+      }
+    });
+  });
 }
 
 function bindTablists() {

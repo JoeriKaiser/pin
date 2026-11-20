@@ -948,6 +948,7 @@ a:hover {
 .reply-modal-message {
   max-height: 18rem;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding: var(--space-3-5) var(--space-4);
   background: var(--bg);
   border: 1px solid var(--line);
@@ -1431,6 +1432,7 @@ a:hover {
   flex-direction: column;
   gap: var(--space-2);
   overflow-y: auto;
+  overscroll-behavior: contain;
   min-height: 4rem;
   flex: 1;
   transition: background var(--transition-fast);
@@ -2135,6 +2137,7 @@ a:hover {
   height: 100%;
   min-height: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
   border-right: 1px solid var(--line);
   background: var(--surface);
 }
@@ -3342,6 +3345,7 @@ a:hover {
 .agent-trajectory-stream {
   flex: 1 1 0%;
   overflow-y: auto;
+  overscroll-behavior: contain;
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   line-height: var(--leading-normal);
@@ -3632,6 +3636,7 @@ a:hover {
   gap: var(--space-3);
   padding: var(--space-4);
   overflow-y: auto;
+  overscroll-behavior: contain;
   flex: 1;
 }
 
@@ -3679,9 +3684,33 @@ a:hover {
   background: var(--surface-raised);
   color: var(--ink);
   padding: 0;
+  overflow: hidden;
   box-shadow: var(--shadow-lg);
   max-width: min(92vw, 36rem);
   width: 100%;
+}
+
+.action-dialog[open] {
+  transition: opacity 180ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+@starting-style {
+  .action-dialog[open] {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .action-dialog[open] {
+    transition: opacity 220ms cubic-bezier(0.2, 0, 0, 1), transform 220ms cubic-bezier(0.2, 0, 0, 1);
+  }
+
+  @starting-style {
+    .action-dialog[open] {
+      opacity: 0;
+      transform: scale(0.98) translateY(6px);
+    }
+  }
 }
 
 .action-dialog::backdrop {
@@ -3730,6 +3759,7 @@ a:hover {
   display: flex;
   flex-direction: column;
   gap: var(--space-3-5);
+  overscroll-behavior: contain;
 }
 
 .dialog-body label {

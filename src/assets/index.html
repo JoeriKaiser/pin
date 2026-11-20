@@ -288,7 +288,7 @@
   </section>
 </main>
 
-<dialog id="action-dialog" class="action-dialog">
+<dialog id="action-dialog" class="action-dialog" aria-labelledby="dialog-title">
   <div id="action-form" class="dialog-content">
     <div class="dialog-header">
       <h2 id="dialog-title">Action</h2>
@@ -303,10 +303,10 @@
   </div>
 </dialog>
 
-<dialog id="spec-modal" class="action-dialog spec-modal">
+<dialog id="spec-modal" class="action-dialog spec-modal" aria-labelledby="spec-modal-title-heading">
   <form id="spec-modal-form" class="dialog-content spec-modal-content">
     <div class="dialog-header">
-      <h2>New Spec Ticket</h2>
+      <h2 id="spec-modal-title-heading">New Spec Ticket</h2>
       <button id="spec-modal-close-btn" class="dialog-close" type="button" aria-label="Close">✕</button>
     </div>
     <div id="spec-modal-error" class="dialog-error" role="alert" hidden></div>
@@ -375,10 +375,10 @@
 </dialog>
 
 
-<dialog id="runner-dialog" class="action-dialog runner-dialog">
+<dialog id="runner-dialog" class="action-dialog runner-dialog" aria-labelledby="runner-dialog-title">
   <div class="dialog-content">
     <div class="dialog-header">
-      <h2>Agent Runner</h2>
+      <h2 id="runner-dialog-title">Agent Runner</h2>
       <button id="btn-runner-close" class="dialog-close" type="button" aria-label="Close">✕</button>
     </div>
     <div id="runner-dialog-error" class="dialog-error" role="alert" hidden></div>
@@ -415,7 +415,7 @@
   </div>
 </dialog>
 
-<dialog id="reply-modal" class="action-dialog reply-modal">
+<dialog id="reply-modal" class="action-dialog reply-modal" aria-labelledby="reply-modal-title">
   <div class="dialog-content reply-modal-content">
     <div class="dialog-header">
       <div class="reply-modal-title-group">
@@ -453,10 +453,10 @@
   </div>
 </dialog>
 
-<dialog id="alerts-dialog" class="action-dialog alerts-dialog">
+<dialog id="alerts-dialog" class="action-dialog alerts-dialog" aria-labelledby="alerts-dialog-title">
   <div class="dialog-content">
     <div class="dialog-header">
-      <h2>Prompt Alerts</h2>
+      <h2 id="alerts-dialog-title">Prompt Alerts</h2>
       <button id="btn-alerts-close" class="dialog-close" type="button" aria-label="Close">✕</button>
     </div>
     <div class="dialog-body">
@@ -481,7 +481,7 @@
   </div>
 </dialog>
 
-<dialog id="worktree-modal" class="action-dialog">
+<dialog id="worktree-modal" class="action-dialog" aria-labelledby="worktree-modal-title">
   <div class="dialog-content">
     <div class="dialog-header">
       <h2 id="worktree-modal-title">Primary Working Tree Busy</h2>
@@ -504,10 +504,10 @@
   </div>
 </dialog>
 
-<dialog id="shortcuts-modal" class="action-dialog shortcuts-modal">
+<dialog id="shortcuts-modal" class="action-dialog shortcuts-modal" aria-labelledby="shortcuts-modal-title">
   <div class="dialog-content shortcuts-modal-content">
     <div class="dialog-header">
-      <h2>Keyboard Shortcuts</h2>
+      <h2 id="shortcuts-modal-title">Keyboard Shortcuts</h2>
       <button id="shortcuts-modal-close-btn" class="dialog-close" type="button" aria-label="Close">✕</button>
     </div>
     <div class="dialog-body shortcuts-modal-body">
