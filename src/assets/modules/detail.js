@@ -360,6 +360,7 @@ export function renderDependencies(item) {
 
   var sel = document.createElement('select');
   sel.className = 'dep-add-select';
+  sel.setAttribute('aria-label', 'Relationship type');
   var optDep = document.createElement('option');
   optDep.value = 'depend';
   optDep.textContent = 'Prerequisite';
@@ -376,7 +377,8 @@ export function renderDependencies(item) {
 
   var inp = document.createElement('input');
   inp.className = 'dep-add-input';
-  inp.placeholder = 'Search item ID or title...';
+  inp.placeholder = 'Search item ID or title…';
+  inp.setAttribute('aria-label', 'Target item ID or title');
   inp.setAttribute('list', 'dep-items-datalist');
   row.appendChild(inp);
   form.appendChild(row);
@@ -571,9 +573,12 @@ export function renderActions(item) {
       els.actions.appendChild(mergedInd);
     } else if (item.git_status === 'pr_open' || (item.pr_url && item.pr_url.length > 0)) {
       var prLabel = item.pr_number ? 'View PR #' + item.pr_number + ' ↗' : 'View PR ↗';
-      btn(prLabel, true, function () {
-        if (item.pr_url) window.open(item.pr_url, '_blank', 'noopener,noreferrer');
-      });
+      var prActionLink = node('a', 'action-btn primary', prLabel);
+      prActionLink.href = item.pr_url || '#';
+      prActionLink.setAttribute('href', item.pr_url || '#');
+      prActionLink.target = '_blank';
+      prActionLink.rel = 'noopener noreferrer';
+      els.actions.appendChild(prActionLink);
     } else {
       btn('Commit + PR', true, function () {
         callbacks.sendCommitPrItem(item.id);

@@ -205,7 +205,7 @@ export function renderAlertsButton() {
   els.btnAlertsToggle.classList.toggle('alerts-active', anyEnabled);
   els.btnAlertsToggle.setAttribute(
     'aria-label',
-    anyEnabled ? 'Alert settings (enabled)' : 'Alert settings (muted)'
+    anyEnabled ? 'Alerts (enabled)' : 'Alerts (muted)'
   );
   els.btnAlertsToggle.title = desktopReady
     ? 'Alerts: desktop notifications + ' + (prefs.sound ? 'sound' : 'silent')

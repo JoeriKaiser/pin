@@ -554,15 +554,21 @@ export function bindGlobalShortcuts() {
       return;
     }
     var card = event.target && event.target.closest && event.target.closest('.board-card');
-    if (card && (event.key === 'Enter' || /^Arrow/.test(event.key))) {
+    if (card && !input && (event.key === 'Enter' || /^Arrow/.test(event.key))) {
+      var focusCard = function (targetCard) {
+        if (!targetCard) return;
+        var opener = targetCard.querySelector && targetCard.querySelector('.board-card-open');
+        if (opener && opener.focus) opener.focus();
+        else if (targetCard.focus) targetCard.focus();
+      };
       if (event.key === 'Enter') {
-        if (event.target === card || !/^(BUTTON|A|INPUT)$/.test(targetTag)) { event.preventDefault(); card.click(); return; }
+        if (event.target === card || !/^(BUTTON|A|INPUT|SELECT)$/.test(targetTag)) { event.preventDefault(); card.click(); return; }
       }
       var currentColContainer = card.closest('.board-col-cards');
       var colCards = currentColContainer ? Array.from(currentColContainer.querySelectorAll('.board-card')) : [];
       var cIdx = colCards.indexOf(card);
-      if (event.key === 'ArrowDown' && cIdx >= 0 && cIdx < colCards.length - 1) { event.preventDefault(); colCards[cIdx + 1].focus(); return; }
-      if (event.key === 'ArrowUp' && cIdx > 0) { event.preventDefault(); colCards[cIdx - 1].focus(); return; }
+      if (event.key === 'ArrowDown' && cIdx >= 0 && cIdx < colCards.length - 1) { event.preventDefault(); focusCard(colCards[cIdx + 1]); return; }
+      if (event.key === 'ArrowUp' && cIdx > 0) { event.preventDefault(); focusCard(colCards[cIdx - 1]); return; }
       if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
         var currentCol = card.closest('.board-col');
         var step = event.key === 'ArrowRight' ? 'nextElementSibling' : 'previousElementSibling';
@@ -574,7 +580,7 @@ export function bindGlobalShortcuts() {
             if (targetCards.length > 0) {
               event.preventDefault();
               var targetCard = targetCards[Math.min(cIdx >= 0 ? cIdx : 0, targetCards.length - 1)];
-              if (targetCard && targetCard.focus) targetCard.focus();
+              focusCard(targetCard);
               return;
             }
           }

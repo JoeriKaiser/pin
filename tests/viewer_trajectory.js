@@ -863,14 +863,18 @@ async function runHarness() {
   colBCards.appendChild(cardB);
 
   let focusedCard = null;
-  cardB.focus = function () { focusedCard = 'cardB'; };
-  cardA.focus = function () { focusedCard = 'cardA'; };
+  const openBtnA = cardA.querySelector('.board-card-open');
+  const openBtnB = cardB.querySelector('.board-card-open');
+  assert.strictEqual(cardA.tagName, 'ARTICLE', 'Board card uses semantic article element instead of nested button');
+  assert.ok(openBtnA && openBtnA.tagName === 'BUTTON', 'Board card exposes native button inside heading');
+  openBtnB.focus = function () { focusedCard = 'cardB'; };
+  openBtnA.focus = function () { focusedCard = 'cardA'; };
 
   let rightPrevented = false;
   document.dispatchEvent({
     type: 'keydown',
     key: 'ArrowRight',
-    target: cardA,
+    target: openBtnA,
     preventDefault() { rightPrevented = true; }
   });
   assert.strictEqual(rightPrevented, true, 'ArrowRight calls preventDefault');
@@ -880,7 +884,7 @@ async function runHarness() {
   document.dispatchEvent({
     type: 'keydown',
     key: 'ArrowLeft',
-    target: cardB,
+    target: openBtnB,
     preventDefault() { leftPrevented = true; }
   });
   assert.strictEqual(leftPrevented, true, 'ArrowLeft calls preventDefault');
@@ -2490,6 +2494,44 @@ async function runHarness() {
       }
     }
     console.log('PASS: CSS token integrity and WCAG 2.2 AA contrast verified');
+  }
+
+  console.log('\n--- 26. Testing Board Card Semantics, Priority Labels, and Accessible Names ---');
+  {
+    const doneCard26 = testExports.buildBoardCard({
+      id: 'a11y-done-1',
+      title: 'Accessible Done Card',
+      status: 'done',
+      type: 'task',
+      priority: 'high',
+      timestamp: Date.now()
+    });
+    assert.strictEqual(doneCard26.tagName, 'ARTICLE', 'Board card is an article, not a button');
+    const titleHeading26 = doneCard26.querySelector('.board-card-title');
+    assert.strictEqual(titleHeading26.tagName, 'H3', 'Board card heading is h3 under column h2');
+    const prioPill26 = doneCard26.querySelector('.priority-pill');
+    assert.ok(prioPill26 && prioPill26.textContent.includes('High'), 'Board card priority includes text label, not color alone');
+    const commitBtn26 = doneCard26.querySelector('.btn-commit-pr');
+    assert.ok(commitBtn26 && commitBtn26.getAttribute('aria-label').startsWith('Commit + PR'), 'Commit + PR aria-label starts with visible text');
+
+    testExports.renderActions({
+      id: 'a11y-pr-1',
+      title: 'PR Detail Item',
+      status: 'done',
+      type: 'task',
+      git_status: 'pr_open',
+      pr_url: 'https://github.com/example/repo/pull/7',
+      pr_number: 7
+    });
+    const detailPrLink26 = documentMock.getElementById('proposal-actions').children.find(el => el.tagName === 'A');
+    assert.ok(detailPrLink26, 'Detail View PR action renders as native anchor link');
+    assert.strictEqual(detailPrLink26.getAttribute('href'), 'https://github.com/example/repo/pull/7');
+
+    const htmlSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'assets', 'index.html'), 'utf8');
+    assert.ok(htmlSrc.includes('href="#workspace"'), 'Skip link targets #workspace');
+    assert.ok(htmlSrc.includes('id="btn-shortcuts"') && htmlSrc.includes('aria-label="Keyboard shortcuts"'), 'Shortcuts button has descriptive aria-label');
+    assert.ok(htmlSrc.includes('<kbd aria-hidden="true">/</kbd>'), 'Search shortcut hint is aria-hidden');
+    console.log('PASS: Board card semantics, priority labels, and accessible names verified');
   }
 
   console.log('\n========================================');

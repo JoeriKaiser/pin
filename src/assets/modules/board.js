@@ -86,8 +86,7 @@ export function handleCardDrop(droppedId, targetStatus) {
 }
 
 export function buildBoardCard(item) {
-  var card = node('button', 'board-card status-border-' + itemStatus(item));
-  card.type = 'button';
+  var card = node('article', 'board-card status-border-' + itemStatus(item));
   card.dataset.id = item.id;
   card.draggable = true;
 
@@ -95,14 +94,28 @@ export function buildBoardCard(item) {
   var idSpan = node('span', 'board-card-id', item.id.slice(0, 8));
   header.appendChild(idSpan);
 
-  if (priority(item) !== 'unset') {
-    var dot = node('span', 'priority-dot priority-' + priority(item));
-    dot.title = priority(item) + ' priority';
-    header.appendChild(dot);
+  var prio = priority(item);
+  if (prio !== 'unset') {
+    var prioLabel = prio === 'high' ? 'High' : (prio === 'medium' ? 'Med' : 'Low');
+    var prioPill = node('span', 'priority-pill priority-' + prio);
+    prioPill.title = prio + ' priority';
+    var dot = node('span', 'priority-dot priority-' + prio);
+    dot.setAttribute('aria-hidden', 'true');
+    prioPill.appendChild(dot);
+    prioPill.appendChild(document.createTextNode(prioLabel));
+    header.appendChild(prioPill);
   }
   card.appendChild(header);
 
-  var titleEl = node('h4', 'board-card-title', item.title || '(untitled)');
+  var titleEl = node('h3', 'board-card-title');
+  var openBtn = node('button', 'board-card-open', item.title || '(untitled)');
+  openBtn.type = 'button';
+  openBtn.addEventListener('click', function (e) {
+    if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+    setRoute(item.id);
+    setViewMode('detail');
+  });
+  titleEl.appendChild(openBtn);
   card.appendChild(titleEl);
 
   var meta = node('div', 'board-card-meta');
@@ -120,13 +133,15 @@ export function buildBoardCard(item) {
     if (waiting) {
       card.classList.add('card-waiting-reply');
       var waitBadge = node('span', 'card-waiting-indicator');
-      waitBadge.appendChild(node('span', 'needs-reply-dot'));
+      var waitDot = node('span', 'needs-reply-dot');
+      waitDot.setAttribute('aria-hidden', 'true');
+      waitBadge.appendChild(waitDot);
       waitBadge.appendChild(document.createTextNode('Needs reply'));
       meta.appendChild(waitBadge);
 
       var replyBtn = node('button', 'btn-reply-card', 'Reply');
       replyBtn.type = 'button';
-      replyBtn.setAttribute('aria-label', 'Reply to agent for ' + (item.title || item.id));
+      replyBtn.setAttribute('aria-label', 'Reply for ' + (item.title || item.id));
       replyBtn.addEventListener('click', function (e) {
         if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
         callbacks.openReplyModal(item.id);
@@ -134,14 +149,16 @@ export function buildBoardCard(item) {
       meta.appendChild(replyBtn);
     } else {
       var runBadge = node('span', 'card-running-indicator');
-      runBadge.appendChild(node('span', 'card-running-dot'));
+      var runDot = node('span', 'card-running-dot');
+      runDot.setAttribute('aria-hidden', 'true');
+      runBadge.appendChild(runDot);
       runBadge.appendChild(document.createTextNode('Running Agent'));
       meta.appendChild(runBadge);
     }
 
     var viewRunBtn = node('button', 'btn-view-run', 'View Run');
     viewRunBtn.type = 'button';
-    viewRunBtn.setAttribute('aria-label', 'View run for ' + (item.title || item.id));
+    viewRunBtn.setAttribute('aria-label', 'View Run for ' + (item.title || item.id));
     viewRunBtn.addEventListener('click', function (e) {
       if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
       callbacks.openAgentDrawer(item.id);
@@ -160,7 +177,7 @@ export function buildBoardCard(item) {
         prLink.target = '_blank';
         prLink.rel = 'noopener noreferrer';
         prLink.title = 'Open Pull Request: ' + (item.pr_url || '');
-        prLink.setAttribute('aria-label', 'View pull request for ' + (item.title || item.id));
+        prLink.setAttribute('aria-label', prLabel.replace(/\s*↗$/, '') + ' for ' + (item.title || item.id));
         prLink.addEventListener('click', function (e) {
           if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
         });
@@ -173,7 +190,7 @@ export function buildBoardCard(item) {
         var commitPrBtn = node('button', 'btn-commit-pr', 'Commit + PR');
         commitPrBtn.type = 'button';
         commitPrBtn.title = 'Start agent to commit worktree and create PR';
-        commitPrBtn.setAttribute('aria-label', 'Commit worktree and create pull request for ' + (item.title || item.id));
+        commitPrBtn.setAttribute('aria-label', 'Commit + PR for ' + (item.title || item.id));
         commitPrBtn.addEventListener('click', function (e) {
           if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
           callbacks.sendCommitPrItem(item.id);
@@ -216,7 +233,9 @@ export function buildBoardCard(item) {
     card.classList.remove('dragging');
   });
 
-  card.addEventListener('click', function () {
+  card.addEventListener('click', function (e) {
+    if (e && e.target && e.target.closest && e.target.closest('button, a, select, input')) return;
+    if (typeof window !== 'undefined' && window.getSelection && String(window.getSelection()).trim()) return;
     setRoute(item.id);
     setViewMode('detail');
   });

@@ -8,19 +8,19 @@
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
-<a class="skip" href="#reader">Skip to proposal</a>
+<a class="skip" href="#workspace">Skip to main content</a>
 <header class="topbar">
   <div class="identity"><strong>pin</strong><span id="scope"></span></div>
-  <label class="search"><span class="visually-hidden">Search items</span><input id="search" type="search" placeholder="Search items" autocomplete="off" spellcheck="false"><kbd>/</kbd></label>
+  <label class="search"><span class="visually-hidden">Search items</span><input id="search" type="search" placeholder="Search items" autocomplete="off" spellcheck="false"><kbd aria-hidden="true">/</kbd></label>
   <div class="topbar-actions">
     <button id="btn-needs-reply" class="control needs-reply-btn" type="button" title="Prompts waiting for your reply (r)" hidden><span class="needs-reply-dot" aria-hidden="true"></span><span id="needs-reply-count">1 needs reply</span></button>
-    <button id="btn-alerts-toggle" class="control alerts-btn" type="button" title="Alert settings" aria-label="Alert settings"><span class="alerts-status-dot" aria-hidden="true"></span>Alerts</button>
+    <button id="btn-alerts-toggle" class="control alerts-btn" type="button" title="Alert settings" aria-label="Alerts"><span class="alerts-status-dot" aria-hidden="true"></span>Alerts</button>
     <button id="btn-runner" class="control runner-btn" type="button" title="Runner settings">Runner <span id="runner-summary" class="runner-summary">agent:omp</span></button>
     <button id="btn-sync-git" class="control" type="button" title="Sync Git merge status">Sync Git</button>
     <button id="btn-update" class="control action-btn-update" type="button" title="Update pin" hidden>Update to <span id="update-version"></span></button>
     <button id="btn-new-ticket" class="control action-btn-accent" type="button" title="New spec ticket (n)">+ New Task</button>
-    <button id="btn-shortcuts" class="control" type="button" title="Keyboard shortcuts (?)">?</button>
-    <button id="btn-theme-toggle" class="control" type="button" title="Toggle theme (t)" aria-label="Toggle theme">◐</button>
+    <button id="btn-shortcuts" class="control" type="button" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts"><span aria-hidden="true">?</span></button>
+    <button id="btn-theme-toggle" class="control" type="button" title="Toggle theme (t)" aria-label="Toggle theme"><span aria-hidden="true">◐</span></button>
     <div class="view-switch" role="group" aria-label="View mode">
       <button id="view-board-btn" class="control view-btn" type="button" aria-pressed="true">Board</button>
       <button id="view-detail-btn" class="control view-btn" type="button" aria-pressed="false">Detail</button>
@@ -55,12 +55,13 @@
 </div>
 <div id="alert-announcer" class="visually-hidden" aria-live="assertive" aria-atomic="true"></div>
 
-<main id="workspace" class="workspace mode-board">
+<main id="workspace" class="workspace mode-board" tabindex="-1">
   <section id="board" class="board-view" aria-label="Board">
+    <h1 class="visually-hidden">Work board</h1>
     <div class="board-columns">
       <div class="board-col" data-col="created">
         <div class="board-col-header">
-          <span class="board-col-title">Backlog</span>
+          <h2 class="board-col-title">Backlog</h2>
           <span class="board-col-count" id="count-created">0</span>
         </div>
         <div id="quick-add-container" class="quick-add-container">
@@ -70,39 +71,39 @@
           </div>
           <form id="quick-add-form" class="quick-add-form" hidden>
             <div class="quick-add-header">
-              <input id="quick-add-input" class="quick-add-input" type="text" placeholder="Task or spec title…" autocomplete="off" required>
+              <input id="quick-add-input" class="quick-add-input" type="text" placeholder="Task or spec title…" aria-label="Task title" autocomplete="off" required>
               <div class="quick-add-header-actions">
-                <button id="quick-add-expand-btn" class="control icon-btn" type="button" title="Open in full modal editor">⤢</button>
-                <button id="quick-add-close-btn" class="control icon-btn" type="button" title="Collapse editor">✕</button>
+                <button id="quick-add-expand-btn" class="control icon-btn" type="button" title="Open in full modal editor" aria-label="Open in full modal editor"><span aria-hidden="true">⤢</span></button>
+                <button id="quick-add-close-btn" class="control icon-btn" type="button" title="Collapse editor" aria-label="Collapse quick add"><span aria-hidden="true">✕</span></button>
               </div>
             </div>
             <div class="quick-add-editor-wrap">
-              <textarea id="quick-add-body" class="quick-add-body" placeholder="Specification details, requirements, acceptance criteria… (Markdown)" rows="4"></textarea>
+              <textarea id="quick-add-body" class="quick-add-body" placeholder="Specification details, requirements, acceptance criteria… (Markdown)" aria-label="Task details" rows="4"></textarea>
               <div class="quick-add-snippets">
                 <button type="button" class="snippet-btn" data-insert="ac">+ Acceptance Criteria</button>
                 <button type="button" class="snippet-btn" data-insert="template">+ Spec Template</button>
               </div>
             </div>
             <div class="quick-add-meta">
-              <select id="quick-add-type" title="Type">
+              <select id="quick-add-type" title="Type" aria-label="Type">
                 <option value="task" selected>Task</option>
                 <option value="bug">Bug</option>
                 <option value="idea">Idea</option>
                 <option value="decision">Decision</option>
               </select>
-              <select id="quick-add-kind" title="Kind">
+              <select id="quick-add-kind" title="Kind" aria-label="Kind">
                 <option value="technical" selected>Technical</option>
                 <option value="product">Product</option>
                 <option value="business">Business</option>
                 <option value="project">Project</option>
               </select>
-              <select id="quick-add-priority" title="Priority">
+              <select id="quick-add-priority" title="Priority" aria-label="Priority">
                 <option value="">No priority</option>
                 <option value="high">High</option>
                 <option value="medium">Medium</option>
                 <option value="low">Low</option>
               </select>
-              <input id="quick-add-tags" class="quick-add-tags" type="text" placeholder="Tags (comma-separated)" autocomplete="off">
+              <input id="quick-add-tags" class="quick-add-tags" type="text" placeholder="Tags (comma-separated)" aria-label="Tags" autocomplete="off">
             </div>
             <div class="quick-add-footer">
               <span class="quick-add-hint">Cmd+Enter to create · Esc to cancel</span>
@@ -117,28 +118,28 @@
       </div>
       <div class="board-col" data-col="planned">
         <div class="board-col-header">
-          <span class="board-col-title">Planned</span>
+          <h2 class="board-col-title">Planned</h2>
           <span class="board-col-count" id="count-planned">0</span>
         </div>
         <div class="board-col-cards" data-drop-status="planned"></div>
       </div>
       <div class="board-col" data-col="in_progress">
         <div class="board-col-header">
-          <span class="board-col-title">In Progress</span>
+          <h2 class="board-col-title">In Progress</h2>
           <span class="board-col-count" id="count-in_progress">0</span>
         </div>
         <div class="board-col-cards" data-drop-status="in_progress"></div>
       </div>
       <div class="board-col" data-col="blocked">
         <div class="board-col-header">
-          <span class="board-col-title">Blocked</span>
+          <h2 class="board-col-title">Blocked</h2>
           <span class="board-col-count" id="count-blocked">0</span>
         </div>
         <div class="board-col-cards" data-drop-status="blocked"></div>
       </div>
       <div class="board-col" data-col="done">
         <div class="board-col-header">
-          <span class="board-col-title">Done</span>
+          <h2 class="board-col-title">Done</h2>
           <span class="board-col-count" id="count-done">0</span>
         </div>
         <div class="board-col-cards" data-drop-status="done"></div>
@@ -157,7 +158,7 @@
     <ul id="list" class="proposal-list"></ul>
   </section>
 
-  <section id="reader" class="reader" tabindex="-1" aria-labelledby="proposal-title">
+  <section id="reader" class="reader" tabindex="-1" aria-label="Item details">
     <button id="back" class="back control" type="button">← Work items</button>
     <div class="reader-tabs" id="reader-tabs" hidden>
       <button type="button" class="reader-tab active" id="tab-task-spec">Task Spec</button>
@@ -254,13 +255,14 @@
           </div>
         </div>
         <div id="agent-thoughts" class="agent-thoughts-stream visually-hidden" aria-hidden="true"></div>
-        <div id="agent-tools" class="agent-tools-list visually-hidden" aria-hidden="true">
-          <button id="btn-toggle-tools" class="control text-button" type="button" hidden>Expand all</button>
+        <div id="agent-tools" class="agent-tools-list visually-hidden">
+          <button id="btn-toggle-tools" class="control text-button" type="button" tabindex="-1" hidden>Expand all</button>
         </div>
       </div>
     </aside>
   </section>
   <section id="agents" class="agents-view" aria-label="Running agents" hidden>
+    <h1 class="visually-hidden">Running agents</h1>
     <div class="agents-container">
       <div id="agents-empty" class="agents-empty" hidden>
         <p>No agents currently running</p>

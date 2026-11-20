@@ -471,12 +471,14 @@ a:hover {
   gap: var(--space-1-5);
   cursor: pointer;
   white-space: nowrap;
+  text-decoration: none;
   transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast), transform var(--transition-fast);
 }
 
 .action-btn:hover {
   background: var(--soft);
   border-color: var(--line-strong);
+  text-decoration: none;
 }
 
 .action-btn:active {
@@ -1395,6 +1397,7 @@ a:hover {
 }
 
 .board-col-title {
+  margin: 0;
   display: inline-flex;
   align-items: center;
   gap: var(--space-1-5);
@@ -1458,9 +1461,12 @@ a:hover {
   gap: var(--space-2);
   text-align: left;
   cursor: pointer;
-  user-select: none;
   box-shadow: var(--shadow-xs);
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
+}
+
+.board-card:focus-within {
+  border-color: var(--focus);
 }
 
 .board-card:hover {
@@ -1478,6 +1484,7 @@ a:hover {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: var(--space-2);
 }
 
 .board-card-id {
@@ -1493,10 +1500,23 @@ a:hover {
   line-height: var(--leading-snug);
   color: var(--ink);
   margin: 0;
+}
+
+.board-card-open {
   display: -webkit-box;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  width: 100%;
+  text-align: start;
+  color: inherit;
+  font: inherit;
+  border-radius: var(--radius-xs);
+}
+
+.board-card-open:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
 
 .board-card-meta {
@@ -1507,9 +1527,32 @@ a:hover {
 }
 
 /* Priority Indicators */
+.priority-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-none);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.priority-pill.priority-high {
+  color: var(--priority-high);
+}
+
+.priority-pill.priority-medium {
+  color: var(--warning-ink);
+}
+
+.priority-pill.priority-low {
+  color: var(--priority-low);
+}
+
 .priority-dot {
-  width: 7px;
-  height: 7px;
+  width: 6px;
+  height: 6px;
   border-radius: var(--radius-full);
   display: inline-block;
   flex-shrink: 0;
