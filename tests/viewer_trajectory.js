@@ -2690,6 +2690,17 @@ async function runHarness() {
     console.log('PASS: Human-readable status labels and typography rules verified');
   }
 
+  console.log('\n--- 33. Testing Motion Discipline and Theme-Switch Transition Suppression ---');
+  {
+    const cssSrc33 = fs.readFileSync(path.join(__dirname, '..', 'src', 'assets', 'app.css'), 'utf8');
+    assert.ok(cssSrc33.includes(':root.theme-switching'), 'Theme switch transition suppression class is defined');
+    assert.ok(cssSrc33.includes(':not(:disabled):active'), 'Press scale excludes disabled buttons');
+    assert.ok(cssSrc33.includes('scale(0.96)'), 'Press feedback scales to 0.96');
+    assert.ok(cssSrc33.includes('prefers-reduced-motion: no-preference'), 'Motion animations are gated behind prefers-reduced-motion: no-preference');
+    assert.ok(!cssSrc33.includes('transition: all'), 'No transition: all declarations');
+    console.log('PASS: Motion discipline and theme-switch transition suppression verified');
+  }
+
   console.log('\n========================================');
   console.log('ALL VIEWER TRAJECTORY TESTS PASSED (0)');
   console.log('========================================');

@@ -636,23 +636,38 @@ export function toggleTheme() {
     next = null;
   }
 
+  var root = document.documentElement;
+  if (root.classList && typeof root.classList.add === 'function') {
+    root.classList.add('theme-switching');
+  }
+
   try {
     if (next) {
-      if (typeof document.documentElement.setAttribute === 'function') {
-        document.documentElement.setAttribute('data-theme', next);
+      if (typeof root.setAttribute === 'function') {
+        root.setAttribute('data-theme', next);
       }
       if (typeof localStorage !== 'undefined' && localStorage && typeof localStorage.setItem === 'function') {
         localStorage.setItem('pin-theme', next);
       }
     } else {
-      if (typeof document.documentElement.removeAttribute === 'function') {
-        document.documentElement.removeAttribute('data-theme');
+      if (typeof root.removeAttribute === 'function') {
+        root.removeAttribute('data-theme');
       }
       if (typeof localStorage !== 'undefined' && localStorage && typeof localStorage.removeItem === 'function') {
         localStorage.removeItem('pin-theme');
       }
     }
   } catch (_) {}
+
+  if (root.classList && typeof root.classList.remove === 'function') {
+    void root.offsetHeight;
+    var raf = (typeof window !== 'undefined' && window && typeof window.requestAnimationFrame === 'function')
+      ? window.requestAnimationFrame
+      : function (cb) { setTimeout(cb, 0); };
+    raf(function () {
+      root.classList.remove('theme-switching');
+    });
+  }
 }
 
 export function bind(options) {
