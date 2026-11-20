@@ -659,6 +659,12 @@ impl AcpManager {
     }
 
     pub fn send_message(&self, item_id: &str, message: &str) -> Result<(), AcpManagerError> {
+        let trimmed = message.trim();
+        if trimmed.is_empty() {
+            return Err(AcpManagerError::Workflow(
+                "Message cannot be empty".to_string(),
+            ));
+        }
         let runs = self
             .active_runs
             .lock()
@@ -666,7 +672,7 @@ impl AcpManager {
         if let Some(key) = resolve_run_key(&runs, item_id) {
             if let Some(run) = runs.get(&key) {
                 if let Some(sender) = &run.prompt_sender {
-                    sender.send(message.to_string()).map_err(|_| {
+                    sender.send(trimmed.to_string()).map_err(|_| {
                         AcpManagerError::Client("Run prompt receiver closed".to_string())
                     })?;
                     return Ok(());
@@ -1637,9 +1643,7 @@ fn enter_waiting_state(
         };
         live.waiting_for_user = true;
         live.waiting_since = Some(waiting_since);
-        if captured.is_some() {
-            live.last_message = captured.clone();
-        }
+        live.last_message = captured;
         live.last_activity = Some("Waiting for reply".to_string());
         live.last_message.clone()
     } else {
@@ -2282,6 +2286,8 @@ mod tests {
         );
         let res = mgr.send_message("nonexistent", "hello");
         assert!(matches!(res, Err(AcpManagerError::ItemNotFound(_))));
+        let empty_res = mgr.send_message("nonexistent", "   \n\t  ");
+        assert!(matches!(empty_res, Err(AcpManagerError::Workflow(_))));
     }
 
     #[test]
