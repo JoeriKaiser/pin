@@ -722,22 +722,71 @@ export function copyToolOutput() {
   if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(els.inspectorOutput.textContent || '');
 }
 
+function svgNode(tag, className, value) {
+  var n = (typeof document !== 'undefined' && typeof document.createElementNS === 'function')
+    ? document.createElementNS('http://www.w3.org/2000/svg', tag)
+    : document.createElement(tag);
+  if (className) n.setAttribute('class', className);
+  if (value != null) text(n, value);
+  return n;
+}
+
 export function renderSwimlaneSvg() {
   if (!els.swimlaneSvg || !state.trajectory) return;
   clear(els.swimlaneSvg);
-  var lanes = { input: 20, model: 50, tools: 80 };
-  ['Input', 'Model', 'Tools'].forEach(function (l) {
-    var txt = node('text', 'swimlane-lane-label', l);
-    txt.setAttribute('x', '10');
-    txt.setAttribute('y', String(lanes[l.toLowerCase()] + 4));
+  var lanes = { input: 14, model: 32, tools: 50 };
+  var laneOrder = [
+    { key: 'input', label: 'Input' },
+    { key: 'model', label: 'Model' },
+    { key: 'tools', label: 'Tools' }
+  ];
+  laneOrder.forEach(function (lane) {
+    var y = lanes[lane.key];
+    var line = svgNode('line', 'swimlane-lane-line');
+    line.setAttribute('x1', '48');
+    line.setAttribute('x2', '790');
+    line.setAttribute('y1', String(y));
+    line.setAttribute('y2', String(y));
+    els.swimlaneSvg.appendChild(line);
+
+    var txt = svgNode('text', 'swimlane-lane-label', lane.label);
+    txt.setAttribute('x', '8');
+    txt.setAttribute('y', String(y + 3));
     els.swimlaneSvg.appendChild(txt);
   });
-  (state.trajectory.steps || []).forEach(function (s, idx) {
-    var c = node('circle', 'swimlane-node swimlane-node-' + s.lane);
-    c.setAttribute('cx', String(60 + idx * 30));
-    c.setAttribute('cy', String(lanes[s.lane] || 50));
-    c.setAttribute('r', '6');
+
+  var steps = state.trajectory.steps || [];
+  var maxSpan = 720;
+  var gap = steps.length > 1 ? Math.min(32, maxSpan / (steps.length - 1)) : 32;
+  var prevX = null;
+  var prevY = null;
+
+  steps.forEach(function (s, idx) {
+    var cx = Math.round(62 + idx * gap);
+    var cy = lanes[s.lane] || lanes.model;
+    if (prevX != null && prevY != null) {
+      var seg = svgNode('line', 'swimlane-connector');
+      seg.setAttribute('x1', String(prevX));
+      seg.setAttribute('y1', String(prevY));
+      seg.setAttribute('x2', String(cx));
+      seg.setAttribute('y2', String(cy));
+      els.swimlaneSvg.appendChild(seg);
+    }
+    var c = svgNode('circle', 'swimlane-node swimlane-node-' + s.lane + (s.callId ? ' swimlane-node-clickable' : ''));
+    c.setAttribute('cx', String(cx));
+    c.setAttribute('cy', String(cy));
+    c.setAttribute('r', '5');
+    if (s.label) {
+      c.appendChild(svgNode('title', '', s.label));
+    }
+    if (s.callId) {
+      c.addEventListener('click', function () {
+        openToolInspector(s.callId);
+      });
+    }
     els.swimlaneSvg.appendChild(c);
+    prevX = cx;
+    prevY = cy;
   });
 }
 

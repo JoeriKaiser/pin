@@ -2592,6 +2592,33 @@ async function runHarness() {
     console.log('PASS: ARIA tablists, keyboard tool rows, form validation, and Runner Cmd+Enter verified');
   }
 
+  console.log('\n--- 28. Testing Swimlane SVG ViewBox Bounds and Clickable Tool Nodes ---');
+  {
+    openAgentDrawer('swim-test-item');
+    handleAgentStreamEvent({
+      type: 'agent_thought_chunk',
+      update: { sessionUpdate: 'agent_thought_chunk', content: { text: 'Planning step' } }
+    });
+    handleAgentStreamEvent({
+      type: 'tool_call',
+      update: { toolCallId: 'swim-call-1', name: 'bash', rawInput: { command: 'cargo test' }, status: 'running' }
+    });
+    const svgEl28 = documentMock.getElementById('agent-swimlane-svg');
+    const circles28 = svgEl28.children.filter(c => c.tagName === 'CIRCLE');
+    assert.ok(circles28.length >= 3, 'Swimlane renders input, model, and tool nodes');
+    circles28.forEach(c => {
+      const cy = Number(c.getAttribute('cy'));
+      assert.ok(cy > 0 && cy < 64, `Swimlane circle cy=${cy} fits inside viewBox height 64`);
+    });
+    const toolCircle28 = circles28.find(c => (c.getAttribute('class') || '').includes('swimlane-node-tools'));
+    assert.ok(toolCircle28, 'Swimlane renders tools lane node');
+    toolCircle28.click();
+    assert.strictEqual(documentMock.getElementById('agent-tool-inspector').hidden, false, 'Clicking swimlane tool node opens tool inspector');
+    testExports.closeToolInspector();
+    closeAgentDrawer();
+    console.log('PASS: Swimlane SVG viewBox bounds and clickable tool nodes verified');
+  }
+
   console.log('\n========================================');
   console.log('ALL VIEWER TRAJECTORY TESTS PASSED (0)');
   console.log('========================================');

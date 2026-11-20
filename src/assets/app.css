@@ -1154,9 +1154,14 @@ a:hover {
   height: 100%;
 }
 
-.workspace.mode-detail #index,
-.workspace.mode-detail #reader {
+.workspace.mode-detail #index {
   display: block;
+}
+
+.workspace.mode-detail #reader {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .workspace.mode-agents #agents {
@@ -2197,12 +2202,21 @@ a:hover {
   padding: 0;
   background: var(--bg);
   height: 100%;
-  overflow-y: auto;
+  min-height: 0;
+  overflow: hidden;
   position: relative;
+}
+
+#proposal {
+  flex: 1 1 0%;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .reader-empty {
   display: grid;
+  flex: 1 1 0%;
   min-height: 22rem;
   place-items: center;
   color: var(--faint);
@@ -2882,6 +2896,7 @@ a:hover {
    12. Reader Tabs & Agent Execution Drawer
    -------------------------------------------------------------------------- */
 .reader-tabs {
+  flex-shrink: 0;
   display: flex;
   gap: var(--space-4);
   border-bottom: 1px solid var(--line);
@@ -2920,17 +2935,13 @@ a:hover {
 }
 
 .agent-drawer {
-  position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: min(56rem, 92vw);
+  flex: 1 1 0%;
+  min-height: 0;
+  position: relative;
   background: var(--surface-raised);
-  border-left: 1px solid var(--line-strong);
-  box-shadow: var(--shadow-drawer);
-  z-index: 100;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .agent-drawer-header {
@@ -3265,6 +3276,32 @@ a:hover {
 .swimlane-bar-tools {
   fill: var(--role-context);
   rx: 2;
+}
+
+.swimlane-connector {
+  stroke: var(--line-strong);
+  stroke-width: 1.5;
+}
+
+.swimlane-node {
+  stroke: var(--surface);
+  stroke-width: 1.5;
+}
+
+.swimlane-node-input {
+  fill: var(--role-context);
+}
+
+.swimlane-node-model {
+  fill: var(--role-model);
+}
+
+.swimlane-node-tools {
+  fill: var(--role-tool);
+}
+
+.swimlane-node-clickable {
+  cursor: pointer;
 }
 
 .agent-trajectory-stream {
@@ -4323,11 +4360,14 @@ footer {
   }
 
   body.detail-open .workspace.mode-detail #reader {
-    display: block;
+    display: flex;
+    flex-direction: column;
   }
 
   .back {
     display: inline-flex;
+    flex-shrink: 0;
+    align-self: flex-start;
     margin: var(--space-3) var(--space-3) var(--space-2);
   }
 
