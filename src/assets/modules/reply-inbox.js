@@ -100,12 +100,17 @@ function setReplySubmitting(submitting) {
 
 function renderReplyQueue(waitingRuns) {
   if (!els.replyModalQueue) return;
+  var focusedItemId = null;
+  if (typeof document !== 'undefined' && document.activeElement && els.replyModalQueue.contains && els.replyModalQueue.contains(document.activeElement)) {
+    focusedItemId = document.activeElement.dataset ? document.activeElement.dataset.itemId : null;
+  }
   clear(els.replyModalQueue);
   if (waitingRuns.length <= 1) {
     els.replyModalQueue.hidden = true;
     return;
   }
   els.replyModalQueue.hidden = false;
+  var btnToFocus = null;
   waitingRuns.forEach(function (run, idx) {
     var itm = find(run.item_id);
     var label = (itm && itm.title) ? itm.title : run.item_id.slice(0, 8);
@@ -123,7 +128,15 @@ function renderReplyQueue(waitingRuns) {
       renderReplyModalForItem(run.item_id);
     });
     els.replyModalQueue.appendChild(btn);
+    if (focusedItemId && run.item_id === focusedItemId) {
+      btnToFocus = btn;
+    } else if (focusedItemId && isActive && !btnToFocus) {
+      btnToFocus = btn;
+    }
   });
+  if (btnToFocus && typeof btnToFocus.focus === 'function') {
+    try { btnToFocus.focus(); } catch (_) {}
+  }
 }
 
 export function renderQuickHelpersInto(container, inputEl, messageText, onDraftChange) {
