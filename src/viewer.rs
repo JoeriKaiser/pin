@@ -238,10 +238,21 @@ fn rollback_failed_start(snapshot: &ViewSnapshot, filename: &str, updated_meta: 
     let Some(previous) = updated_meta.activity.last().and_then(|event| event.from) else {
         return;
     };
+    let actor = snapshot.acp_manager.runner_settings().actor;
+    if updated_meta.claimed_by.is_some() {
+        let _ = workflow::release_item_to_status(
+            &snapshot.vault_path,
+            filename,
+            Some(&actor),
+            true,
+            None,
+            previous,
+        );
+        return;
+    }
     if previous == updated_meta.current_status() {
         return;
     }
-    let actor = snapshot.acp_manager.runner_settings().actor;
     let _ = workflow::transition_item(
         &snapshot.vault_path,
         filename,
@@ -1443,14 +1454,21 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                 match mutation_result {
                     Ok(updated_meta) => {
                         if is_starting_run {
-                            if let Err(err) = snapshot.acp_manager.start_run_interactive(
-                                id,
-                                payload.use_worktree.unwrap_or(false),
-                                payload.interactive.unwrap_or(false),
-                            ) {
+                            let start_res = if updated_meta.work_type() == WorkType::Idea {
+                                snapshot
+                                    .acp_manager
+                                    .start_idea_run(id, payload.use_worktree.unwrap_or(false))
+                            } else {
+                                snapshot.acp_manager.start_run_interactive(
+                                    id,
+                                    payload.use_worktree.unwrap_or(false),
+                                    payload.interactive.unwrap_or(false),
+                                )
+                            };
+                            if let Err(err) = start_res {
                                 // The mutation already moved the item. A run
                                 // that never launched must not strand it.
-                                rollback_failed_start(&snapshot, &filename, &updated_meta);
+                                rollback_failed_start(snapshot, &filename, &updated_meta);
                                 let (status_code, reason, body) = start_failure_response(&err);
                                 send_response(
                                     &mut stream,
@@ -1466,6 +1484,8 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                             }
                         } else if payload.action == "release"
                             || payload.action == "archive"
+                            || payload.action == "complete"
+                            || payload.action == "close"
                             || (payload.action == "transition"
                                 && payload.to != Some(Status::InProgress))
                         {
