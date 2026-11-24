@@ -212,7 +212,7 @@ Duplicate titles are rejected by default. Use `--allow-duplicate` only when the 
 ## Commands
 
 - `pin context [--project <name>] [--tag <name>] [--kind <kind>] [--type <type>] [--status <status>] [--parent <id>] [--limit <n>] [--group kind] [--archived|--all] [--format json|plain]`
-- `pin add <markdown> --kind technical|product|business|project [--stdin] [--project <name>] [--title <title>] [--tags <csv>] [--priority low|medium|high] [--type idea|task|bug|decision] [--status <status>] [--parent <id>] [--depends-on <id>] [--format json|plain]`
+- `pin add <markdown> [--kind technical|product|business|project] [--stdin] [--project <name>] [--title <title>] [--tags <csv>] [--priority low|medium|high] [--type idea|task|bug|decision] [--status <status>] [--actor <name>] [--parent <id>] [--depends-on <id>] [--allow-duplicate] [--format json|plain]`
 - `pin list [--project <name>] [--tag <name>] [--kind <kind>] [--type <type>] [--status <status>] [--claimed-by <actor>] [--parent <id>] [--ready] [--archived|--all] [--format json|table|plain]`
 - `pin list-project [--tag <name>] [--kind <kind>] [--type <type>] [--status <status>] [--claimed-by <actor>] [--parent <id>] [--ready] [--archived|--all] [--format json|table|plain]`
 - `pin search <query> [--project <name>] [--tag <name>] [--kind <kind>] [--type <type>] [--status <status>] [--claimed-by <actor>] [--parent <id>] [--ready] [--limit <n>] [--archived|--all] [--format json|table|plain]`
@@ -229,17 +229,18 @@ Duplicate titles are rejected by default. Use `--allow-duplicate` only when the 
 - `pin relate|unrelate <id|id-prefix|filename> <related-id> [--remove] [--actor <name>] [--expect-revision <n>] [--format json|plain]`
 - `pin to-spec <id|prefix|filename> [--title <text>] [--body <text>] [--actor <name>] [--expect-revision <n>] [--format json|plain]`
 - `pin doctor [--repair] [--upgrade] [--strict] [--format json|plain]`
-- `pin archive <id|prefix|filename> [--resolution implemented|rejected|superseded|stale] [--note <text>]`
-- `pin unarchive <id|prefix|filename>`
-- `pin read|edit <id|prefix|filename> [--format json|plain]`
+- `pin archive <id|prefix|filename> [--resolution implemented|rejected|superseded|stale] [--note <text>] [--actor <name>] [--expect-revision <n>] [--format json|plain]`
+- `pin unarchive <id|prefix|filename> [--actor <name>] [--expect-revision <n>] [--format json|plain]`
+- `pin read <id|prefix|filename> [--format json|plain]`
+- `pin edit <id|prefix|filename> [--title <text>] [--priority low|medium|high] [--tags <csv>] [--kind <kind>] [--type <type>] [--body <text>|--stdin] [--expect-revision <n>] [--format json|plain]`
 - `pin rm <id|prefix|filename>... [--format json|plain]`
 - `pin stats [--project <name>] [--format json|plain]`
 - `pin sync [id|prefix|filename] [--project <name>] [--dry-run] [--force] [--format json|plain]`
 - `pin update [--check] [--force] [--format json|plain]`
-- `pin init --local [--project <name>]`
-- `pin import|export <directory> [--force]`
-- `pin view [--project <name>] [--tag <name>] [--kind <kind>] [--type <type>] [--status <status>] [--archived|--all] [--port <n>] [--no-open] [--format json|plain]`
-- `pin view-project [--tag <name>] [--kind <kind>] [--type <type>] [--status <status>] [--archived|--all] [--port <n>] [--no-open] [--format json|plain]`
+- `pin init --local [--project <name>] [--format json|plain]`
+- `pin import|export <directory> [--force] [--format json|plain]`
+- `pin view [--project <name>] [--tag <name>] [--kind <kind>] [--type <type>] [--status <status>] [--archived|--all] [--port <n>] [--no-open] [--acp-command <cmd>] [--acp-actor <actor>] [--acp-model <model>] [--notify-command <cmd>] [--format json|plain]`
+- `pin view-project [--tag <name>] [--kind <kind>] [--type <type>] [--status <status>] [--archived|--all] [--port <n>] [--no-open] [--acp-command <cmd>] [--acp-actor <actor>] [--acp-model <model>] [--notify-command <cmd>] [--format json|plain]`
 
 Agents must prefer `context`, `next`, `list`, or `read` for retrieving work items. Do not call `view` or `view-project` in headless automated sessions unless explicitly parsing the loopback URL printed on stdout using `--no-open`.
 

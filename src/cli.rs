@@ -71,10 +71,12 @@ pub fn print_usage() {
          doctor [--repair] [--upgrade] [--strict] [--format json|plain]\n  \
          archive <id|prefix|filename>\n          \
          [--resolution implemented|rejected|superseded|stale]\n          \
-         [--note <text>] [--format json|plain]\n  \
-         unarchive <id|prefix|filename> [--format json|plain]\n  \
+         [--note <text>] [--actor <name>] [--expect-revision <n>] [--format json|plain]\n  \
+         unarchive <id|prefix|filename> [--actor <name>] [--expect-revision <n>] [--format json|plain]\n  \
          read <id|prefix|filename> [--format json|plain]\n  \
-         edit <id|prefix|filename> [--format json|plain]\n  \
+         edit <id|prefix|filename> [--title <text>] [--priority low|medium|high]\n       \
+         [--tags <csv>] [--kind <kind>] [--type <type>] [--body <text>|--stdin]\n       \
+         [--expect-revision <n>] [--format json|plain]\n  \
          rm <id|prefix|filename>... [--format json|plain]\n  \
          import <directory> [--force] [--format json|plain]\n  \
          export <directory> [--force] [--format json|plain]\n  \
