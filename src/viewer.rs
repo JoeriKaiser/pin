@@ -20,7 +20,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-const VIEW_CSP: &str = "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; sandbox allow-scripts allow-same-origin allow-forms";
+const VIEW_CSP: &str = "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'";
+const SVG_CSP: &str = "default-src 'none'; sandbox";
 
 /// Bodies are small JSON payloads. Anything larger is a mistake or a stuck
 /// client, and must not be turned into an allocation.
@@ -396,8 +397,13 @@ fn send_response(
         header_str.push_str(&format!("ETag: \"{clean_etag}\"\r\n"));
     }
     if extra_security {
+        let csp = if content_type == "image/svg+xml" {
+            SVG_CSP
+        } else {
+            VIEW_CSP
+        };
         header_str.push_str(&format!(
-            "Content-Security-Policy: {VIEW_CSP}\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\nCache-Control: no-store\r\n"
+            "Content-Security-Policy: {csp}\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\nCache-Control: no-store\r\n"
         ));
     }
     header_str.push_str("\r\n");
@@ -3124,5 +3130,52 @@ mod tests {
             content,
             "waiting_for_user|0123456789ab|Design Auth Flow|idea|1. Cookie or token? 2. Rotate daily?|http://127.0.0.1:4321/tok/#/item/0123456789ab"
         );
+    }
+
+    #[test]
+    fn test_csp_allows_popups_for_viewer_and_sandboxes_svg() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let l1 = listener.try_clone().unwrap();
+        let h1 = std::thread::spawn(move || {
+            let (mut stream, _) = l1.accept().unwrap();
+            send_response(
+                &mut stream,
+                200,
+                "OK",
+                "text/html; charset=utf-8",
+                b"<html></html>",
+                true,
+                true,
+                None,
+            );
+        });
+        let mut c1 = std::net::TcpStream::connect(addr).unwrap();
+        let mut resp1 = String::new();
+        c1.read_to_string(&mut resp1).unwrap();
+        h1.join().unwrap();
+        assert!(resp1.contains("Content-Security-Policy: default-src 'none'"));
+        assert!(!resp1.contains("sandbox"));
+
+        let l2 = listener.try_clone().unwrap();
+        let h2 = std::thread::spawn(move || {
+            let (mut stream, _) = l2.accept().unwrap();
+            send_response(
+                &mut stream,
+                200,
+                "OK",
+                "image/svg+xml",
+                b"<svg></svg>",
+                true,
+                true,
+                None,
+            );
+        });
+        let mut c2 = std::net::TcpStream::connect(addr).unwrap();
+        let mut resp2 = String::new();
+        c2.read_to_string(&mut resp2).unwrap();
+        h2.join().unwrap();
+        assert!(resp2.contains("Content-Security-Policy: default-src 'none'; sandbox\r\n"));
     }
 }
