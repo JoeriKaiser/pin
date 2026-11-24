@@ -33,33 +33,39 @@ pub fn init(args: &[String], command: &str, _vault_path: &Path) -> CliResult<()>
 
     fs::create_dir_all(&local_vault)
         .map_err(|e| CliError::usage(format!("Failed to create vault directory: {e}")))?;
-    let _ = fs::write(local_vault.join(".gitkeep"), "");
+    fs::write(local_vault.join(".gitkeep"), "")
+        .map_err(|e| CliError::usage(format!("Failed to write .gitkeep: {e}")))?;
 
     let gitignore_path = local_vault.join(".gitignore");
     if !gitignore_path.exists() {
-        let _ = fs::write(
+        fs::write(
             &gitignore_path,
             "*.lock\n.*.lock\n.*.edit-recovery.tmp\nruns/\n",
-        );
+        )
+        .map_err(|e| CliError::usage(format!("Failed to write vault .gitignore: {e}")))?;
     }
 
     let config_path = root.join(".pin-project");
-    if !config_path.exists() {
-        let name = project.unwrap_or_else(|| {
-            root.file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("project")
-                .to_string()
-        });
-        let _ = fs::write(&config_path, format!("{name}\n"));
+    if let Some(name) = project {
+        fs::write(&config_path, format!("{name}\n"))
+            .map_err(|e| CliError::usage(format!("Failed to write .pin-project: {e}")))?;
+    } else if !config_path.exists() {
+        let name = root
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("project")
+            .to_string();
+        fs::write(&config_path, format!("{name}\n"))
+            .map_err(|e| CliError::usage(format!("Failed to write .pin-project: {e}")))?;
     }
 
     let fmt = format.unwrap_or_else(|| default_format(OutputFormat::Plain));
     if fmt == OutputFormat::Json {
-        println!(
-            "{{\"vault\":\"{}\",\"scope\":\"local\"}}",
-            local_vault.display()
-        );
+        let out = serde_json::json!({
+            "vault": local_vault.to_string_lossy(),
+            "scope": "local",
+        });
+        println!("{out}");
     } else {
         println!("Initialized local vault at {}", local_vault.display());
     }
@@ -144,12 +150,12 @@ pub fn archive(args: &[String], command: &str, vault_path: &Path) -> CliResult<(
     let filename =
         resolve_selector(&vault_path, selector).map_err(|e| CliError::usage(e.to_string()))?;
 
-    let actor_name = actor.or_else(|| env::var("PIN_ACTOR").ok());
+    let actor_name = crate::cli::resolve_actor(actor.as_deref());
     let meta = workflow::archive_item(
         &vault_path,
         &filename,
         resolution,
-        actor_name.as_deref(),
+        Some(&actor_name),
         note.as_deref(),
         expect_revision,
     )
@@ -201,14 +207,9 @@ pub fn unarchive(args: &[String], command: &str, vault_path: &Path) -> CliResult
     let filename =
         resolve_selector(&vault_path, selector).map_err(|e| CliError::usage(e.to_string()))?;
 
-    let actor_name = actor.or_else(|| env::var("PIN_ACTOR").ok());
-    let meta = workflow::unarchive_item(
-        &vault_path,
-        &filename,
-        actor_name.as_deref(),
-        expect_revision,
-    )
-    .map_err(|e| CliError::usage(e.to_string()))?;
+    let actor_name = crate::cli::resolve_actor(actor.as_deref());
+    let meta = workflow::unarchive_item(&vault_path, &filename, Some(&actor_name), expect_revision)
+        .map_err(|e| CliError::usage(e.to_string()))?;
 
     let fmt = format.unwrap_or_else(|| default_format(OutputFormat::Plain));
     if fmt == OutputFormat::Json {
