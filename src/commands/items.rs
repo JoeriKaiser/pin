@@ -799,9 +799,8 @@ pub fn tree(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> 
     let roots: Vec<&IdeaMeta> = if let Some(s) = selector {
         let filename =
             resolve_selector(vault_path, &s).map_err(|e| CliError::usage(e.to_string()))?;
-        let root_id = filename.trim_end_matches(".md");
-        match id_map.get(root_id) {
-            Some(item) => vec![*item],
+        match ideas.iter().find(|i| i.filename == filename) {
+            Some(item) => vec![item],
             None => {
                 return Err(CliError::usage(format!(
                     "Item '{s}' not found in the selected project/filter"
@@ -822,6 +821,47 @@ pub fn tree(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> 
                 &i.id,
             )
         });
+
+        let mut reachable: HashSet<&str> = HashSet::new();
+        let mut stack: Vec<&str> = r.iter().map(|i| i.id.as_str()).collect();
+        while let Some(curr) = stack.pop() {
+            if reachable.insert(curr) {
+                if let Some(children) = children_map.get(curr) {
+                    for child in children {
+                        stack.push(child.id.as_str());
+                    }
+                }
+            }
+        }
+
+        if reachable.len() < ideas.len() {
+            let mut remaining: Vec<&IdeaMeta> = ideas
+                .iter()
+                .filter(|i| !reachable.contains(i.id.as_str()))
+                .collect();
+            remaining.sort_by_key(|i| {
+                (
+                    i.created_at_ns.unwrap_or(i.timestamp * 1_000_000_000),
+                    &i.id,
+                )
+            });
+            for item in remaining {
+                if reachable.contains(item.id.as_str()) {
+                    continue;
+                }
+                r.push(item);
+                let mut cycle_stack = vec![item.id.as_str()];
+                while let Some(curr) = cycle_stack.pop() {
+                    if reachable.insert(curr) {
+                        if let Some(children) = children_map.get(curr) {
+                            for child in children {
+                                cycle_stack.push(child.id.as_str());
+                            }
+                        }
+                    }
+                }
+            }
+        }
         r
     };
 
