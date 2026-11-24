@@ -754,12 +754,12 @@ pub fn rm(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> {
     }
 
     for (filename, path, removed_id) in &to_remove {
-        let _lock = crate::workflow::FileLock::acquire(vault_path, filename)
-            .map_err(|e| CliError::usage(e.to_string()))?;
         fs::remove_file(path)
             .map_err(|e| CliError::usage(format!("Failed to delete item: {e}")))?;
 
         let cleanup_candidates = [
+            format!(".{filename}.lock"),
+            format!(".{removed_id}.md.lock"),
             format!("{filename}.lock"),
             format!(".{removed_id}.edit-recovery.tmp"),
             format!(".{filename}.edit-recovery.tmp"),
