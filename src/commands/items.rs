@@ -479,15 +479,25 @@ pub fn edit(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> 
     let edited_content = fs::read_to_string(temp_edit_file.path())
         .map_err(|e| CliError::usage(format!("Could not read edited file: {e}")))?;
 
-    // Check if file on disk was modified concurrently
-    let current_on_disk = fs::read_to_string(&path).unwrap_or_default();
-    if current_on_disk != original_content {
-        let recovery_filename = format!(".{edited_id}.edit-recovery.tmp");
-        let recovery_path = vault_path.join(&recovery_filename);
-        let _ = fs::write(&recovery_path, &edited_content);
-        return Err(CliError::usage(format!(
-            "File changed while editing. Saved recovery to '{recovery_filename}'"
-        )));
+    if edited_content == original_content {
+        let fmt = format.unwrap_or_else(|| default_format(OutputFormat::Plain));
+        if fmt == OutputFormat::Json {
+            #[derive(serde::Serialize)]
+            struct EditJson<'a> {
+                edited: &'a str,
+                filename: &'a str,
+                changed: bool,
+            }
+            let res = EditJson {
+                edited: &edited_id,
+                filename: &filename,
+                changed: false,
+            };
+            println!("{}", serde_json::to_string(&res).unwrap_or_default());
+        } else {
+            println!("No changes to {filename}");
+        }
+        return Ok(());
     }
 
     let mut issues = Vec::new();
@@ -498,7 +508,6 @@ pub fn edit(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> 
         let recovery_filename = format!(".{edited_id}.edit-recovery.tmp");
         let recovery_path = vault_path.join(&recovery_filename);
         let _ = fs::write(&recovery_path, &edited_content);
-        let _ = atomic_write(&path, &original_content);
         return Err(CliError::usage(format!(
             "Front matter is invalid after editing. Saved recovery to '{recovery_filename}'"
         )));
@@ -516,11 +525,24 @@ pub fn edit(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> 
             let recovery_filename = format!(".{edited_id}.edit-recovery.tmp");
             let recovery_path = vault_path.join(&recovery_filename);
             let _ = fs::write(&recovery_path, &edited_content);
-            let _ = atomic_write(&path, &original_content);
             return Err(CliError::usage(format!(
                 "Completion requires non-empty evidence. Saved recovery to '{recovery_filename}'"
             )));
         }
+    }
+
+    let _lock = crate::workflow::FileLock::acquire(vault_path, &filename)
+        .map_err(|e| CliError::usage(e.to_string()))?;
+
+    // Check if file on disk was modified concurrently
+    let current_on_disk = fs::read_to_string(&path).unwrap_or_default();
+    if current_on_disk != original_content {
+        let recovery_filename = format!(".{edited_id}.edit-recovery.tmp");
+        let recovery_path = vault_path.join(&recovery_filename);
+        let _ = fs::write(&recovery_path, &edited_content);
+        return Err(CliError::usage(format!(
+            "File changed while editing. Saved recovery to '{recovery_filename}'"
+        )));
     }
 
     parsed_meta.updated_at = Some(chrono::Utc::now().timestamp());
@@ -536,10 +558,14 @@ pub fn edit(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> 
         struct EditJson<'a> {
             edited: &'a str,
             filename: &'a str,
+            changed: bool,
+            revision: u64,
         }
         let res = EditJson {
             edited: &edited_id,
             filename: &filename,
+            changed: true,
+            revision: parsed_meta.current_revision(),
         };
         println!("{}", serde_json::to_string(&res).unwrap_or_default());
     } else {
