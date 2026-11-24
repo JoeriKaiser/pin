@@ -3279,8 +3279,10 @@ a {
 
 .agent-drawer-header {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
+  gap: var(--space-2);
   padding: var(--space-3) var(--space-5);
   border-bottom: 1px solid var(--line);
   background: var(--surface);
@@ -3533,12 +3535,45 @@ a {
    -------------------------------------------------------------------------- */
 .agent-trajectory-toolbar {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-2);
   align-items: center;
   padding: var(--space-2) var(--space-4);
   border-bottom: 1px solid var(--line);
   background: var(--surface);
   flex-shrink: 0;
+}
+
+.inspector-status-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.15rem 0.5rem;
+  border-radius: var(--radius-full);
+  background: var(--soft);
+  color: var(--muted);
+  border: 1px solid var(--line);
+}
+
+.inspector-status-badge.status-running {
+  background: var(--accent-subtle);
+  color: var(--accent);
+  border-color: transparent;
+}
+
+.inspector-status-badge.status-completed {
+  background: var(--success);
+  color: var(--success-ink);
+  border-color: var(--success-border);
+}
+
+.inspector-status-badge.status-failed {
+  background: var(--danger);
+  color: var(--danger-ink);
+  border-color: var(--danger-border);
 }
 
 .trajectory-metric {

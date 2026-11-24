@@ -240,8 +240,11 @@ export function renderAlertsDialog() {
 export function openAlertsDialog() {
   renderAlertsDialog();
   if (els.alertsDialog) {
-    if (els.alertsDialog.showModal) els.alertsDialog.showModal();
-    else els.alertsDialog.setAttribute('open', '');
+    if (els.alertsDialog.showModal) {
+      if (!els.alertsDialog.open) els.alertsDialog.showModal();
+    } else {
+      els.alertsDialog.setAttribute('open', '');
+    }
   }
 }
 

@@ -1,7 +1,7 @@
 use crate::cli::{ArgReader, CliError, CliResult};
 use crate::model::OutputFormat;
 use crate::output::default_format;
-use crate::update::{check_for_updates, install_update, CURRENT_VERSION};
+use crate::update::{check_for_updates, install_update_with_check, CURRENT_VERSION};
 use std::path::Path;
 
 pub fn update(args: &[String], command: &str, _vault_path: &Path) -> CliResult<()> {
@@ -82,7 +82,7 @@ pub fn update(args: &[String], command: &str, _vault_path: &Path) -> CliResult<(
         println!("Downloading and installing update...");
     }
 
-    let outcome = install_update(force).map_err(CliError::usage)?;
+    let outcome = install_update_with_check(check, force).map_err(CliError::usage)?;
 
     if fmt == OutputFormat::Json {
         println!("{}", serde_json::to_string(&outcome).unwrap_or_default());

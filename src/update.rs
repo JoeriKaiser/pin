@@ -434,6 +434,13 @@ pub fn resolve_destination_binary() -> Result<PathBuf, String> {
 
 pub fn install_update(force: bool) -> Result<InstallOutcome, String> {
     let check = check_for_updates(false)?;
+    install_update_with_check(check, force)
+}
+
+pub fn install_update_with_check(
+    check: UpdateCheck,
+    force: bool,
+) -> Result<InstallOutcome, String> {
     if !check.update_available && !force {
         return Err(format!(
             "pin is already up to date (version {CURRENT_VERSION})"

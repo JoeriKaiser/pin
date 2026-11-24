@@ -390,6 +390,24 @@ pub fn release_item(
     force: bool,
     expect_revision: Option<u64>,
 ) -> Result<IdeaMeta, WorkflowError> {
+    release_item_to_status(
+        vault_path,
+        filename,
+        actor,
+        force,
+        expect_revision,
+        Status::Planned,
+    )
+}
+
+pub fn release_item_to_status(
+    vault_path: &Path,
+    filename: &str,
+    actor: Option<&str>,
+    force: bool,
+    expect_revision: Option<u64>,
+    restore_status: Status,
+) -> Result<IdeaMeta, WorkflowError> {
     let (mut meta, _lock) = load_and_lock(vault_path, filename, expect_revision)?;
     let now = chrono::Utc::now().timestamp();
 
@@ -411,11 +429,11 @@ pub fn release_item(
     meta.claimed_by = None;
     meta.claim_expires_at = None;
 
-    // Only an item that is still running goes back to Planned. A user may have
-    // moved it to Blocked or Done while the run was active, and that decision
-    // outranks the end of the run.
+    // Only an item that is still running returns to its prior status. A user
+    // may have moved it to Blocked or Done while the run was active, and that
+    // decision outranks the end of the run.
     if from_status == Status::InProgress {
-        meta.status = Some(Status::Planned);
+        meta.status = Some(restore_status);
     }
 
     meta.activity.push(ActivityEvent {
@@ -1005,6 +1023,39 @@ pub fn unrelate_item(
 
     save_item(vault_path, &mut meta)?;
     Ok(meta)
+}
+
+pub fn is_item_ready_with_statuses(
+    item: &IdeaMeta,
+    statuses: &HashMap<String, Status>,
+    now: i64,
+) -> bool {
+    let lease_lapsed = item.current_status() == Status::InProgress
+        && item.claimed_by.is_some()
+        && !item.has_active_claim(now);
+    let status_ready = item.current_status() == Status::Planned
+        || lease_lapsed
+        || (item.current_status() == Status::Created
+            && (item.work_type() == WorkType::Task || item.work_type() == WorkType::Bug));
+    if !status_ready {
+        return false;
+    }
+    if item.has_active_claim(now) {
+        return false;
+    }
+    if item.is_archived() {
+        return false;
+    }
+    for dep_id in &item.depends_on {
+        if let Some(&s) = statuses.get(dep_id) {
+            if s != Status::Done && s != Status::Closed {
+                return false;
+            }
+        } else {
+            return false;
+        }
+    }
+    true
 }
 
 pub fn is_item_ready(

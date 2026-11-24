@@ -230,7 +230,7 @@ export function openSpecModal(initial) {
 
   if (els.specModal) {
     if (els.specModal.showModal) {
-      els.specModal.showModal();
+      if (!els.specModal.open) els.specModal.showModal();
     } else {
       els.specModal.setAttribute('open', '');
     }
@@ -331,7 +331,7 @@ export function openActionModal(config) {
 
   if (els.actionDialog) {
     if (els.actionDialog.showModal) {
-      els.actionDialog.showModal();
+      if (!els.actionDialog.open) els.actionDialog.showModal();
     } else {
       els.actionDialog.setAttribute('open', '');
     }
@@ -576,8 +576,11 @@ export function openWorktreeModal(item, busyId) {
     if (els.btnWorktreePrimary) els.btnWorktreePrimary.hidden = false;
   }
   if (els.worktreeModal) {
-    if (els.worktreeModal.showModal) els.worktreeModal.showModal();
-    else els.worktreeModal.setAttribute('open', '');
+    if (els.worktreeModal.showModal) {
+      if (!els.worktreeModal.open) els.worktreeModal.showModal();
+    } else {
+      els.worktreeModal.setAttribute('open', '');
+    }
   }
 }
 
@@ -591,8 +594,11 @@ export function closeWorktreeModal() {
 
 export function openShortcutsModal() {
   if (els.shortcutsModal) {
-    if (els.shortcutsModal.showModal) els.shortcutsModal.showModal();
-    else els.shortcutsModal.setAttribute('open', '');
+    if (els.shortcutsModal.showModal) {
+      if (!els.shortcutsModal.open) els.shortcutsModal.showModal();
+    } else {
+      els.shortcutsModal.setAttribute('open', '');
+    }
   }
 }
 

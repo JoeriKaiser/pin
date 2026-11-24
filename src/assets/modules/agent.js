@@ -309,6 +309,8 @@ export function openAgentDrawer(itemId) {
     if (els.metricCalls) text(els.metricCalls, cached.callsText || 'Calls: ' + state.trajectory.calls);
     if (els.agentStatusPill) { text(els.agentStatusPill, cached.statusText || 'Completed'); els.agentStatusPill.className = cached.statusClass || 'agent-status-pill status-completed'; }
     if (els.btnCancelAgent) els.btnCancelAgent.disabled = true;
+    if (els.agentChatContainer) els.agentChatContainer.hidden = true;
+    if (els.trajectorySearch) els.trajectorySearch.value = state.trajectory.filterQuery || '';
     if (els.trajectoryStream) {
       els.trajectoryStream.innerHTML = cached.streamHtml || '';
       scrollTrajectoryStreamToBottom(true);
@@ -318,6 +320,7 @@ export function openAgentDrawer(itemId) {
   }
 
   clear(els.trajectoryStream);
+  if (els.trajectorySearch) els.trajectorySearch.value = '';
   var now = Date.now();
   state.trajectory = createTrajectory(timingStart, now);
   appendTrajectoryContextRow('Agent run started for ' + itemId);
@@ -717,9 +720,21 @@ export function closeToolInspector() {
   if (els.toolInspector) { els.toolInspector.hidden = true; delete els.toolInspector.dataset.activeCallId; }
 }
 
+var copyFeedbackTimer = null;
 export function copyToolOutput() {
   if (!els.inspectorOutput) return;
-  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(els.inspectorOutput.textContent || '');
+  if (!navigator.clipboard || !navigator.clipboard.writeText) return;
+  var value = els.inspectorOutput.textContent || '';
+  Promise.resolve(navigator.clipboard.writeText(value)).then(function () {
+    if (!els.btnCopyToolOutput) return;
+    text(els.btnCopyToolOutput, 'Copied');
+    if (copyFeedbackTimer) clearTimeout(copyFeedbackTimer);
+    copyFeedbackTimer = setTimeout(function () {
+      if (els.btnCopyToolOutput) text(els.btnCopyToolOutput, 'Copy');
+    }, 1500);
+  }).catch(function () {
+    if (els.btnCopyToolOutput) text(els.btnCopyToolOutput, 'Copy failed');
+  });
 }
 
 function svgNode(tag, className, value) {

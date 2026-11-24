@@ -424,13 +424,38 @@ export function renderDependencies(item) {
     inp.value = '';
   });
 
+  function resolveRelationshipTarget(raw) {
+    var firstToken = raw.split(/[\s:]+/)[0];
+    var candidates = (state.items || []).filter(function (it) { return it && it.id !== item.id; });
+    var exactId = candidates.find(function (it) { return it.id === raw || it.id === firstToken; });
+    if (exactId) return { id: exactId.id };
+
+    var lower = raw.toLowerCase();
+    var exactTitle = candidates.find(function (it) { return (it.title || '').trim().toLowerCase() === lower; });
+    if (exactTitle) return { id: exactTitle.id };
+
+    var partialTitles = candidates.filter(function (it) {
+      return (it.title || '').toLowerCase().indexOf(lower) !== -1;
+    });
+    if (partialTitles.length === 1) return { id: partialTitles[0].id };
+    if (partialTitles.length > 1) {
+      return { error: 'Multiple items match "' + raw + '". Pick one from the list or enter its ID.' };
+    }
+    return { id: firstToken };
+  }
+
   function submitRelationship() {
     var raw = inp.value.trim();
     if (!raw) {
-      showToast('Enter an item ID to link', true);
+      showToast('Enter an item ID or title to link', true);
       return;
     }
-    var targetId = raw.split(/[\s:]+/)[0];
+    var resolved = resolveRelationshipTarget(raw);
+    if (resolved.error) {
+      showToast(resolved.error, true);
+      return;
+    }
+    var targetId = resolved.id;
     if (targetId === item.id) {
       showToast('Cannot link item to itself', true);
       return;
@@ -770,6 +795,7 @@ export function renderDetail() {
   if (els.detailEmpty) els.detailEmpty.hidden = !!item;
 
   if (!item) {
+    if (callbacks.closeAgentDrawer) callbacks.closeAgentDrawer();
     if (els.readerTabs) els.readerTabs.hidden = true;
     if (els.proposal) els.proposal.hidden = true;
     if (els.agentDrawer) els.agentDrawer.hidden = true;

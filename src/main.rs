@@ -27,6 +27,7 @@ const COMMANDS: &[&str] = &[
     "list",
     "list-project",
     "search",
+    "tree",
     "read",
     "edit",
     "rm",

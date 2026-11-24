@@ -1,4 +1,4 @@
-import { state, find, itemStatus, itemType, priority, hasUnresolvedPrereqs, updateShown, isRunWaiting } from './state.js';
+import { state, find, itemStatus, itemType, priority, hasUnresolvedPrereqs, updateShown, isRunWaiting, getRunInfo } from './state.js';
 import { els } from './dom.js';
 import { sendAction, ensureActionOk } from './api.js';
 import { node, text, clear, showToast } from './formatters.js';
@@ -190,11 +190,15 @@ export function buildBoardCard(item) {
       });
       runActions.appendChild(replyBtn);
     } else {
+      var runInfo = getRunInfo(item.id);
+      var runModeLabel = 'Running agent';
+      if (runInfo && runInfo.mode === 'commit_pr') runModeLabel = 'Commit + PR';
+      else if (runInfo && runInfo.mode === 'idea') runModeLabel = 'Idea agent';
       var runBadge = node('span', 'card-running-indicator');
       var runDot = node('span', 'card-running-dot');
       runDot.setAttribute('aria-hidden', 'true');
       runBadge.appendChild(runDot);
-      runBadge.appendChild(document.createTextNode('Running agent'));
+      runBadge.appendChild(document.createTextNode(runModeLabel));
       meta.appendChild(runBadge);
     }
 
@@ -209,7 +213,19 @@ export function buildBoardCard(item) {
     meta.appendChild(runActions);
   } else {
     var cardStatus = itemStatus(item);
-    if (cardStatus === 'done' && !item.archived_at) {
+    if (cardStatus === 'planned' && !item.archived_at && !hasUnresolvedPrereqs(item)) {
+      var planActions = node('div', 'board-card-actions');
+      var quickRunBtn = node('button', 'btn-view-run btn-run-card', itemType(item) === 'idea' ? 'Explore' : 'Run');
+      quickRunBtn.type = 'button';
+      quickRunBtn.title = itemType(item) === 'idea' ? 'Start idea discussion agent' : 'Start agent run';
+      quickRunBtn.setAttribute('aria-label', (itemType(item) === 'idea' ? 'Explore ' : 'Run agent for ') + (item.title || item.id));
+      quickRunBtn.addEventListener('click', function (e) {
+        if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+        callbacks.openWorktreeModal(item, null);
+      });
+      planActions.appendChild(quickRunBtn);
+      meta.appendChild(planActions);
+    } else if (cardStatus === 'done' && !item.archived_at) {
       var doneActions = node('div', 'board-card-actions');
       var isMerged = item.git_status === 'merged';
       var isPrOpen = !isMerged && (item.git_status === 'pr_open' || (item.pr_url && item.pr_url.length > 0));
@@ -334,7 +350,9 @@ export function setViewMode(mode) {
 }
 
 export function computeRenderKey(item) {
-  return (item.revision || '') + ':' + (item.title || '') + ':' + itemStatus(item) + ':' + itemType(item) + ':' + priority(item) + ':' + (hasUnresolvedPrereqs(item) ? '1' : '0') + ':' + (item.archived_at || '') + ':' + (state.activeRuns && state.activeRuns.has(item.id)) + ':' + (isRunWaiting(item.id) ? '1' : '0') + ':' + (item.git_status || '') + ':' + (item.pr_number || '') + ':' + (item.pr_url || '') + ':' + (item.claim_expires_at || '') + ':' + (item.claimed_by || '');
+  var runInfo = getRunInfo(item.id);
+  var runMode = runInfo && runInfo.mode ? runInfo.mode : '';
+  return (item.revision || '') + ':' + (item.title || '') + ':' + itemStatus(item) + ':' + itemType(item) + ':' + priority(item) + ':' + (hasUnresolvedPrereqs(item) ? '1' : '0') + ':' + (item.archived_at || '') + ':' + (state.activeRuns && state.activeRuns.has(item.id)) + ':' + runMode + ':' + (isRunWaiting(item.id) ? '1' : '0') + ':' + (item.git_status || '') + ':' + (item.pr_number || '') + ':' + (item.pr_url || '') + ':' + (item.claim_expires_at || '') + ':' + (item.claimed_by || '');
 }
 
 export function renderBoard() {
@@ -364,22 +382,26 @@ export function renderBoard() {
 
   var shownIds = new Set();
   var counts = { created: 0, planned: 0, in_progress: 0, blocked: 0, done: 0, closed: 0 };
+  var orderedByCol = { created: [], planned: [], in_progress: [], blocked: [], done: [], closed: [] };
 
   (state.shown || []).forEach(function (item) {
     shownIds.add(item.id);
     var st = itemStatus(item);
-    var targetCol = null;
-    if (st === 'created') { targetCol = cols.created; counts.created++; }
-    else if (st === 'planned') { targetCol = cols.planned; counts.planned++; }
-    else if (st === 'in_progress') { targetCol = cols.in_progress; counts.in_progress++; }
-    else if (st === 'blocked') { targetCol = cols.blocked; counts.blocked++; }
-    else if (st === 'done') { targetCol = cols.done; counts.done++; }
-    else if (st === 'closed' || st === 'cancelled') { targetCol = cols.closed; counts.closed++; }
+    var colKey = null;
+    if (st === 'created') { colKey = 'created'; }
+    else if (st === 'planned') { colKey = 'planned'; }
+    else if (st === 'in_progress') { colKey = 'in_progress'; }
+    else if (st === 'blocked') { colKey = 'blocked'; }
+    else if (st === 'done') { colKey = 'done'; }
+    else if (st === 'closed' || st === 'cancelled') { colKey = 'closed'; }
 
+    var targetCol = colKey ? cols[colKey] : null;
     if (!targetCol) return;
+    counts[colKey]++;
 
     var renderKey = computeRenderKey(item);
     var existing = existingCards.get(item.id);
+    var cardNode;
 
     if (existing) {
       var currentParent = existing.parentElement || existing.parentNode;
@@ -394,6 +416,7 @@ export function renderBoard() {
         }
         targetCol.appendChild(movedCard);
         existingCards.set(item.id, movedCard);
+        cardNode = movedCard;
       } else if (existing.dataset.renderKey !== renderKey) {
         var updated = buildBoardCard(item);
         updated.dataset.renderKey = renderKey;
@@ -409,13 +432,18 @@ export function renderBoard() {
           targetCol.appendChild(updated);
         }
         existingCards.set(item.id, updated);
+        cardNode = updated;
+      } else {
+        cardNode = existing;
       }
     } else {
       var card = buildBoardCard(item);
       card.dataset.renderKey = renderKey;
       targetCol.appendChild(card);
       existingCards.set(item.id, card);
+      cardNode = card;
     }
+    orderedByCol[colKey].push(cardNode);
   });
 
   existingCards.forEach(function (card, id) {
@@ -424,6 +452,19 @@ export function renderBoard() {
         card.remove();
       } else if (card.parentNode) {
         card.parentNode.removeChild(card);
+      }
+    }
+  });
+
+  Object.keys(orderedByCol).forEach(function (k) {
+    var col = cols[k];
+    var desired = orderedByCol[k];
+    if (!col || !desired || desired.length === 0 || typeof col.insertBefore !== 'function') return;
+    for (var i = 0; i < desired.length; i++) {
+      var wanted = desired[i];
+      var currentAtPos = col.children ? col.children[i] : null;
+      if (currentAtPos !== wanted) {
+        col.insertBefore(wanted, currentAtPos || null);
       }
     }
   });

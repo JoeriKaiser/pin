@@ -113,9 +113,9 @@ pub fn claim(args: &[String], command: &str, vault_path: &Path) -> CliResult<()>
             "--actor" => actor = Some(reader.next_val("--actor")?),
             "--lease" => {
                 let val = reader.next_val("--lease")?;
-                lease = val
-                    .parse::<u64>()
-                    .map_err(|_| CliError::usage("--lease requires a positive integer seconds"))?;
+                lease = val.parse::<u64>().ok().filter(|&v| v > 0).ok_or_else(|| {
+                    CliError::usage("--lease requires a positive integer seconds")
+                })?;
             }
             "--expect-revision" => {
                 let val = reader.next_val("--expect-revision")?;
@@ -186,9 +186,7 @@ pub fn release(args: &[String], command: &str, vault_path: &Path) -> CliResult<(
     let filename =
         resolve_selector(&vault_path, selector).map_err(|e| CliError::usage(e.to_string()))?;
 
-    let resolved_actor = actor
-        .map(|a| a.to_string())
-        .unwrap_or_else(|| resolve_actor(None));
+    let resolved_actor = resolve_actor(actor);
     match workflow::release_item(
         &vault_path,
         &filename,

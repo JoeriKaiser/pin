@@ -145,6 +145,10 @@ export function connectEvents() {
       try {
         var msg = JSON.parse(e.data);
         if (msg.type === 'connected') {
+          if (els.liveStatus) {
+            text(els.liveStatus, 'Live viewer');
+            if (els.liveStatus.classList) els.liveStatus.classList.remove('disconnected');
+          }
           updateActiveRuns();
         } else if (msg.type === 'vault_changed' || msg.type === 'git_updated') {
           refreshData(true);
@@ -172,7 +176,10 @@ export function connectEvents() {
       } catch (_) {}
     };
     source.onerror = function () {
-      // EventSource auto-reconnects with backoff
+      if (els.liveStatus) {
+        text(els.liveStatus, 'Reconnecting...');
+        if (els.liveStatus.classList) els.liveStatus.classList.add('disconnected');
+      }
     };
     return source;
   } catch (_) {

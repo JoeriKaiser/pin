@@ -147,17 +147,24 @@ pub struct RunLiveState {
     pub last_activity: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PromptCommand {
+    Message(String),
+    Finish,
+}
+
 #[derive(Clone)]
 pub struct ActiveRun {
     pub item_id: String,
     pub client: Arc<AcpClient>,
     pub worktree_path: Option<PathBuf>,
+    pub is_new_worktree: bool,
     pub is_primary_worktree: bool,
     pub event_buffer: Arc<Mutex<Vec<serde_json::Value>>>,
     pub subscribers: Arc<Mutex<Vec<Sender<serde_json::Value>>>>,
     pub started_at: i64,
     pub cancel_requested: Arc<AtomicBool>,
-    pub prompt_sender: Option<Sender<String>>,
+    pub prompt_sender: Option<Sender<PromptCommand>>,
     pub mode: RunMode,
     pub runner: RunnerSettings,
     pub live_state: Arc<Mutex<RunLiveState>>,
@@ -672,9 +679,11 @@ impl AcpManager {
         if let Some(key) = resolve_run_key(&runs, item_id) {
             if let Some(run) = runs.get(&key) {
                 if let Some(sender) = &run.prompt_sender {
-                    sender.send(trimmed.to_string()).map_err(|_| {
-                        AcpManagerError::Client("Run prompt receiver closed".to_string())
-                    })?;
+                    sender
+                        .send(PromptCommand::Message(trimmed.to_string()))
+                        .map_err(|_| {
+                            AcpManagerError::Client("Run prompt receiver closed".to_string())
+                        })?;
                     return Ok(());
                 } else {
                     return Err(AcpManagerError::Workflow(
@@ -689,7 +698,27 @@ impl AcpManager {
     }
 
     pub fn finish_run(&self, item_id: &str) -> Result<(), AcpManagerError> {
-        self.send_message(item_id, "__FINISH__")
+        let runs = self
+            .active_runs
+            .lock()
+            .map_err(|_| AcpManagerError::Io("Lock poisoned on active_runs".to_string()))?;
+        if let Some(key) = resolve_run_key(&runs, item_id) {
+            if let Some(run) = runs.get(&key) {
+                if let Some(sender) = &run.prompt_sender {
+                    sender.send(PromptCommand::Finish).map_err(|_| {
+                        AcpManagerError::Client("Run prompt receiver closed".to_string())
+                    })?;
+                    return Ok(());
+                } else {
+                    return Err(AcpManagerError::Workflow(
+                        "Run does not accept interactive finish".to_string(),
+                    ));
+                }
+            }
+        }
+        Err(AcpManagerError::ItemNotFound(format!(
+            "Item '{item_id}' is not currently running"
+        )))
     }
 
     pub fn start_run_mode(&self, item_id: &str, mode: RunMode) -> Result<(), AcpManagerError> {
@@ -922,7 +951,7 @@ impl AcpManager {
         let started_at = chrono::Utc::now().timestamp();
 
         // 8. Insert ActiveRun into active_runs
-        let (prompt_tx, prompt_rx) = mpsc::channel::<String>();
+        let (prompt_tx, prompt_rx) = mpsc::channel::<PromptCommand>();
         let is_interactive = matches!(
             mode,
             RunMode::Idea { .. }
@@ -941,6 +970,7 @@ impl AcpManager {
             item_id: canonical_id.clone(),
             client: Arc::clone(&client),
             worktree_path: worktree_path.clone(),
+            is_new_worktree,
             is_primary_worktree: is_primary,
             event_buffer: Arc::clone(&event_buffer),
             subscribers: Arc::clone(&subscribers),
@@ -1069,21 +1099,24 @@ impl AcpManager {
                         &last_stop_reason,
                     );
 
-                    while let Ok(user_msg) = worker_prompt_rx.recv() {
+                    while let Ok(cmd) = worker_prompt_rx.recv() {
                         if worker_cancel.load(Ordering::SeqCst) {
                             return Err("Run cancelled by user".to_string());
                         }
+                        let user_msg = match cmd {
+                            PromptCommand::Finish => {
+                                clear_waiting_state(
+                                    &worker_live_state,
+                                    &worker_global_subscribers,
+                                    &worker_item_id,
+                                    mode_str,
+                                    "Finishing",
+                                );
+                                break;
+                            }
+                            PromptCommand::Message(msg) => msg,
+                        };
                         let trimmed = user_msg.trim();
-                        if trimmed == "__FINISH__" {
-                            clear_waiting_state(
-                                &worker_live_state,
-                                &worker_global_subscribers,
-                                &worker_item_id,
-                                mode_str,
-                                "Finishing",
-                            );
-                            break;
-                        }
                         if trimmed.is_empty() {
                             continue;
                         }
@@ -1275,23 +1308,35 @@ impl AcpManager {
                     }
                 }
                 Err(err_msg) => {
-                    // On error or cancellation:
+                    // On user cancellation, cancel_run already released the item,
+                    // cleaned up any new worktree, recorded the cancel event,
+                    // and broadcast run_finished. Avoid duplicating teardown.
                     if worker_cancel.load(Ordering::SeqCst) {
                         if let Some(session_id) = session_id_opt.as_deref() {
                             let _ = worker_client.cancel(session_id);
                         }
                         let _ = worker_client.kill();
+                        if let Ok(mut runs) = worker_active_runs.lock() {
+                            runs.remove(&worker_item_id);
+                        }
+                        return;
                     }
 
-                    // Calls release_item. It returns an item that is still
-                    // in_progress to planned and leaves any status the user set
-                    // while the run was active untouched.
-                    let _ = crate::workflow::release_item(
+                    // Return an item that is still in_progress to its pre-run
+                    // status (Done for CommitPr, Planned otherwise) without
+                    // overwriting a status the user set manually.
+                    let restore_status = if matches!(mode, RunMode::CommitPr) {
+                        crate::model::Status::Done
+                    } else {
+                        crate::model::Status::Planned
+                    };
+                    let _ = crate::workflow::release_item_to_status(
                         &worker_vault_path,
                         &worker_filename,
                         Some(&worker_runner.actor),
                         true,
                         None,
+                        restore_status,
                     );
 
                     if worker_is_new_worktree {
@@ -1398,17 +1443,23 @@ impl AcpManager {
             }
 
             let canonical_id = &run.item_id;
+            let restore_status = if matches!(run.mode, RunMode::CommitPr) {
+                crate::model::Status::Done
+            } else {
+                crate::model::Status::Planned
+            };
             if let Ok(filename) = crate::vault::resolve_selector(&self.vault_path, canonical_id) {
-                let _ = crate::workflow::release_item(
+                let _ = crate::workflow::release_item_to_status(
                     &self.vault_path,
                     &filename,
                     Some(&run.runner.actor),
                     true,
                     None,
+                    restore_status,
                 );
             }
 
-            if let Some(_wt) = run.worktree_path {
+            if run.is_new_worktree && run.worktree_path.is_some() {
                 let _ = WorktreeManager::remove_worktree(&self.repo_path, canonical_id);
             }
 
@@ -1699,15 +1750,23 @@ fn clear_waiting_state(
 }
 
 fn resolve_run_key(runs: &HashMap<String, ActiveRun>, id: &str) -> Option<String> {
-    if runs.contains_key(id) {
-        return Some(id.to_string());
+    let trimmed = id.trim();
+    if trimmed.is_empty() {
+        return None;
     }
+    if runs.contains_key(trimmed) {
+        return Some(trimmed.to_string());
+    }
+    let mut matched: Option<&String> = None;
     for key in runs.keys() {
-        if key.starts_with(id) || id.starts_with(key.as_str()) {
-            return Some(key.clone());
+        if key.starts_with(trimmed) || trimmed.starts_with(key.as_str()) {
+            if matched.is_some() {
+                return None;
+            }
+            matched = Some(key);
         }
     }
-    None
+    matched.cloned()
 }
 fn write_value_events_as_sse<W: std::io::Write>(
     events: &[serde_json::Value],
@@ -2333,6 +2392,7 @@ mod tests {
             item_id: "item-b".to_string(),
             client: Arc::clone(&client),
             worktree_path: Some(PathBuf::from("/tmp/wt-b")),
+            is_new_worktree: false,
             is_primary_worktree: false,
             event_buffer: Arc::new(Mutex::new(Vec::new())),
             subscribers: Arc::new(Mutex::new(Vec::new())),
@@ -2347,6 +2407,7 @@ mod tests {
             item_id: "item-a".to_string(),
             client: Arc::clone(&client),
             worktree_path: None,
+            is_new_worktree: false,
             is_primary_worktree: true,
             event_buffer: Arc::new(Mutex::new(Vec::new())),
             subscribers: Arc::new(Mutex::new(Vec::new())),
@@ -2731,5 +2792,115 @@ done
         let sse = String::from_utf8(out).unwrap();
         assert!(sse
             .contains("data: {\"type\":\"finished\",\"startedAt\":2000,\"finishedAt\":2120}\n\n"));
+    }
+
+    #[test]
+    fn test_cancel_commit_pr_preserves_existing_worktree_and_restores_done() {
+        let vault_dir = tempfile::tempdir().unwrap();
+        let repo_dir = tempfile::tempdir().unwrap();
+        let item_id = "cancel012345";
+        let item_file = vault_dir.path().join(format!("{item_id}.md"));
+        fs::write(
+            &item_file,
+            format!(
+                "---\nschema: 2\nid: \"{item_id}\"\nproject: \"pin\"\nkind: \"technical\"\ntype: \"task\"\nstatus: \"in_progress\"\nclaimed_by: \"agent:test\"\ntimestamp: 1700000000\ntitle: \"Cancel Commit PR\"\n---\n# Cancel Commit PR\n"
+            ),
+        )
+        .unwrap();
+
+        let existing_wt = repo_dir.path().join(".pin_worktrees").join(item_id);
+        fs::create_dir_all(&existing_wt).unwrap();
+        let sentinel = existing_wt.join("uncommitted.txt");
+        fs::write(&sentinel, "important work").unwrap();
+
+        let mgr = AcpManager::new(
+            vault_dir.path().to_path_buf(),
+            repo_dir.path().to_path_buf(),
+            None,
+        );
+        let log_path = vault_dir.path().join("cancel.log");
+        let client = Arc::new(AcpClient::spawn("sleep 60", repo_dir.path(), &log_path).unwrap());
+        let run = ActiveRun {
+            item_id: item_id.to_string(),
+            client,
+            worktree_path: Some(existing_wt.clone()),
+            is_new_worktree: false,
+            is_primary_worktree: false,
+            event_buffer: Arc::new(Mutex::new(Vec::new())),
+            subscribers: Arc::new(Mutex::new(Vec::new())),
+            started_at: 1700000000,
+            cancel_requested: Arc::new(AtomicBool::new(false)),
+            prompt_sender: None,
+            mode: RunMode::CommitPr,
+            runner: RunnerSettings {
+                command: "sleep 60".to_string(),
+                actor: "agent:test".to_string(),
+                model: None,
+            },
+            live_state: Arc::new(Mutex::new(RunLiveState::default())),
+        };
+        mgr.active_runs
+            .lock()
+            .unwrap()
+            .insert(item_id.to_string(), run);
+
+        mgr.cancel_run(item_id).unwrap();
+
+        assert!(
+            sentinel.exists(),
+            "cancelling CommitPr must not delete pre-existing worktree"
+        );
+        let content = fs::read_to_string(&item_file).unwrap();
+        let mut issues = Vec::new();
+        let meta = crate::frontmatter::parse_front_matter_detailed(
+            &format!("{item_id}.md"),
+            &content,
+            &mut issues,
+        )
+        .unwrap();
+        assert_eq!(meta.current_status(), crate::model::Status::Done);
+        assert_eq!(meta.claimed_by, None);
+    }
+
+    #[test]
+    fn test_resolve_run_key_rejects_empty_and_ambiguous_prefixes() {
+        let dir = tempfile::tempdir().unwrap();
+        let log_path = dir.path().join("key.log");
+        let client = Arc::new(AcpClient::spawn("sleep 5", dir.path(), &log_path).unwrap());
+        let make_run = |id: &str| ActiveRun {
+            item_id: id.to_string(),
+            client: Arc::clone(&client),
+            worktree_path: None,
+            is_new_worktree: false,
+            is_primary_worktree: true,
+            event_buffer: Arc::new(Mutex::new(Vec::new())),
+            subscribers: Arc::new(Mutex::new(Vec::new())),
+            started_at: 100,
+            cancel_requested: Arc::new(AtomicBool::new(false)),
+            prompt_sender: None,
+            mode: RunMode::CommitPr,
+            runner: RunnerSettings {
+                command: "sleep 5".to_string(),
+                actor: "agent:test".to_string(),
+                model: None,
+            },
+            live_state: Arc::new(Mutex::new(RunLiveState::default())),
+        };
+        let mut runs = HashMap::new();
+        runs.insert("abc111111111".to_string(), make_run("abc111111111"));
+        runs.insert("abc222222222".to_string(), make_run("abc222222222"));
+
+        assert_eq!(resolve_run_key(&runs, ""), None);
+        assert_eq!(resolve_run_key(&runs, "   "), None);
+        assert_eq!(resolve_run_key(&runs, "abc"), None);
+        assert_eq!(
+            resolve_run_key(&runs, "abc1"),
+            Some("abc111111111".to_string())
+        );
+        assert_eq!(
+            resolve_run_key(&runs, "abc222222222"),
+            Some("abc222222222".to_string())
+        );
+        let _ = client.kill();
     }
 }

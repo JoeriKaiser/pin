@@ -20,7 +20,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-const VIEW_CSP: &str = "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; sandbox allow-scripts allow-same-origin allow-forms";
+const VIEW_CSP: &str = "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'";
+const SVG_CSP: &str = "default-src 'none'; sandbox";
 
 /// Bodies are small JSON payloads. Anything larger is a mistake or a stuck
 /// client, and must not be turned into an allocation.
@@ -237,10 +238,21 @@ fn rollback_failed_start(snapshot: &ViewSnapshot, filename: &str, updated_meta: 
     let Some(previous) = updated_meta.activity.last().and_then(|event| event.from) else {
         return;
     };
+    let actor = snapshot.acp_manager.runner_settings().actor;
+    if updated_meta.claimed_by.is_some() {
+        let _ = workflow::release_item_to_status(
+            &snapshot.vault_path,
+            filename,
+            Some(&actor),
+            true,
+            None,
+            previous,
+        );
+        return;
+    }
     if previous == updated_meta.current_status() {
         return;
     }
-    let actor = snapshot.acp_manager.runner_settings().actor;
     let _ = workflow::transition_item(
         &snapshot.vault_path,
         filename,
@@ -396,8 +408,13 @@ fn send_response(
         header_str.push_str(&format!("ETag: \"{clean_etag}\"\r\n"));
     }
     if extra_security {
+        let csp = if content_type == "image/svg+xml" {
+            SVG_CSP
+        } else {
+            VIEW_CSP
+        };
         header_str.push_str(&format!(
-            "Content-Security-Policy: {VIEW_CSP}\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\nCache-Control: no-store\r\n"
+            "Content-Security-Policy: {csp}\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\nCache-Control: no-store\r\n"
         ));
     }
     header_str.push_str("\r\n");
@@ -602,7 +619,9 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
         }
     }
 
-    if method == "GET" && (raw_path == "/healthz" || raw_path == "/health") {
+    let (req_path, req_query) = raw_path.split_once('?').unwrap_or((raw_path, ""));
+
+    if method == "GET" && (req_path == "/healthz" || req_path == "/health") {
         send_response(
             &mut stream,
             200,
@@ -617,8 +636,8 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
     }
 
     let expected_prefix = format!("/{}/", snapshot.token);
-    if !raw_path.starts_with(&expected_prefix) {
-        if raw_path == format!("/{}", snapshot.token) {
+    if !req_path.starts_with(&expected_prefix) {
+        if req_path == format!("/{}", snapshot.token) {
             send_redirect(&mut stream, &expected_prefix);
             return;
         }
@@ -635,7 +654,7 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
         return;
     }
 
-    let subpath = &raw_path[expected_prefix.len()..];
+    let subpath = &req_path[expected_prefix.len()..];
 
     let is_screenshot_upload = subpath == "screenshots" || subpath == "screenshots/upload";
     let is_oversized = if is_screenshot_upload {
@@ -1437,14 +1456,21 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                 match mutation_result {
                     Ok(updated_meta) => {
                         if is_starting_run {
-                            if let Err(err) = snapshot.acp_manager.start_run_interactive(
-                                id,
-                                payload.use_worktree.unwrap_or(false),
-                                payload.interactive.unwrap_or(false),
-                            ) {
+                            let start_res = if updated_meta.work_type() == WorkType::Idea {
+                                snapshot
+                                    .acp_manager
+                                    .start_idea_run(id, payload.use_worktree.unwrap_or(false))
+                            } else {
+                                snapshot.acp_manager.start_run_interactive(
+                                    id,
+                                    payload.use_worktree.unwrap_or(false),
+                                    payload.interactive.unwrap_or(false),
+                                )
+                            };
+                            if let Err(err) = start_res {
                                 // The mutation already moved the item. A run
                                 // that never launched must not strand it.
-                                rollback_failed_start(&snapshot, &filename, &updated_meta);
+                                rollback_failed_start(snapshot, &filename, &updated_meta);
                                 let (status_code, reason, body) = start_failure_response(&err);
                                 send_response(
                                     &mut stream,
@@ -1460,6 +1486,8 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                             }
                         } else if payload.action == "release"
                             || payload.action == "archive"
+                            || payload.action == "complete"
+                            || payload.action == "close"
                             || (payload.action == "transition"
                                 && payload.to != Some(Status::InProgress))
                         {
@@ -1979,8 +2007,10 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
         return;
     }
 
-    if subpath == "update" || subpath.starts_with("update?") {
-        let force = subpath.contains("force=true");
+    if subpath == "update" {
+        let force = req_query
+            .split('&')
+            .any(|part| part == "force=true" || part == "force=1");
         let update_res = crate::update::check_for_updates(!force);
         let out_json = match update_res {
             Ok(check) => serde_json::to_string(&check).unwrap_or_else(|_| "{}".to_string()),
@@ -2030,15 +2060,10 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
         return;
     }
 
-    if subpath == "runner/models" || subpath.starts_with("runner/models?") {
-        let refresh = subpath
-            .split_once('?')
-            .map(|(_, query)| {
-                query
-                    .split('&')
-                    .any(|part| part == "refresh=1" || part == "refresh=true")
-            })
-            .unwrap_or(false);
+    if subpath == "runner/models" {
+        let refresh = req_query
+            .split('&')
+            .any(|part| part == "refresh=1" || part == "refresh=true");
 
         match snapshot.acp_manager.runner_models(refresh) {
             Ok(models) => {
@@ -2191,6 +2216,29 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                 );
                 return;
             }
+            let timing = snapshot.acp_manager.get_run_timing(id);
+            let has_transcript_file = snapshot
+                .vault_path
+                .join("runs")
+                .join(format!("{id}.events.jsonl"))
+                .is_file();
+            if method == "GET"
+                && timing.is_none()
+                && !snapshot.acp_manager.is_item_running(id)
+                && !has_transcript_file
+            {
+                send_response(
+                    &mut stream,
+                    204,
+                    "No Content",
+                    "text/event-stream; charset=utf-8",
+                    b"",
+                    false,
+                    false,
+                    None,
+                );
+                return;
+            }
             let _ = stream.set_read_timeout(None);
             let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(10)));
 
@@ -2202,7 +2250,6 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
             if method == "HEAD" {
                 return;
             }
-            let timing = snapshot.acp_manager.get_run_timing(id);
             if let Some((started_at, finished_at_opt)) = timing {
                 let init_timing_event = serde_json::json!({
                     "type": "run_timing",
@@ -3123,6 +3170,106 @@ mod tests {
         assert_eq!(
             content,
             "waiting_for_user|0123456789ab|Design Auth Flow|idea|1. Cookie or token? 2. Rotate daily?|http://127.0.0.1:4321/tok/#/item/0123456789ab"
+        );
+    }
+
+    #[test]
+    fn test_csp_allows_popups_for_viewer_and_sandboxes_svg() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let l1 = listener.try_clone().unwrap();
+        let h1 = std::thread::spawn(move || {
+            let (mut stream, _) = l1.accept().unwrap();
+            send_response(
+                &mut stream,
+                200,
+                "OK",
+                "text/html; charset=utf-8",
+                b"<html></html>",
+                true,
+                true,
+                None,
+            );
+        });
+        let mut c1 = std::net::TcpStream::connect(addr).unwrap();
+        let mut resp1 = String::new();
+        c1.read_to_string(&mut resp1).unwrap();
+        h1.join().unwrap();
+        assert!(resp1.contains("Content-Security-Policy: default-src 'none'"));
+        assert!(!resp1.contains("sandbox"));
+
+        let l2 = listener.try_clone().unwrap();
+        let h2 = std::thread::spawn(move || {
+            let (mut stream, _) = l2.accept().unwrap();
+            send_response(
+                &mut stream,
+                200,
+                "OK",
+                "image/svg+xml",
+                b"<svg></svg>",
+                true,
+                true,
+                None,
+            );
+        });
+        let mut c2 = std::net::TcpStream::connect(addr).unwrap();
+        let mut resp2 = String::new();
+        c2.read_to_string(&mut resp2).unwrap();
+        h2.join().unwrap();
+        assert!(resp2.contains("Content-Security-Policy: default-src 'none'; sandbox\r\n"));
+    }
+
+    #[test]
+    fn test_viewer_handles_query_strings_and_empty_stream_204() {
+        let dir = tempfile::tempdir().unwrap();
+        let snapshot = Arc::new(create_snapshot(
+            &[],
+            dir.path().to_path_buf(),
+            "test-scope",
+            ArchiveFilter::Active,
+            None,
+            None,
+            None,
+            None,
+        ));
+        let token = snapshot.token.clone();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let port = addr.port();
+
+        let snap1 = Arc::clone(&snapshot);
+        let l1 = listener.try_clone().unwrap();
+        let h1 = std::thread::spawn(move || {
+            if let Ok((stream, _)) = l1.accept() {
+                handle_client(stream, &snap1, port);
+            }
+        });
+        let mut c1 = std::net::TcpStream::connect(addr).unwrap();
+        let req1 = format!("GET /{token}/data.json?t=123 HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        c1.write_all(req1.as_bytes()).unwrap();
+        let mut resp1 = String::new();
+        c1.read_to_string(&mut resp1).unwrap();
+        h1.join().unwrap();
+        assert!(resp1.starts_with("HTTP/1.1 200 OK\r\n"), "got: {resp1}");
+
+        let snap2 = Arc::clone(&snapshot);
+        let l2 = listener.try_clone().unwrap();
+        let h2 = std::thread::spawn(move || {
+            if let Ok((stream, _)) = l2.accept() {
+                handle_client(stream, &snap2, port);
+            }
+        });
+        let mut c2 = std::net::TcpStream::connect(addr).unwrap();
+        let req2 =
+            format!("GET /{token}/items/0123456789ab/stream HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        c2.write_all(req2.as_bytes()).unwrap();
+        let mut resp2 = String::new();
+        c2.read_to_string(&mut resp2).unwrap();
+        h2.join().unwrap();
+        assert!(
+            resp2.starts_with("HTTP/1.1 204 No Content\r\n"),
+            "got: {resp2}"
         );
     }
 }
