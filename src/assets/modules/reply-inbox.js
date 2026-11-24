@@ -273,8 +273,11 @@ export function openReplyModal(itemId) {
     return false;
   }
   if (els.replyModal) {
-    if (els.replyModal.showModal) els.replyModal.showModal();
-    else els.replyModal.setAttribute('open', '');
+    if (els.replyModal.showModal) {
+      if (!els.replyModal.open) els.replyModal.showModal();
+    } else {
+      els.replyModal.setAttribute('open', '');
+    }
   }
   stopReplyTicker();
   if (typeof setInterval !== 'undefined') {

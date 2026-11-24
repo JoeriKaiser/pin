@@ -624,7 +624,7 @@ export function bindGlobalShortcuts() {
     }
     var targetTag = event.target && event.target.tagName ? event.target.tagName : '';
     var input = /^(INPUT|SELECT|TEXTAREA)$/.test(targetTag);
-    if (event.key === '/' && !input) {
+    if (event.key === '/' && !input && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) {
       event.preventDefault();
       if (els.search) els.search.focus();
       return;
@@ -756,6 +756,7 @@ export function bind(options) {
   // Wire callbacks into earlier modules
   setAgentsViewCallbacks({
     openAgentDrawer: openAgentDrawer,
+    closeAgentDrawer: closeAgentDrawer,
     openReplyModal: openReplyModal,
     updateActiveRuns: updateActiveRuns,
     setViewMode: setViewMode,
@@ -781,6 +782,7 @@ export function bind(options) {
     openWorktreeModal: openWorktreeModal,
     openBlockedModal: openBlockedModal,
     openAgentDrawer: openAgentDrawer,
+    closeAgentDrawer: closeAgentDrawer,
     openReplyModal: openReplyModal,
     openCompleteModal: openCompleteModal,
     sendCommitPrItem: sendCommitPrItem,
@@ -871,8 +873,14 @@ function bindDialogLightDismiss() {
     var dlg = entry[0];
     var onClose = entry[1];
     if (!dlg || !dlg.addEventListener) return;
+    var pointerDownInside = false;
+    dlg.addEventListener('mousedown', function (e) {
+      pointerDownInside = !!(e && e.target !== dlg);
+    });
     dlg.addEventListener('click', function (e) {
-      if (e && e.target === dlg) {
+      var draggedOut = pointerDownInside;
+      pointerDownInside = false;
+      if (e && e.target === dlg && !draggedOut) {
         onClose();
       }
     });

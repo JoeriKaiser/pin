@@ -770,6 +770,7 @@ export function renderDetail() {
   if (els.detailEmpty) els.detailEmpty.hidden = !!item;
 
   if (!item) {
+    if (callbacks.closeAgentDrawer) callbacks.closeAgentDrawer();
     if (els.readerTabs) els.readerTabs.hidden = true;
     if (els.proposal) els.proposal.hidden = true;
     if (els.agentDrawer) els.agentDrawer.hidden = true;

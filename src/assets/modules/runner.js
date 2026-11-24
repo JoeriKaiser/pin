@@ -185,6 +185,9 @@ export function applyRunnerSettings(settings) {
     if (els.runnerActorInput) els.runnerActorInput.value = runner.actor;
     renderRunnerHarness();
     renderRunnerModelList();
+    if (runner.command && !runner.modelsLoaded && !runner.loadingModels) {
+      loadRunnerModels(false);
+    }
   }
 
   renderRunner();
@@ -285,8 +288,11 @@ export function openRunnerDialog() {
   renderRunnerModelList();
 
   if (els.runnerDialog) {
-    if (els.runnerDialog.showModal) els.runnerDialog.showModal();
-    else if (els.runnerDialog.setAttribute) els.runnerDialog.setAttribute('open', '');
+    if (els.runnerDialog.showModal) {
+      if (!els.runnerDialog.open) els.runnerDialog.showModal();
+    } else if (els.runnerDialog.setAttribute) {
+      els.runnerDialog.setAttribute('open', '');
+    }
   }
 
   if (!runner.modelsLoaded && !runner.loadingModels) {
