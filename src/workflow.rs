@@ -390,6 +390,24 @@ pub fn release_item(
     force: bool,
     expect_revision: Option<u64>,
 ) -> Result<IdeaMeta, WorkflowError> {
+    release_item_to_status(
+        vault_path,
+        filename,
+        actor,
+        force,
+        expect_revision,
+        Status::Planned,
+    )
+}
+
+pub fn release_item_to_status(
+    vault_path: &Path,
+    filename: &str,
+    actor: Option<&str>,
+    force: bool,
+    expect_revision: Option<u64>,
+    restore_status: Status,
+) -> Result<IdeaMeta, WorkflowError> {
     let (mut meta, _lock) = load_and_lock(vault_path, filename, expect_revision)?;
     let now = chrono::Utc::now().timestamp();
 
@@ -411,11 +429,11 @@ pub fn release_item(
     meta.claimed_by = None;
     meta.claim_expires_at = None;
 
-    // Only an item that is still running goes back to Planned. A user may have
-    // moved it to Blocked or Done while the run was active, and that decision
-    // outranks the end of the run.
+    // Only an item that is still running returns to its prior status. A user
+    // may have moved it to Blocked or Done while the run was active, and that
+    // decision outranks the end of the run.
     if from_status == Status::InProgress {
-        meta.status = Some(Status::Planned);
+        meta.status = Some(restore_status);
     }
 
     meta.activity.push(ActivityEvent {

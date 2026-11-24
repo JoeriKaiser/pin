@@ -152,6 +152,7 @@ pub struct ActiveRun {
     pub item_id: String,
     pub client: Arc<AcpClient>,
     pub worktree_path: Option<PathBuf>,
+    pub is_new_worktree: bool,
     pub is_primary_worktree: bool,
     pub event_buffer: Arc<Mutex<Vec<serde_json::Value>>>,
     pub subscribers: Arc<Mutex<Vec<Sender<serde_json::Value>>>>,
@@ -941,6 +942,7 @@ impl AcpManager {
             item_id: canonical_id.clone(),
             client: Arc::clone(&client),
             worktree_path: worktree_path.clone(),
+            is_new_worktree,
             is_primary_worktree: is_primary,
             event_buffer: Arc::clone(&event_buffer),
             subscribers: Arc::clone(&subscribers),
@@ -1275,23 +1277,35 @@ impl AcpManager {
                     }
                 }
                 Err(err_msg) => {
-                    // On error or cancellation:
+                    // On user cancellation, cancel_run already released the item,
+                    // cleaned up any new worktree, recorded the cancel event,
+                    // and broadcast run_finished. Avoid duplicating teardown.
                     if worker_cancel.load(Ordering::SeqCst) {
                         if let Some(session_id) = session_id_opt.as_deref() {
                             let _ = worker_client.cancel(session_id);
                         }
                         let _ = worker_client.kill();
+                        if let Ok(mut runs) = worker_active_runs.lock() {
+                            runs.remove(&worker_item_id);
+                        }
+                        return;
                     }
 
-                    // Calls release_item. It returns an item that is still
-                    // in_progress to planned and leaves any status the user set
-                    // while the run was active untouched.
-                    let _ = crate::workflow::release_item(
+                    // Return an item that is still in_progress to its pre-run
+                    // status (Done for CommitPr, Planned otherwise) without
+                    // overwriting a status the user set manually.
+                    let restore_status = if matches!(mode, RunMode::CommitPr) {
+                        crate::model::Status::Done
+                    } else {
+                        crate::model::Status::Planned
+                    };
+                    let _ = crate::workflow::release_item_to_status(
                         &worker_vault_path,
                         &worker_filename,
                         Some(&worker_runner.actor),
                         true,
                         None,
+                        restore_status,
                     );
 
                     if worker_is_new_worktree {
@@ -1398,17 +1412,23 @@ impl AcpManager {
             }
 
             let canonical_id = &run.item_id;
+            let restore_status = if matches!(run.mode, RunMode::CommitPr) {
+                crate::model::Status::Done
+            } else {
+                crate::model::Status::Planned
+            };
             if let Ok(filename) = crate::vault::resolve_selector(&self.vault_path, canonical_id) {
-                let _ = crate::workflow::release_item(
+                let _ = crate::workflow::release_item_to_status(
                     &self.vault_path,
                     &filename,
                     Some(&run.runner.actor),
                     true,
                     None,
+                    restore_status,
                 );
             }
 
-            if let Some(_wt) = run.worktree_path {
+            if run.is_new_worktree && run.worktree_path.is_some() {
                 let _ = WorktreeManager::remove_worktree(&self.repo_path, canonical_id);
             }
 
@@ -2333,6 +2353,7 @@ mod tests {
             item_id: "item-b".to_string(),
             client: Arc::clone(&client),
             worktree_path: Some(PathBuf::from("/tmp/wt-b")),
+            is_new_worktree: false,
             is_primary_worktree: false,
             event_buffer: Arc::new(Mutex::new(Vec::new())),
             subscribers: Arc::new(Mutex::new(Vec::new())),
@@ -2347,6 +2368,7 @@ mod tests {
             item_id: "item-a".to_string(),
             client: Arc::clone(&client),
             worktree_path: None,
+            is_new_worktree: false,
             is_primary_worktree: true,
             event_buffer: Arc::new(Mutex::new(Vec::new())),
             subscribers: Arc::new(Mutex::new(Vec::new())),
@@ -2731,5 +2753,73 @@ done
         let sse = String::from_utf8(out).unwrap();
         assert!(sse
             .contains("data: {\"type\":\"finished\",\"startedAt\":2000,\"finishedAt\":2120}\n\n"));
+    }
+
+    #[test]
+    fn test_cancel_commit_pr_preserves_existing_worktree_and_restores_done() {
+        let vault_dir = tempfile::tempdir().unwrap();
+        let repo_dir = tempfile::tempdir().unwrap();
+        let item_id = "cancel012345";
+        let item_file = vault_dir.path().join(format!("{item_id}.md"));
+        fs::write(
+            &item_file,
+            format!(
+                "---\nschema: 2\nid: \"{item_id}\"\nproject: \"pin\"\nkind: \"technical\"\ntype: \"task\"\nstatus: \"in_progress\"\nclaimed_by: \"agent:test\"\ntimestamp: 1700000000\ntitle: \"Cancel Commit PR\"\n---\n# Cancel Commit PR\n"
+            ),
+        )
+        .unwrap();
+
+        let existing_wt = repo_dir.path().join(".pin_worktrees").join(item_id);
+        fs::create_dir_all(&existing_wt).unwrap();
+        let sentinel = existing_wt.join("uncommitted.txt");
+        fs::write(&sentinel, "important work").unwrap();
+
+        let mgr = AcpManager::new(
+            vault_dir.path().to_path_buf(),
+            repo_dir.path().to_path_buf(),
+            None,
+        );
+        let log_path = vault_dir.path().join("cancel.log");
+        let client = Arc::new(AcpClient::spawn("sleep 60", repo_dir.path(), &log_path).unwrap());
+        let run = ActiveRun {
+            item_id: item_id.to_string(),
+            client,
+            worktree_path: Some(existing_wt.clone()),
+            is_new_worktree: false,
+            is_primary_worktree: false,
+            event_buffer: Arc::new(Mutex::new(Vec::new())),
+            subscribers: Arc::new(Mutex::new(Vec::new())),
+            started_at: 1700000000,
+            cancel_requested: Arc::new(AtomicBool::new(false)),
+            prompt_sender: None,
+            mode: RunMode::CommitPr,
+            runner: RunnerSettings {
+                command: "sleep 60".to_string(),
+                actor: "agent:test".to_string(),
+                model: None,
+            },
+            live_state: Arc::new(Mutex::new(RunLiveState::default())),
+        };
+        mgr.active_runs
+            .lock()
+            .unwrap()
+            .insert(item_id.to_string(), run);
+
+        mgr.cancel_run(item_id).unwrap();
+
+        assert!(
+            sentinel.exists(),
+            "cancelling CommitPr must not delete pre-existing worktree"
+        );
+        let content = fs::read_to_string(&item_file).unwrap();
+        let mut issues = Vec::new();
+        let meta = crate::frontmatter::parse_front_matter_detailed(
+            &format!("{item_id}.md"),
+            &content,
+            &mut issues,
+        )
+        .unwrap();
+        assert_eq!(meta.current_status(), crate::model::Status::Done);
+        assert_eq!(meta.claimed_by, None);
     }
 }
