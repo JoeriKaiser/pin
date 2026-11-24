@@ -29,7 +29,22 @@ pub fn calculate_search_score(meta: &IdeaMeta, query: &str) -> Option<usize> {
             || (has_clean && contains_word_ignore_case(&meta.title, clean_term));
         let in_tags = contains_word_ignore_case(tags_str, term)
             || (has_clean && contains_word_ignore_case(tags_str, clean_term));
-        let in_body = contains_word_ignore_case(&meta.body, term);
+        let in_body = contains_word_ignore_case(&meta.body, term)
+            || (has_clean && contains_word_ignore_case(&meta.body, clean_term));
+        let in_handoff = meta.handoff.as_ref().is_some_and(|h| {
+            [
+                h.progress.as_deref(),
+                h.next.as_deref(),
+                h.blocker.as_deref(),
+                h.verification.as_deref(),
+            ]
+            .into_iter()
+            .flatten()
+            .any(|field| {
+                contains_word_ignore_case(field, term)
+                    || (has_clean && contains_word_ignore_case(field, clean_term))
+            })
+        });
 
         if in_id {
             total_score += 100;
@@ -37,6 +52,8 @@ pub fn calculate_search_score(meta: &IdeaMeta, query: &str) -> Option<usize> {
             total_score += 100;
         } else if in_tags {
             total_score += 50;
+        } else if in_handoff {
+            total_score += 15;
         } else if in_body {
             total_score += 10;
         } else {
@@ -158,6 +175,29 @@ mod tests {
 
         // One term missing
         assert!(calculate_search_score(&idea, "cache database").is_none());
+    }
+
+    #[test]
+    fn test_search_matches_handoff_fields_and_clean_body_terms() {
+        let mut idea = make_idea(
+            "03",
+            "Auth Migration",
+            None,
+            "Tracks migration steps.",
+            None,
+            100,
+        );
+        idea.handoff = Some(crate::model::Handoff {
+            progress: Some("Switched token parser".to_string()),
+            next: Some("Roll out to staging".to_string()),
+            blocker: Some("Waiting on OAuth cert rotation".to_string()),
+            verification: Some("cargo test passes".to_string()),
+        });
+
+        assert_eq!(calculate_search_score(&idea, "oauth"), Some(15));
+        assert_eq!(calculate_search_score(&idea, "#migration"), Some(100));
+        assert_eq!(calculate_search_score(&idea, "#steps"), Some(10));
+        assert!(calculate_search_score(&idea, "parser staging").is_some());
     }
 
     #[test]
