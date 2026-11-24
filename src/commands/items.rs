@@ -340,7 +340,9 @@ pub fn search(args: &[String], command: &str, vault_path: &Path) -> CliResult<()
                 let val = reader.next_val("--limit")?;
                 limit = Some(
                     val.parse::<usize>()
-                        .map_err(|_| CliError::usage("--limit requires a positive integer"))?,
+                        .ok()
+                        .filter(|&v| v > 0)
+                        .ok_or_else(|| CliError::usage("--limit requires a positive integer"))?,
                 );
             }
             "--format" => format = Some(reader.parse_format(true)?),
@@ -595,9 +597,13 @@ pub fn rm(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> {
     }
 
     let mut to_remove = Vec::new();
+    let mut seen_files = HashSet::new();
     for selector in &selectors {
         let filename =
             resolve_selector(vault_path, selector).map_err(|e| CliError::usage(e.to_string()))?;
+        if !seen_files.insert(filename.clone()) {
+            continue;
+        }
         let path = vault_path.join(&filename);
         let mut removed_id = filename.clone();
         if let Ok(c) = fs::read_to_string(&path) {
@@ -610,12 +616,12 @@ pub fn rm(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> {
     }
 
     for (filename, path, removed_id) in &to_remove {
+        let _lock = crate::workflow::FileLock::acquire(vault_path, filename)
+            .map_err(|e| CliError::usage(e.to_string()))?;
         fs::remove_file(path)
             .map_err(|e| CliError::usage(format!("Failed to delete item: {e}")))?;
 
         let cleanup_candidates = [
-            format!(".{filename}.lock"),
-            format!(".{removed_id}.md.lock"),
             format!("{filename}.lock"),
             format!(".{removed_id}.edit-recovery.tmp"),
             format!(".{filename}.edit-recovery.tmp"),

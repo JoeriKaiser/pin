@@ -50,7 +50,9 @@ pub fn context(args: &[String], command: &str, vault_path: &Path) -> CliResult<(
                 let val = reader.next_val("--limit")?;
                 limit = Some(
                     val.parse::<usize>()
-                        .map_err(|_| CliError::usage("--limit requires a positive integer"))?,
+                        .ok()
+                        .filter(|&v| v > 0)
+                        .ok_or_else(|| CliError::usage("--limit requires a positive integer"))?,
                 );
             }
             "--group" => {
@@ -132,7 +134,9 @@ pub fn next(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> 
                 let val = reader.next_val("--limit")?;
                 limit = Some(
                     val.parse::<usize>()
-                        .map_err(|_| CliError::usage("--limit requires a positive integer"))?,
+                        .ok()
+                        .filter(|&v| v > 0)
+                        .ok_or_else(|| CliError::usage("--limit requires a positive integer"))?,
                 );
             }
             "--format" => format = Some(reader.parse_format(false)?),
