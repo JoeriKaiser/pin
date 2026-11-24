@@ -1,4 +1,4 @@
-import { state, find, itemStatus, itemType, priority, hasUnresolvedPrereqs, updateShown, isRunWaiting } from './state.js';
+import { state, find, itemStatus, itemType, priority, hasUnresolvedPrereqs, updateShown, isRunWaiting, getRunInfo } from './state.js';
 import { els } from './dom.js';
 import { sendAction, ensureActionOk } from './api.js';
 import { node, text, clear, showToast } from './formatters.js';
@@ -190,11 +190,15 @@ export function buildBoardCard(item) {
       });
       runActions.appendChild(replyBtn);
     } else {
+      var runInfo = getRunInfo(item.id);
+      var runModeLabel = 'Running agent';
+      if (runInfo && runInfo.mode === 'commit_pr') runModeLabel = 'Commit + PR';
+      else if (runInfo && runInfo.mode === 'idea') runModeLabel = 'Idea agent';
       var runBadge = node('span', 'card-running-indicator');
       var runDot = node('span', 'card-running-dot');
       runDot.setAttribute('aria-hidden', 'true');
       runBadge.appendChild(runDot);
-      runBadge.appendChild(document.createTextNode('Running agent'));
+      runBadge.appendChild(document.createTextNode(runModeLabel));
       meta.appendChild(runBadge);
     }
 
@@ -209,7 +213,19 @@ export function buildBoardCard(item) {
     meta.appendChild(runActions);
   } else {
     var cardStatus = itemStatus(item);
-    if (cardStatus === 'done' && !item.archived_at) {
+    if (cardStatus === 'planned' && !item.archived_at && !hasUnresolvedPrereqs(item)) {
+      var planActions = node('div', 'board-card-actions');
+      var quickRunBtn = node('button', 'btn-view-run btn-run-card', itemType(item) === 'idea' ? 'Explore' : 'Run');
+      quickRunBtn.type = 'button';
+      quickRunBtn.title = itemType(item) === 'idea' ? 'Start idea discussion agent' : 'Start agent run';
+      quickRunBtn.setAttribute('aria-label', (itemType(item) === 'idea' ? 'Explore ' : 'Run agent for ') + (item.title || item.id));
+      quickRunBtn.addEventListener('click', function (e) {
+        if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+        callbacks.openWorktreeModal(item, null);
+      });
+      planActions.appendChild(quickRunBtn);
+      meta.appendChild(planActions);
+    } else if (cardStatus === 'done' && !item.archived_at) {
       var doneActions = node('div', 'board-card-actions');
       var isMerged = item.git_status === 'merged';
       var isPrOpen = !isMerged && (item.git_status === 'pr_open' || (item.pr_url && item.pr_url.length > 0));
@@ -334,7 +350,9 @@ export function setViewMode(mode) {
 }
 
 export function computeRenderKey(item) {
-  return (item.revision || '') + ':' + (item.title || '') + ':' + itemStatus(item) + ':' + itemType(item) + ':' + priority(item) + ':' + (hasUnresolvedPrereqs(item) ? '1' : '0') + ':' + (item.archived_at || '') + ':' + (state.activeRuns && state.activeRuns.has(item.id)) + ':' + (isRunWaiting(item.id) ? '1' : '0') + ':' + (item.git_status || '') + ':' + (item.pr_number || '') + ':' + (item.pr_url || '') + ':' + (item.claim_expires_at || '') + ':' + (item.claimed_by || '');
+  var runInfo = getRunInfo(item.id);
+  var runMode = runInfo && runInfo.mode ? runInfo.mode : '';
+  return (item.revision || '') + ':' + (item.title || '') + ':' + itemStatus(item) + ':' + itemType(item) + ':' + priority(item) + ':' + (hasUnresolvedPrereqs(item) ? '1' : '0') + ':' + (item.archived_at || '') + ':' + (state.activeRuns && state.activeRuns.has(item.id)) + ':' + runMode + ':' + (isRunWaiting(item.id) ? '1' : '0') + ':' + (item.git_status || '') + ':' + (item.pr_number || '') + ':' + (item.pr_url || '') + ':' + (item.claim_expires_at || '') + ':' + (item.claimed_by || '');
 }
 
 export function renderBoard() {
