@@ -424,18 +424,156 @@ pub fn edit(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> 
     let mut reader = ArgReader::new(args, command);
     let selector = reader.parse_selector()?;
     let mut format = None;
+    let mut new_title: Option<String> = None;
+    let mut new_priority: Option<Priority> = None;
+    let mut new_tags: Option<String> = None;
+    let mut new_kind: Option<Kind> = None;
+    let mut new_type: Option<WorkType> = None;
+    let mut new_body: Option<String> = None;
+    let mut read_stdin = false;
+    let mut expect_revision: Option<u64> = None;
 
     while let Some(arg) = reader.peek()? {
         match arg {
+            "--title" => new_title = Some(reader.next_val("--title")?.to_string()),
+            "--priority" => {
+                let val = reader.next_val("--priority")?;
+                new_priority = Some(
+                    val.parse::<Priority>()
+                        .map_err(|_| CliError::usage(format!("Unknown priority '{val}'")))?,
+                );
+            }
+            "--tags" => new_tags = Some(reader.next_val("--tags")?.to_string()),
+            "--kind" => {
+                let val = reader.next_val("--kind")?;
+                new_kind = Some(
+                    val.parse::<Kind>()
+                        .map_err(|_| CliError::usage(format!("Unknown kind '{val}'")))?,
+                );
+            }
+            "--type" => {
+                let val = reader.next_val("--type")?;
+                new_type = Some(
+                    val.parse::<WorkType>()
+                        .map_err(|e| CliError::usage(e.to_string()))?,
+                );
+            }
+            "--body" => new_body = Some(reader.next_val("--body")?.to_string()),
+            "--stdin" => read_stdin = true,
+            "--expect-revision" => {
+                let val = reader.next_val("--expect-revision")?;
+                expect_revision = Some(
+                    val.parse::<u64>()
+                        .map_err(|_| CliError::usage("--expect-revision requires an integer"))?,
+                );
+            }
             "--format" => format = Some(reader.parse_format(false)?),
             _ => return Err(CliError::usage(format!("Unexpected argument '{arg}'"))),
         }
         reader.idx += 1;
     }
 
+    if read_stdin {
+        if new_body.is_some() {
+            return Err(CliError::usage("Cannot combine --body and --stdin"));
+        }
+        use std::io::Read;
+        let mut buf = String::new();
+        std::io::stdin()
+            .read_to_string(&mut buf)
+            .map_err(|e| CliError::usage(format!("Failed to read --stdin: {e}")))?;
+        new_body = Some(buf);
+    }
+
     let filename =
         resolve_selector(&vault_path, selector).map_err(|e| CliError::usage(e.to_string()))?;
     let path = vault_path.join(&filename);
+
+    let has_inline_updates = new_title.is_some()
+        || new_priority.is_some()
+        || new_tags.is_some()
+        || new_kind.is_some()
+        || new_type.is_some()
+        || new_body.is_some();
+
+    if has_inline_updates {
+        let _lock = crate::workflow::FileLock::acquire(vault_path, &filename)
+            .map_err(|e| CliError::usage(e.to_string()))?;
+        let original_content = fs::read_to_string(&path)
+            .map_err(|e| CliError::usage(format!("Could not read file: {e}")))?;
+        let mut issues = Vec::new();
+        let mut meta = parse_front_matter_detailed(&filename, &original_content, &mut issues)
+            .ok_or_else(|| CliError::usage("Could not parse item front matter"))?;
+
+        if let Some(exp) = expect_revision {
+            let actual = meta.current_revision();
+            if actual != exp {
+                return Err(CliError::usage(format!(
+                    "Revision conflict: expected {exp}, found {actual}"
+                )));
+            }
+        }
+
+        if let Some(t) = new_title {
+            let trimmed = t.trim();
+            if trimmed.is_empty() {
+                return Err(CliError::usage("--title cannot be empty"));
+            }
+            meta.title = trimmed.to_string();
+        }
+        if let Some(p) = new_priority {
+            meta.priority = Some(p);
+        }
+        if let Some(tags) = new_tags {
+            let trimmed = tags.trim();
+            meta.tags = if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            };
+        }
+        if let Some(k) = new_kind {
+            meta.kind = k;
+        }
+        if let Some(wt) = new_type {
+            meta.item_type = Some(wt);
+        }
+        if let Some(mut body) = new_body {
+            if !body.is_empty() && !body.ends_with('\n') {
+                body.push('\n');
+            }
+            meta.body = body;
+        }
+
+        meta.updated_at = Some(chrono::Utc::now().timestamp());
+        meta.revision = Some(meta.current_revision() + 1);
+
+        let new_doc = render_full_document(&meta);
+        atomic_write(&path, &new_doc)
+            .map_err(|e| CliError::usage(format!("Failed to save edited proposal: {e}")))?;
+
+        let fmt = format.unwrap_or_else(|| default_format(OutputFormat::Plain));
+        if fmt == OutputFormat::Json {
+            #[derive(serde::Serialize)]
+            struct EditJson<'a> {
+                edited: &'a str,
+                filename: &'a str,
+                changed: bool,
+                revision: u64,
+            }
+            let res = EditJson {
+                edited: &meta.id,
+                filename: &filename,
+                changed: true,
+                revision: meta.current_revision(),
+            };
+            println!("{}", serde_json::to_string(&res).unwrap_or_default());
+        } else {
+            println!("Saved changes to {filename}");
+        }
+        return Ok(());
+    }
+
     let original_content = fs::read_to_string(&path)
         .map_err(|e| CliError::usage(format!("Could not read file: {e}")))?;
 
