@@ -1025,6 +1025,39 @@ pub fn unrelate_item(
     Ok(meta)
 }
 
+pub fn is_item_ready_with_statuses(
+    item: &IdeaMeta,
+    statuses: &HashMap<String, Status>,
+    now: i64,
+) -> bool {
+    let lease_lapsed = item.current_status() == Status::InProgress
+        && item.claimed_by.is_some()
+        && !item.has_active_claim(now);
+    let status_ready = item.current_status() == Status::Planned
+        || lease_lapsed
+        || (item.current_status() == Status::Created
+            && (item.work_type() == WorkType::Task || item.work_type() == WorkType::Bug));
+    if !status_ready {
+        return false;
+    }
+    if item.has_active_claim(now) {
+        return false;
+    }
+    if item.is_archived() {
+        return false;
+    }
+    for dep_id in &item.depends_on {
+        if let Some(&s) = statuses.get(dep_id) {
+            if s != Status::Done && s != Status::Closed {
+                return false;
+            }
+        } else {
+            return false;
+        }
+    }
+    true
+}
+
 pub fn is_item_ready(
     item: &IdeaMeta,
     all_items_map: &HashMap<String, &IdeaMeta>,

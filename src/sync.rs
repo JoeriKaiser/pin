@@ -858,7 +858,7 @@ pub fn reconcile_and_sync(
         let wt_path = repo_path.join(".pin_worktrees").join(&meta.id);
         let branch_name = format!("pin/{}", meta.id);
         let had_worktree = wt_path.exists();
-        let had_branch = branch_exists(repo_path, &branch_name);
+        let had_branch = local_pin_refs.contains_key(&meta.id);
 
         if is_archived && !had_worktree && !had_branch {
             continue;

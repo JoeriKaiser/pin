@@ -189,7 +189,11 @@ pub fn collect_ideas_with_filter(
     }
 
     let mut ideas = Vec::new();
-    let mut all_items_for_ready = if filter.ready { Some(Vec::new()) } else { None };
+    let mut ready_status_map: Option<std::collections::HashMap<String, Status>> = if filter.ready {
+        Some(std::collections::HashMap::new())
+    } else {
+        None
+    };
     let entries = fs::read_dir(vault_path)?;
 
     for entry in entries {
@@ -207,8 +211,8 @@ pub fn collect_ideas_with_filter(
             if let Ok(content) = fs::read_to_string(&path) {
                 let mut issues = Vec::new();
                 if let Some(meta) = parse_front_matter_detailed(&filename, &content, &mut issues) {
-                    if let Some(ref mut all) = all_items_for_ready {
-                        all.push(meta.clone());
+                    if let Some(ref mut statuses) = ready_status_map {
+                        statuses.insert(meta.id.clone(), meta.current_status());
                     }
                     if !meta.matches_archive_filter(filter.archive_filter) {
                         continue;
@@ -273,11 +277,9 @@ pub fn collect_ideas_with_filter(
         }
     }
 
-    if let Some(ref all_vault_items) = all_items_for_ready {
+    if let Some(ref statuses) = ready_status_map {
         let now = chrono::Utc::now().timestamp();
-        let map: std::collections::HashMap<String, &IdeaMeta> =
-            all_vault_items.iter().map(|i| (i.id.clone(), i)).collect();
-        ideas.retain(|item| crate::workflow::is_item_ready(item, &map, now));
+        ideas.retain(|item| crate::workflow::is_item_ready_with_statuses(item, statuses, now));
     }
 
     // Sort by timestamp descending with deterministic tie-breakers
