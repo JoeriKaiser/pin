@@ -768,6 +768,7 @@ pub fn render_full_document(meta: &IdeaMeta) -> String {
 }
 
 fn escape_yaml_string(s: &str) -> String {
+    use std::fmt::Write;
     let mut out = String::with_capacity(s.len() + 8);
     for ch in s.chars() {
         match ch {
@@ -776,6 +777,14 @@ fn escape_yaml_string(s: &str) -> String {
             '\n' => out.push_str("\\n"),
             '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),
+            c if c.is_control() => {
+                let code = c as u32;
+                if code <= 0xFFFF {
+                    let _ = write!(out, "\\u{code:04X}");
+                } else {
+                    let _ = write!(out, "\\U{code:08X}");
+                }
+            }
             _ => out.push(ch),
         }
     }
@@ -1150,5 +1159,51 @@ custom_flag: true
                 .and_then(|v| v.as_bool()),
             Some(true)
         );
+    }
+
+    #[test]
+    fn test_escape_yaml_string_handles_ansi_and_control_chars() {
+        let base = r#"---
+schema: 2
+id: "0123456789ee"
+project: "pin"
+kind: "technical"
+type: "task"
+status: "done"
+timestamp: 1700000000
+title: "ANSI Evidence Test"
+---
+# ANSI Evidence Test
+"#;
+        let mut init_issues = Vec::new();
+        let mut meta =
+            parse_front_matter_detailed("0123456789ee.md", base, &mut init_issues).unwrap();
+        let evidence = "cargo test: \x1b[32m17 passed\x1b[0m\x00\x07";
+        meta.handoff = Some(crate::model::Handoff {
+            progress: None,
+            next: None,
+            blocker: None,
+            verification: Some(evidence.to_string()),
+        });
+        let doc = render_full_document(&meta);
+        assert!(!doc.contains('\x1b'));
+        assert!(doc.contains("\\u001B"));
+        let mut issues = Vec::new();
+        let reparsed = parse_front_matter_detailed("0123456789ee.md", &doc, &mut issues).unwrap();
+        assert!(issues.is_empty(), "unexpected issues: {issues:?}");
+        assert_eq!(
+            reparsed
+                .handoff
+                .as_ref()
+                .and_then(|h| h.verification.as_deref()),
+            Some(evidence)
+        );
+        meta.title = "Title\x1b[1mBold\x1b[0m".to_string();
+        let doc2 = render_full_document(&meta);
+        let mut issues2 = Vec::new();
+        let reparsed2 =
+            parse_front_matter_detailed("0123456789ee.md", &doc2, &mut issues2).unwrap();
+        assert!(issues2.is_empty(), "unexpected issues: {issues2:?}");
+        assert_eq!(reparsed2.title, meta.title);
     }
 }
