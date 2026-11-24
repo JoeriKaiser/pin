@@ -364,22 +364,26 @@ export function renderBoard() {
 
   var shownIds = new Set();
   var counts = { created: 0, planned: 0, in_progress: 0, blocked: 0, done: 0, closed: 0 };
+  var orderedByCol = { created: [], planned: [], in_progress: [], blocked: [], done: [], closed: [] };
 
   (state.shown || []).forEach(function (item) {
     shownIds.add(item.id);
     var st = itemStatus(item);
-    var targetCol = null;
-    if (st === 'created') { targetCol = cols.created; counts.created++; }
-    else if (st === 'planned') { targetCol = cols.planned; counts.planned++; }
-    else if (st === 'in_progress') { targetCol = cols.in_progress; counts.in_progress++; }
-    else if (st === 'blocked') { targetCol = cols.blocked; counts.blocked++; }
-    else if (st === 'done') { targetCol = cols.done; counts.done++; }
-    else if (st === 'closed' || st === 'cancelled') { targetCol = cols.closed; counts.closed++; }
+    var colKey = null;
+    if (st === 'created') { colKey = 'created'; }
+    else if (st === 'planned') { colKey = 'planned'; }
+    else if (st === 'in_progress') { colKey = 'in_progress'; }
+    else if (st === 'blocked') { colKey = 'blocked'; }
+    else if (st === 'done') { colKey = 'done'; }
+    else if (st === 'closed' || st === 'cancelled') { colKey = 'closed'; }
 
+    var targetCol = colKey ? cols[colKey] : null;
     if (!targetCol) return;
+    counts[colKey]++;
 
     var renderKey = computeRenderKey(item);
     var existing = existingCards.get(item.id);
+    var cardNode;
 
     if (existing) {
       var currentParent = existing.parentElement || existing.parentNode;
@@ -394,6 +398,7 @@ export function renderBoard() {
         }
         targetCol.appendChild(movedCard);
         existingCards.set(item.id, movedCard);
+        cardNode = movedCard;
       } else if (existing.dataset.renderKey !== renderKey) {
         var updated = buildBoardCard(item);
         updated.dataset.renderKey = renderKey;
@@ -409,13 +414,18 @@ export function renderBoard() {
           targetCol.appendChild(updated);
         }
         existingCards.set(item.id, updated);
+        cardNode = updated;
+      } else {
+        cardNode = existing;
       }
     } else {
       var card = buildBoardCard(item);
       card.dataset.renderKey = renderKey;
       targetCol.appendChild(card);
       existingCards.set(item.id, card);
+      cardNode = card;
     }
+    orderedByCol[colKey].push(cardNode);
   });
 
   existingCards.forEach(function (card, id) {
@@ -424,6 +434,19 @@ export function renderBoard() {
         card.remove();
       } else if (card.parentNode) {
         card.parentNode.removeChild(card);
+      }
+    }
+  });
+
+  Object.keys(orderedByCol).forEach(function (k) {
+    var col = cols[k];
+    var desired = orderedByCol[k];
+    if (!col || !desired || desired.length === 0 || typeof col.insertBefore !== 'function') return;
+    for (var i = 0; i < desired.length; i++) {
+      var wanted = desired[i];
+      var currentAtPos = col.children ? col.children[i] : null;
+      if (currentAtPos !== wanted) {
+        col.insertBefore(wanted, currentAtPos || null);
       }
     }
   });

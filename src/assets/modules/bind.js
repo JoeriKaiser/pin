@@ -548,6 +548,14 @@ export function bindAgent() {
       var r = e.target && e.target.closest && e.target.closest('.trajectory-row-tool');
       if (r && r.dataset && r.dataset.callId) openToolInspector(r.dataset.callId);
     });
+    els.trajectoryStream.addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      var r = e.target && e.target.closest && e.target.closest('.trajectory-row-tool');
+      if (r && r.dataset && r.dataset.callId) {
+        e.preventDefault();
+        openToolInspector(r.dataset.callId);
+      }
+    });
   }
   if (els.btnCloseInspector) els.btnCloseInspector.addEventListener('click', closeToolInspector);
   if (els.btnCopyToolOutput) els.btnCopyToolOutput.addEventListener('click', copyToolOutput);
@@ -763,7 +771,7 @@ export function bind(options) {
     openReplyModal: openReplyModal,
     closeAgentDrawer: closeAgentDrawer,
     sendCommitPrItem: sendCommitPrItem,
-    refreshData: function () { bootCallbacks.refreshData(); },
+    refreshData: function (force) { bootCallbacks.refreshData(force); },
     renderAgentsTable: renderAgentsTable,
     stopAgentsTicker: stopAgentsTicker
   });
@@ -777,16 +785,16 @@ export function bind(options) {
     openCompleteModal: openCompleteModal,
     sendCommitPrItem: sendCommitPrItem,
     openCloseModal: openCloseModal,
-    refreshData: function () { bootCallbacks.refreshData(); }
+    refreshData: function (force) { bootCallbacks.refreshData(force); }
   });
 
   setFormCallbacks({
     openWorktreeModal: openWorktreeModal,
-    refreshData: function () { bootCallbacks.refreshData(); },
+    refreshData: function (force) { bootCallbacks.refreshData(force); },
     ingest: function (data) { bootCallbacks.ingest(data); }
   });
   setAgentCallbacks({
-    refreshData: function () { bootCallbacks.refreshData(); },
+    refreshData: function (force) { bootCallbacks.refreshData(force); },
     renderBoard: renderBoard,
     renderDetail: renderDetail,
     renderAgentsTable: renderAgentsTable

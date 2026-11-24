@@ -309,6 +309,8 @@ export function openAgentDrawer(itemId) {
     if (els.metricCalls) text(els.metricCalls, cached.callsText || 'Calls: ' + state.trajectory.calls);
     if (els.agentStatusPill) { text(els.agentStatusPill, cached.statusText || 'Completed'); els.agentStatusPill.className = cached.statusClass || 'agent-status-pill status-completed'; }
     if (els.btnCancelAgent) els.btnCancelAgent.disabled = true;
+    if (els.agentChatContainer) els.agentChatContainer.hidden = true;
+    if (els.trajectorySearch) els.trajectorySearch.value = state.trajectory.filterQuery || '';
     if (els.trajectoryStream) {
       els.trajectoryStream.innerHTML = cached.streamHtml || '';
       scrollTrajectoryStreamToBottom(true);
@@ -318,6 +320,7 @@ export function openAgentDrawer(itemId) {
   }
 
   clear(els.trajectoryStream);
+  if (els.trajectorySearch) els.trajectorySearch.value = '';
   var now = Date.now();
   state.trajectory = createTrajectory(timingStart, now);
   appendTrajectoryContextRow('Agent run started for ' + itemId);
