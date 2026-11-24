@@ -147,6 +147,12 @@ pub struct RunLiveState {
     pub last_activity: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PromptCommand {
+    Message(String),
+    Finish,
+}
+
 #[derive(Clone)]
 pub struct ActiveRun {
     pub item_id: String,
@@ -158,7 +164,7 @@ pub struct ActiveRun {
     pub subscribers: Arc<Mutex<Vec<Sender<serde_json::Value>>>>,
     pub started_at: i64,
     pub cancel_requested: Arc<AtomicBool>,
-    pub prompt_sender: Option<Sender<String>>,
+    pub prompt_sender: Option<Sender<PromptCommand>>,
     pub mode: RunMode,
     pub runner: RunnerSettings,
     pub live_state: Arc<Mutex<RunLiveState>>,
@@ -673,9 +679,11 @@ impl AcpManager {
         if let Some(key) = resolve_run_key(&runs, item_id) {
             if let Some(run) = runs.get(&key) {
                 if let Some(sender) = &run.prompt_sender {
-                    sender.send(trimmed.to_string()).map_err(|_| {
-                        AcpManagerError::Client("Run prompt receiver closed".to_string())
-                    })?;
+                    sender
+                        .send(PromptCommand::Message(trimmed.to_string()))
+                        .map_err(|_| {
+                            AcpManagerError::Client("Run prompt receiver closed".to_string())
+                        })?;
                     return Ok(());
                 } else {
                     return Err(AcpManagerError::Workflow(
@@ -690,7 +698,27 @@ impl AcpManager {
     }
 
     pub fn finish_run(&self, item_id: &str) -> Result<(), AcpManagerError> {
-        self.send_message(item_id, "__FINISH__")
+        let runs = self
+            .active_runs
+            .lock()
+            .map_err(|_| AcpManagerError::Io("Lock poisoned on active_runs".to_string()))?;
+        if let Some(key) = resolve_run_key(&runs, item_id) {
+            if let Some(run) = runs.get(&key) {
+                if let Some(sender) = &run.prompt_sender {
+                    sender.send(PromptCommand::Finish).map_err(|_| {
+                        AcpManagerError::Client("Run prompt receiver closed".to_string())
+                    })?;
+                    return Ok(());
+                } else {
+                    return Err(AcpManagerError::Workflow(
+                        "Run does not accept interactive finish".to_string(),
+                    ));
+                }
+            }
+        }
+        Err(AcpManagerError::ItemNotFound(format!(
+            "Item '{item_id}' is not currently running"
+        )))
     }
 
     pub fn start_run_mode(&self, item_id: &str, mode: RunMode) -> Result<(), AcpManagerError> {
@@ -923,7 +951,7 @@ impl AcpManager {
         let started_at = chrono::Utc::now().timestamp();
 
         // 8. Insert ActiveRun into active_runs
-        let (prompt_tx, prompt_rx) = mpsc::channel::<String>();
+        let (prompt_tx, prompt_rx) = mpsc::channel::<PromptCommand>();
         let is_interactive = matches!(
             mode,
             RunMode::Idea { .. }
@@ -1071,21 +1099,24 @@ impl AcpManager {
                         &last_stop_reason,
                     );
 
-                    while let Ok(user_msg) = worker_prompt_rx.recv() {
+                    while let Ok(cmd) = worker_prompt_rx.recv() {
                         if worker_cancel.load(Ordering::SeqCst) {
                             return Err("Run cancelled by user".to_string());
                         }
+                        let user_msg = match cmd {
+                            PromptCommand::Finish => {
+                                clear_waiting_state(
+                                    &worker_live_state,
+                                    &worker_global_subscribers,
+                                    &worker_item_id,
+                                    mode_str,
+                                    "Finishing",
+                                );
+                                break;
+                            }
+                            PromptCommand::Message(msg) => msg,
+                        };
                         let trimmed = user_msg.trim();
-                        if trimmed == "__FINISH__" {
-                            clear_waiting_state(
-                                &worker_live_state,
-                                &worker_global_subscribers,
-                                &worker_item_id,
-                                mode_str,
-                                "Finishing",
-                            );
-                            break;
-                        }
                         if trimmed.is_empty() {
                             continue;
                         }
@@ -1719,15 +1750,23 @@ fn clear_waiting_state(
 }
 
 fn resolve_run_key(runs: &HashMap<String, ActiveRun>, id: &str) -> Option<String> {
-    if runs.contains_key(id) {
-        return Some(id.to_string());
+    let trimmed = id.trim();
+    if trimmed.is_empty() {
+        return None;
     }
+    if runs.contains_key(trimmed) {
+        return Some(trimmed.to_string());
+    }
+    let mut matched: Option<&String> = None;
     for key in runs.keys() {
-        if key.starts_with(id) || id.starts_with(key.as_str()) {
-            return Some(key.clone());
+        if key.starts_with(trimmed) || trimmed.starts_with(key.as_str()) {
+            if matched.is_some() {
+                return None;
+            }
+            matched = Some(key);
         }
     }
-    None
+    matched.cloned()
 }
 fn write_value_events_as_sse<W: std::io::Write>(
     events: &[serde_json::Value],
@@ -2821,5 +2860,47 @@ done
         .unwrap();
         assert_eq!(meta.current_status(), crate::model::Status::Done);
         assert_eq!(meta.claimed_by, None);
+    }
+
+    #[test]
+    fn test_resolve_run_key_rejects_empty_and_ambiguous_prefixes() {
+        let dir = tempfile::tempdir().unwrap();
+        let log_path = dir.path().join("key.log");
+        let client = Arc::new(AcpClient::spawn("sleep 5", dir.path(), &log_path).unwrap());
+        let make_run = |id: &str| ActiveRun {
+            item_id: id.to_string(),
+            client: Arc::clone(&client),
+            worktree_path: None,
+            is_new_worktree: false,
+            is_primary_worktree: true,
+            event_buffer: Arc::new(Mutex::new(Vec::new())),
+            subscribers: Arc::new(Mutex::new(Vec::new())),
+            started_at: 100,
+            cancel_requested: Arc::new(AtomicBool::new(false)),
+            prompt_sender: None,
+            mode: RunMode::CommitPr,
+            runner: RunnerSettings {
+                command: "sleep 5".to_string(),
+                actor: "agent:test".to_string(),
+                model: None,
+            },
+            live_state: Arc::new(Mutex::new(RunLiveState::default())),
+        };
+        let mut runs = HashMap::new();
+        runs.insert("abc111111111".to_string(), make_run("abc111111111"));
+        runs.insert("abc222222222".to_string(), make_run("abc222222222"));
+
+        assert_eq!(resolve_run_key(&runs, ""), None);
+        assert_eq!(resolve_run_key(&runs, "   "), None);
+        assert_eq!(resolve_run_key(&runs, "abc"), None);
+        assert_eq!(
+            resolve_run_key(&runs, "abc1"),
+            Some("abc111111111".to_string())
+        );
+        assert_eq!(
+            resolve_run_key(&runs, "abc222222222"),
+            Some("abc222222222".to_string())
+        );
+        let _ = client.kill();
     }
 }
