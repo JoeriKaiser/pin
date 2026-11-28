@@ -1127,10 +1127,11 @@ pub fn next_ready_items_filtered(
                 }
             }
             if let Some(parent) = parent_id {
-                let matches_parent = item
-                    .parent_id
-                    .as_deref()
-                    .is_some_and(|p| p == parent || p.starts_with(parent));
+                let norm = parent.trim().trim_end_matches(".md").to_ascii_lowercase();
+                let matches_parent = item.parent_id.as_deref().is_some_and(|p| {
+                    let pl = p.to_ascii_lowercase();
+                    pl == norm || pl.starts_with(&norm)
+                });
                 if !matches_parent {
                     return false;
                 }
@@ -1154,6 +1155,8 @@ pub fn next_ready_items_filtered(
         b.priority_rank()
             .cmp(&a.priority_rank())
             .then_with(|| a.timestamp.cmp(&b.timestamp))
+            .then_with(|| a.created_at_ns.cmp(&b.created_at_ns))
+            .then_with(|| a.id.cmp(&b.id))
     });
 
     if ready.len() > limit {

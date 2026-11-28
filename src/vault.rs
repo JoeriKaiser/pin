@@ -243,10 +243,11 @@ pub fn collect_ideas_with_filter(
                         }
                     }
                     if let Some(parent) = filter.parent_id {
-                        let matches_parent = meta
-                            .parent_id
-                            .as_deref()
-                            .is_some_and(|p| p == parent || p.starts_with(parent));
+                        let norm = parent.trim().trim_end_matches(".md").to_ascii_lowercase();
+                        let matches_parent = meta.parent_id.as_deref().is_some_and(|p| {
+                            let pl = p.to_ascii_lowercase();
+                            pl == norm || pl.starts_with(&norm)
+                        });
                         if !matches_parent {
                             continue;
                         }
