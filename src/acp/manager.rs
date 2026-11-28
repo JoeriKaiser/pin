@@ -790,21 +790,23 @@ impl AcpManager {
             }
         };
 
-        // Capture the item's status before beginning the run so error/cancel
-        // restores the real prior status instead of clobbering Created/Blocked.
-        let pre_run_status = fs::read_to_string(self.vault_path.join(&filename))
-            .ok()
-            .and_then(|raw| {
-                let mut diag = Vec::new();
-                crate::frontmatter::parse_front_matter_detailed(&filename, &raw, &mut diag)
-            })
-            .map(|m| m.current_status())
-            .filter(|s| *s != crate::model::Status::InProgress)
-            .unwrap_or(if matches!(mode, RunMode::CommitPr) {
-                crate::model::Status::Done
-            } else {
-                crate::model::Status::Planned
-            });
+        // Capture the restore status before beginning the run:
+        // - CommitPr restores Done so completed items are never demoted.
+        // - Implement restores Planned so failed/cancelled work stays ready for retry.
+        // - Idea restores its real prior status (e.g. Created or Blocked).
+        let pre_run_status = match mode {
+            RunMode::CommitPr => crate::model::Status::Done,
+            RunMode::Implement { .. } => crate::model::Status::Planned,
+            RunMode::Idea { .. } => fs::read_to_string(self.vault_path.join(&filename))
+                .ok()
+                .and_then(|raw| {
+                    let mut diag = Vec::new();
+                    crate::frontmatter::parse_front_matter_detailed(&filename, &raw, &mut diag)
+                })
+                .map(|m| m.current_status())
+                .filter(|s| *s != crate::model::Status::InProgress)
+                .unwrap_or(crate::model::Status::Planned),
+        };
 
         // Determine working directory using canonical_id so short prefixes match logs/worktrees.
         let expected_wt = WorktreeManager::worktree_path(&self.repo_path, &canonical_id);
