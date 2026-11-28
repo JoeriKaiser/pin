@@ -1869,6 +1869,9 @@ async function runHarness() {
   const runnerActorInput = documentMock.getElementById('runner-actor-input');
   const runnerModelFilter = documentMock.getElementById('runner-model-filter');
   const runnerModelSelect = documentMock.getElementById('runner-model-select');
+  const runnerModelListbox = documentMock.getElementById('runner-model-listbox');
+  const runnerModelClear = documentMock.getElementById('btn-runner-model-clear');
+  const runnerModelToggle = documentMock.getElementById('btn-runner-model-toggle');
   const runnerModelStatus = documentMock.getElementById('runner-model-status');
   const worktreeRunnerSummary = documentMock.getElementById('worktree-runner-summary');
 
@@ -1943,16 +1946,74 @@ async function runHarness() {
   await new Promise(r => setTimeout(r, 10));
   assert.ok(modelRequests.length >= 1, 'opening the dialog discovers models');
   assert.strictEqual(testExports.state.runner.models.length, 3, 'all discovered models are stored');
-  assert.strictEqual(runnerModelSelect.children.length, 4, 'model list has default plus options');
-  const fastOption = runnerModelSelect.children.find
-    ? runnerModelSelect.children.find(c => c.textContent.indexOf('Mock Fast') !== -1)
-    : null;
-  assert.ok(fastOption || runnerModelSelect.children[2].textContent.indexOf('Mock Fast') !== -1, 'friendly model name shown');
+  const initialOptions = runnerModelListbox.querySelectorAll('[role="option"]');
+  assert.strictEqual(initialOptions.length, 4, 'model listbox has default plus options');
+  assert.ok(initialOptions.some(o => o.textContent.indexOf('Mock Fast') !== -1), 'friendly model name shown');
+  const groupLabels = runnerModelListbox.querySelectorAll('.runner-model-group-label');
+  assert.strictEqual(groupLabels.length, 2, 'unfiltered models with 2+ providers render provider group headers');
+  assert.strictEqual(groupLabels[0].textContent, 'Mock', 'first provider header formatted');
+  assert.strictEqual(groupLabels[1].textContent, 'Other', 'second provider header formatted');
+  assert.strictEqual(runnerModelFilter.value, 'Agent default (Mock Default)', 'combobox displays current selection');
 
+  // Typing in combobox opens listbox and filters accurately (including multi-term and highlights)
+  runnerModelFilter.value = 'mock fast';
+  runnerModelFilter.dispatchEvent({ type: 'input', target: runnerModelFilter });
+  assert.strictEqual(testExports.isRunnerModelListboxOpen(), true, 'typing opens the model listbox');
+  assert.strictEqual(runnerModelFilter.getAttribute('aria-expanded'), 'true', 'aria-expanded updates on open');
+  assert.strictEqual(runnerModelListbox.hidden, false, 'listbox unhides when open');
+  const fastOptions = runnerModelListbox.querySelectorAll('[role="option"]');
+  assert.strictEqual(fastOptions.length, 1, 'multi-term filter narrows to matching option without forcing non-matching default');
+  assert.strictEqual(fastOptions[0].dataset.value, 'mock/fast', 'filtered option is mock/fast');
+  const marks = fastOptions[0].querySelectorAll('mark');
+  assert.ok(marks.length >= 2, 'matched search terms are highlighted with mark elements');
+  assert.ok(runnerModelStatus.textContent.indexOf('1 of 3 models match "mock fast"') !== -1, 'status announces filtered match count');
+
+  // Prefix/name matches rank ahead of description-only matches
   runnerModelFilter.value = 'fast';
-  testExports.renderRunnerModelList();
-  assert.strictEqual(runnerModelSelect.children.length, 2, 'model filter narrows the list');
-  runnerModelFilter.value = '';
+  runnerModelFilter.dispatchEvent({ type: 'input', target: runnerModelFilter });
+  assert.strictEqual(runnerModelListbox.querySelectorAll('[role="option"]')[0].dataset.value, 'mock/fast', 'name match ranks first');
+
+  // Keyboard Enter selects the highlighted option and closes listbox
+  runnerModelFilter.dispatchEvent({ type: 'keydown', key: 'Enter', preventDefault() {}, stopPropagation() {} });
+  assert.strictEqual(runnerModelSelect.value, 'mock/fast', 'Enter selects the active filtered model');
+  assert.strictEqual(runnerModelFilter.value, 'Mock Fast', 'combobox input displays the selected model name');
+  assert.strictEqual(testExports.isRunnerModelListboxOpen(), false, 'selecting closes the listbox');
+  assert.strictEqual(runnerModelClear.hidden, false, 'clear button appears to reset non-default model');
+
+  // ArrowDown opens listbox, navigates options, and Escape closes listbox before dialog
+  runnerModelFilter.dispatchEvent({ type: 'keydown', key: 'ArrowDown', preventDefault() {} });
+  assert.strictEqual(testExports.isRunnerModelListboxOpen(), true, 'ArrowDown opens the listbox');
+  assert.ok(runnerModelFilter.getAttribute('aria-activedescendant'), 'aria-activedescendant points to active option');
+  documentMock.dispatchEvent({ type: 'keydown', key: 'Escape', target: runnerModelFilter, preventDefault() {} });
+  assert.strictEqual(testExports.isRunnerModelListboxOpen(), false, 'first Escape closes only the listbox');
+  assert.strictEqual(runnerDialog.open, true, 'first Escape keeps runner dialog open');
+
+  // Zero-match search shows empty state and clear restores options
+  runnerModelFilter.value = 'nonexistent-model-xyz';
+  runnerModelFilter.dispatchEvent({ type: 'input', target: runnerModelFilter });
+  assert.strictEqual(runnerModelListbox.querySelectorAll('[role="option"]').length, 0, 'non-matching query shows zero options');
+  assert.ok(runnerModelListbox.textContent.indexOf('No models match') !== -1, 'empty state explains zero matches');
+  runnerModelClear.click();
+  assert.strictEqual(runnerModelFilter.value, '', 'clear button empties active search query');
+  assert.strictEqual(runnerModelListbox.querySelectorAll('[role="option"]').length, 4, 'clearing search restores all options');
+  testExports.closeRunnerModelListbox(false);
+
+  // Clear button resets to Agent default when not actively searching
+  runnerModelClear.click();
+  assert.strictEqual(runnerModelSelect.value, '', 'clear button resets selection to agent default');
+
+  // Toggle button opens and closes listbox
+  runnerModelToggle.click();
+  assert.strictEqual(testExports.isRunnerModelListboxOpen(), true, 'toggle button opens listbox');
+  runnerModelToggle.click();
+  assert.strictEqual(testExports.isRunnerModelListboxOpen(), false, 'toggle button closes listbox');
+
+  // Seeded custom model outside advertised list is preserved in options
+  testExports.applyRunnerSettings({ command: 'omp acp', actor: 'agent:omp', model: 'custom/unlisted' });
+  assert.ok(
+    runnerModelListbox.querySelectorAll('[role="option"]').some(o => o.dataset.value === 'custom/unlisted'),
+    'custom seeded model is preserved as selectable option'
+  );
 
   testExports.applyRunnerSettings({ command: 'omp acp', actor: 'agent:omp', model: 'mock/fast' });
   assert.strictEqual(testExports.state.runner.model, 'mock/fast', 'selected model applied to state');
@@ -1968,6 +2029,14 @@ async function runHarness() {
   assert.strictEqual(runnerToast.hidden, false, 'runner save unhides the toast');
   assert.strictEqual(runnerToast.textContent, 'Runner updated', 'runner save toast text');
   assert.ok(runnerToast.classList.contains('toast-success'), 'runner save toast uses success style');
+
+  // Reopening the dialog surfaces the recently saved model once under Recent
+  testExports.openRunnerDialog();
+  const labelsAfterSave = runnerModelListbox.querySelectorAll('.runner-model-group-label').map(el => el.textContent);
+  assert.strictEqual(labelsAfterSave[0], 'Recent', 'recently saved model appears under Recent header');
+  const fastMatchesAfterSave = runnerModelListbox.querySelectorAll('[role="option"]').filter(o => o.dataset.value === 'mock/fast');
+  assert.strictEqual(fastMatchesAfterSave.length, 1, 'recent model is not duplicated in provider groups');
+  testExports.closeRunnerDialog();
 
   testExports.handleRunnerSettingsEvent({ command: 'opencode acp', actor: 'agent:opencode', model: null });
   await new Promise(r => setTimeout(r, 10));
