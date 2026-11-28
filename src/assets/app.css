@@ -4390,6 +4390,19 @@ a {
   white-space: nowrap;
 }
 
+.runner-model-highlight {
+  background: var(--accent-subtle);
+  color: var(--accent);
+  border-radius: 2px;
+  padding: 0 1px;
+  font-weight: var(--weight-semibold);
+}
+
+.runner-model-option.is-selected .runner-model-highlight {
+  background: var(--surface);
+  color: var(--accent);
+}
+
 .runner-model-empty {
   display: flex;
   align-items: center;

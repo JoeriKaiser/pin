@@ -112,23 +112,128 @@ function allSelectableModels() {
   return models;
 }
 
-function filterModels(query) {
+function tokenizeQuery(query) {
   var q = String(query || '').toLowerCase().trim();
+  if (!q) return [];
+  return q.split(/\s+/).filter(Boolean);
+}
+
+function isWordBoundary(textStr, idx) {
+  if (idx <= 0) return true;
+  var ch = textStr.charAt(idx - 1);
+  return ch === ' ' || ch === '/' || ch === '-' || ch === '_' || ch === '.';
+}
+
+function scoreFieldMatch(field, term) {
+  if (!field) return 0;
+  var idx = field.indexOf(term);
+  if (idx === -1) return 0;
+  if (field === term) return 120;
+  if (idx === 0) return 60;
+  var slashIdx = field.indexOf('/' + term);
+  if (slashIdx !== -1) return 60;
+  if (isWordBoundary(field, idx)) return 35;
+  return 20;
+}
+
+function scoreModelMatch(model, terms, fullQuery) {
+  var name = String(model.name || '').toLowerCase();
+  var value = String(model.value || '').toLowerCase();
+  var desc = String(model.description || '').toLowerCase();
+  var combined = name + ' ' + value + ' ' + desc;
+  var score = 0;
+
+  for (var i = 0; i < terms.length; i += 1) {
+    var term = terms[i];
+    if (combined.indexOf(term) === -1) return -1;
+    var best = Math.max(scoreFieldMatch(name, term), scoreFieldMatch(value, term));
+    if (best > 0) score += best;
+    else if (desc.indexOf(term) !== -1) score += 8;
+  }
+
+  if (fullQuery) {
+    if (name.indexOf(fullQuery) !== -1) score += 40;
+    else if (value.indexOf(fullQuery) !== -1) score += 30;
+  }
+
+  return score;
+}
+
+function filterModels(query) {
+  var terms = tokenizeQuery(query);
   var models = allSelectableModels();
-  if (!q) return models;
-  return models.filter(function (model) {
-    var haystack = (model.value + ' ' + (model.name || '') + ' ' + (model.description || '')).toLowerCase();
-    return haystack.indexOf(q) !== -1;
+  if (!terms.length) return models;
+  var fullQuery = terms.join(' ');
+  var scored = [];
+  for (var i = 0; i < models.length; i += 1) {
+    var score = scoreModelMatch(models[i], terms, fullQuery);
+    if (score >= 0) {
+      scored.push({ model: models[i], score: score, index: i });
+    }
+  }
+  scored.sort(function (a, b) {
+    if (b.score !== a.score) return b.score - a.score;
+    return a.index - b.index;
   });
+  return scored.map(function (entry) { return entry.model; });
 }
 
 function defaultMatchesQuery(query) {
-  var q = String(query || '').toLowerCase().trim();
-  if (!q) return true;
+  var terms = tokenizeQuery(query);
+  if (!terms.length) return true;
   var runner = state.runner;
   var haystack = ('agent default ' + (runner.modelCurrent || '') + ' ' +
     (runner.modelCurrent ? runnerModelLabel(runner.modelCurrent) : '')).toLowerCase();
-  return haystack.indexOf(q) !== -1;
+  for (var i = 0; i < terms.length; i += 1) {
+    if (haystack.indexOf(terms[i]) === -1) return false;
+  }
+  return true;
+}
+
+function appendHighlightedText(parent, rawText, terms) {
+  var str = String(rawText == null ? '' : rawText);
+  if (!terms || !terms.length || !str) {
+    parent.appendChild(document.createTextNode(str));
+    return;
+  }
+  var lower = str.toLowerCase();
+  var ranges = [];
+  for (var i = 0; i < terms.length; i += 1) {
+    var term = terms[i];
+    if (!term) continue;
+    var pos = lower.indexOf(term);
+    while (pos !== -1) {
+      ranges.push([pos, pos + term.length]);
+      pos = lower.indexOf(term, pos + term.length);
+    }
+  }
+  if (!ranges.length) {
+    parent.appendChild(document.createTextNode(str));
+    return;
+  }
+  ranges.sort(function (a, b) { return a[0] - b[0] || b[1] - a[1]; });
+  var merged = [ranges[0]];
+  for (var j = 1; j < ranges.length; j += 1) {
+    var prev = merged[merged.length - 1];
+    if (ranges[j][0] <= prev[1]) {
+      if (ranges[j][1] > prev[1]) prev[1] = ranges[j][1];
+    } else {
+      merged.push(ranges[j]);
+    }
+  }
+  var cursor = 0;
+  for (var k = 0; k < merged.length; k += 1) {
+    var start = merged[k][0];
+    var end = merged[k][1];
+    if (start > cursor) {
+      parent.appendChild(document.createTextNode(str.slice(cursor, start)));
+    }
+    parent.appendChild(node('mark', 'runner-model-highlight', str.slice(start, end)));
+    cursor = end;
+  }
+  if (cursor < str.length) {
+    parent.appendChild(document.createTextNode(str.slice(cursor)));
+  }
 }
 
 function updateClearButton() {
@@ -295,7 +400,7 @@ export function renderRunner() {
   renderRunnerModelStatus();
 }
 
-function buildOptionElement(item, index, selectedValue, currentDefault) {
+function buildOptionElement(item, index, selectedValue, currentDefault, terms) {
   var optionId = 'runner-model-opt-' + index;
   var isSelected = item.value === selectedValue;
   var el = node('div', 'runner-model-option' + (isSelected ? ' is-selected' : ''));
@@ -306,7 +411,9 @@ function buildOptionElement(item, index, selectedValue, currentDefault) {
 
   var mainRow = node('div', 'runner-model-option-main');
   var nameWrap = node('div', 'runner-model-option-title');
-  nameWrap.appendChild(node('span', 'runner-model-option-name', item.name || item.value));
+  var nameSpan = node('span', 'runner-model-option-name');
+  appendHighlightedText(nameSpan, item.name || item.value, terms);
+  nameWrap.appendChild(nameSpan);
 
   if (item.isDefaultOption) {
     nameWrap.appendChild(node('span', 'runner-model-badge', 'Default'));
@@ -325,10 +432,14 @@ function buildOptionElement(item, index, selectedValue, currentDefault) {
   el.appendChild(mainRow);
 
   if (item.meta) {
-    el.appendChild(node('div', 'runner-model-option-id', item.meta));
+    var metaDiv = node('div', 'runner-model-option-id');
+    appendHighlightedText(metaDiv, item.meta, terms);
+    el.appendChild(metaDiv);
   }
   if (item.description) {
-    el.appendChild(node('div', 'runner-model-option-desc', item.description));
+    var descDiv = node('div', 'runner-model-option-desc');
+    appendHighlightedText(descDiv, item.description, terms);
+    el.appendChild(descDiv);
   }
 
   return { id: optionId, value: item.value, el: el };
@@ -360,6 +471,7 @@ export function renderRunnerModelList() {
     return;
   }
 
+  var terms = tokenizeQuery(query);
   var models = filterModels(query);
   var includeDefault = defaultMatchesQuery(query);
   var optIndex = 0;
@@ -372,7 +484,7 @@ export function renderRunnerModelList() {
       description: '',
       isDefaultOption: true
     };
-    var defEntry = buildOptionElement(defaultItem, optIndex, selected, runner.modelCurrent);
+    var defEntry = buildOptionElement(defaultItem, optIndex, selected, runner.modelCurrent, terms);
     listbox.appendChild(defEntry.el);
     renderedOptions.push(defEntry);
     optIndex += 1;
@@ -385,7 +497,7 @@ export function renderRunnerModelList() {
       meta: model.value,
       description: model.description || '',
       _custom: !!model._custom
-    }, optIndex, selected, runner.modelCurrent);
+    }, optIndex, selected, runner.modelCurrent, terms);
     listbox.appendChild(entry.el);
     renderedOptions.push(entry);
     optIndex += 1;

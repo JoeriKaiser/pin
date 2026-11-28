@@ -1951,16 +1951,23 @@ async function runHarness() {
   assert.ok(initialOptions.some(o => o.textContent.indexOf('Mock Fast') !== -1), 'friendly model name shown');
   assert.strictEqual(runnerModelFilter.value, 'Agent default (Mock Default)', 'combobox displays current selection');
 
-  // Typing in combobox opens listbox and filters accurately
-  runnerModelFilter.value = 'fast';
+  // Typing in combobox opens listbox and filters accurately (including multi-term and highlights)
+  runnerModelFilter.value = 'mock fast';
   runnerModelFilter.dispatchEvent({ type: 'input', target: runnerModelFilter });
   assert.strictEqual(testExports.isRunnerModelListboxOpen(), true, 'typing opens the model listbox');
   assert.strictEqual(runnerModelFilter.getAttribute('aria-expanded'), 'true', 'aria-expanded updates on open');
   assert.strictEqual(runnerModelListbox.hidden, false, 'listbox unhides when open');
   const fastOptions = runnerModelListbox.querySelectorAll('[role="option"]');
-  assert.strictEqual(fastOptions.length, 1, 'model filter narrows to matching option without forcing non-matching default');
+  assert.strictEqual(fastOptions.length, 1, 'multi-term filter narrows to matching option without forcing non-matching default');
   assert.strictEqual(fastOptions[0].dataset.value, 'mock/fast', 'filtered option is mock/fast');
-  assert.ok(runnerModelStatus.textContent.indexOf('1 of 3 models match "fast"') !== -1, 'status announces filtered match count');
+  const marks = fastOptions[0].querySelectorAll('mark');
+  assert.ok(marks.length >= 2, 'matched search terms are highlighted with mark elements');
+  assert.ok(runnerModelStatus.textContent.indexOf('1 of 3 models match "mock fast"') !== -1, 'status announces filtered match count');
+
+  // Prefix/name matches rank ahead of description-only matches
+  runnerModelFilter.value = 'fast';
+  runnerModelFilter.dispatchEvent({ type: 'input', target: runnerModelFilter });
+  assert.strictEqual(runnerModelListbox.querySelectorAll('[role="option"]')[0].dataset.value, 'mock/fast', 'name match ranks first');
 
   // Keyboard Enter selects the highlighted option and closes listbox
   runnerModelFilter.dispatchEvent({ type: 'keydown', key: 'Enter', preventDefault() {}, stopPropagation() {} });
