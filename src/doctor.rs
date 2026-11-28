@@ -80,7 +80,7 @@ pub fn scan_vault(vault_path: &Path) -> VaultScan {
                     severity: Severity::Warning,
                     code: "orphaned_recovery_file".to_string(),
                     filename: filename.clone(),
-                    message: "Orphaned edit recovery file left behind by a failed edit (remove with 'pin doctor --repair')".to_string(),
+                    message: "Orphaned edit recovery file left behind by a failed edit (inspect and remove manually)".to_string(),
                     field: None,
                 });
             } else if filename.ends_with(".lock") {
@@ -386,11 +386,7 @@ pub fn repair_vault(vault_path: &Path) -> usize {
             .unwrap_or("")
             .to_string();
         if filename.starts_with('.') {
-            if filename.ends_with(".edit-recovery.tmp") {
-                if fs::remove_file(path).is_ok() {
-                    repaired_count += 1;
-                }
-            } else if filename.ends_with(".lock") {
+            if filename.ends_with(".lock") {
                 let is_stale = fs::metadata(path)
                     .and_then(|m| m.modified())
                     .ok()
@@ -618,7 +614,6 @@ pub fn is_repairable_code(code: &str) -> bool {
         || code == "dangling_dependency"
         || code == "self_related"
         || code == "dangling_related"
-        || code == "orphaned_recovery_file"
         || code == "stale_lock_file"
 }
 
