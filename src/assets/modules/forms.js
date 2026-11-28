@@ -283,7 +283,7 @@ export function openSpecModal(initial) {
 }
 
 export function closeSpecModal(discardDraft) {
-  if (discardDraft) {
+  if (discardDraft === true) {
     clearSpecDraft();
   } else {
     saveSpecDraft();
