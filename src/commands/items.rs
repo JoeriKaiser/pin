@@ -216,13 +216,24 @@ pub fn list(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> 
         mut filter_claimed_by,
         mut filter_parent,
     ) = (None, None, None, None, None, None);
-    let (mut filter_ready, mut archive_filter, mut format) = (false, ArchiveFilter::Active, None);
+    let (mut filter_ready, mut archive_filter, mut limit, mut format) =
+        (false, ArchiveFilter::Active, None, None);
 
     while let Some(arg) = reader.peek()? {
         match arg {
             "--archived" => archive_filter = ArchiveFilter::Archived,
             "--all" => archive_filter = ArchiveFilter::All,
             "--ready" => filter_ready = true,
+            "--limit" => {
+                let val = reader.next_val("--limit")?;
+                let parsed = val
+                    .parse::<usize>()
+                    .map_err(|_| CliError::usage("--limit requires a positive integer"))?;
+                if parsed == 0 {
+                    return Err(CliError::usage("--limit requires a positive integer"));
+                }
+                limit = Some(parsed);
+            }
             "--project" => {
                 if project_scoped {
                     return Err(CliError::usage("'list-project' does not accept --project"));
@@ -274,12 +285,15 @@ pub fn list(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> 
         archive_filter,
     };
 
-    let ideas = collect_ideas_with_filter(&vault_path, &filter).map_err(|e| {
+    let mut ideas = collect_ideas_with_filter(&vault_path, &filter).map_err(|e| {
         CliError::usage(format!(
             "Could not read vault {}: {e}",
             vault_path.display()
         ))
     })?;
+    if let Some(lim) = limit {
+        ideas.truncate(lim);
+    }
     let fmt = format.unwrap_or_else(|| default_format(OutputFormat::Table));
     emit_ideas(&ideas, fmt);
     Ok(())
@@ -407,16 +421,46 @@ pub fn read(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> 
 
     let fmt = format.unwrap_or(OutputFormat::Plain);
     if fmt == OutputFormat::Json {
-        #[derive(serde::Serialize)]
-        struct ReadJson<'a> {
-            filename: &'a str,
-            content: &'a str,
+        let mut issues = Vec::new();
+        let parsed = parse_front_matter_detailed(&filename, &content, &mut issues);
+        if let Some(meta) = parsed {
+            let mut obj = serde_json::json!({
+                "filename": filename,
+                "content": content,
+                "id": meta.id,
+                "title": meta.title,
+                "project": meta.project,
+                "kind": meta.kind.as_str(),
+                "type": meta.work_type().as_str(),
+                "status": meta.current_status().as_str(),
+                "revision": meta.current_revision(),
+                "tags": meta.tags_list(),
+                "depends_on": meta.depends_on,
+                "related": meta.related,
+                "body": meta.body,
+            });
+            if let Some(p) = meta.priority {
+                obj["priority"] = serde_json::json!(p.as_str());
+            }
+            if let Some(pid) = meta.parent_id {
+                obj["parent_id"] = serde_json::json!(pid);
+            }
+            if let Some(cb) = meta.claimed_by {
+                obj["claimed_by"] = serde_json::json!(cb);
+            }
+            if let Some(h) = meta.handoff {
+                obj["handoff"] = serde_json::to_value(h).unwrap_or(serde_json::Value::Null);
+            }
+            println!("{}", serde_json::to_string(&obj).unwrap_or_default());
+        } else {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "filename": filename,
+                    "content": content,
+                })
+            );
         }
-        let res = ReadJson {
-            filename: &filename,
-            content: &content,
-        };
-        println!("{}", serde_json::to_string(&res).unwrap_or_default());
     } else {
         print!("{content}");
         if !content.ends_with('\n') {
