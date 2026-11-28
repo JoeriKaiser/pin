@@ -2831,7 +2831,19 @@ async function runHarness() {
     testExports.fillSelect(statusSel38, ['planned', 'done'], 'Any status');
     assert.strictEqual(statusSel38.value, 'blocked', 'Selected filter value stays selected when no items currently match');
     statusSel38.value = '';
-    console.log('PASS: Idea Explore mode, Back route, and filter preservation verified');
+
+    // 4. spec-modal draft persists across cancel/close and clears on explicit discard
+    testExports.openSpecModal();
+    documentMock.getElementById('spec-modal-title').value = 'Unsaved Spec Draft';
+    testExports.closeSpecModal({ type: 'click' }); // event object must not discard draft
+    documentMock.getElementById('spec-modal-title').value = '';
+    testExports.openSpecModal();
+    assert.strictEqual(documentMock.getElementById('spec-modal-title').value, 'Unsaved Spec Draft', 'spec-modal restores unsaved draft on reopen');
+    testExports.closeSpecModal(true);
+    testExports.openSpecModal();
+    assert.strictEqual(documentMock.getElementById('spec-modal-title').value, '', 'spec-modal clears draft when explicitly discarded');
+    testExports.closeSpecModal(true);
+    console.log('PASS: Idea Explore mode, Back route, filter preservation, and spec draft persistence verified');
   }
 
   console.log('\n========================================');

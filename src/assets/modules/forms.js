@@ -219,12 +219,15 @@ export function setSpecModalTab(tab) {
 }
 
 var SPEC_DRAFT_KEY = 'pin-spec-draft';
+var specDraftMemory = null;
 
 function saveSpecDraft() {
+  var fields = collectTicketFields('spec-modal');
+  var hasContent = !!(fields.title || fields.body || fields.tags);
+  specDraftMemory = hasContent ? fields : null;
   try {
     if (typeof sessionStorage === 'undefined' || !sessionStorage || typeof sessionStorage.setItem !== 'function') return;
-    var fields = collectTicketFields('spec-modal');
-    if (fields.title || fields.body || fields.tags) {
+    if (hasContent) {
       sessionStorage.setItem(SPEC_DRAFT_KEY, JSON.stringify(fields));
     } else if (typeof sessionStorage.removeItem === 'function') {
       sessionStorage.removeItem(SPEC_DRAFT_KEY);
@@ -234,17 +237,19 @@ function saveSpecDraft() {
 
 function loadSpecDraft() {
   try {
-    if (typeof sessionStorage === 'undefined' || !sessionStorage || typeof sessionStorage.getItem !== 'function') return null;
-    var raw = sessionStorage.getItem(SPEC_DRAFT_KEY);
-    if (!raw) return null;
-    var parsed = JSON.parse(raw);
-    return (parsed && typeof parsed === 'object') ? parsed : null;
-  } catch (_) {
-    return null;
-  }
+    if (typeof sessionStorage !== 'undefined' && sessionStorage && typeof sessionStorage.getItem === 'function') {
+      var raw = sessionStorage.getItem(SPEC_DRAFT_KEY);
+      if (raw) {
+        var parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') return parsed;
+      }
+    }
+  } catch (_) {}
+  return specDraftMemory;
 }
 
 export function clearSpecDraft() {
+  specDraftMemory = null;
   try {
     if (typeof sessionStorage !== 'undefined' && sessionStorage && typeof sessionStorage.removeItem === 'function') {
       sessionStorage.removeItem(SPEC_DRAFT_KEY);
@@ -253,8 +258,7 @@ export function clearSpecDraft() {
 }
 
 export function openSpecModal(initial) {
-  var hasInitial = !!(initial && (initial.title || initial.body || initial.tags || initial.type || initial.kind || initial.priority));
-  var src = hasInitial ? initial : (loadSpecDraft() || {});
+  var src = (initial !== undefined && initial !== null) ? initial : (loadSpecDraft() || {});
   var activeProject = (state.scope && state.scope !== 'all') ? state.scope : '';
   if (els.specModalTitle) els.specModalTitle.value = src.title || '';
   if (els.specModalBody) els.specModalBody.value = src.body || '';
