@@ -2792,6 +2792,48 @@ async function runHarness() {
     console.log('PASS: Agents table semantics and action wrapper verified');
   }
 
+  console.log('\n--- 38. Testing Idea Explore Mode, Back Route to Board, and Filter Option Preservation ---');
+  {
+    // 1. Worktree modal confirm on an idea item must pass mode: 'idea'
+    const prevFetch38 = fetchStub;
+    let capturedRunBody38 = null;
+    fetchStub = function (url, opts) {
+      if (String(url).includes('items/idea-explore-1/run')) {
+        capturedRunBody38 = JSON.parse(opts.body);
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          headers: { get: () => null },
+          json: () => Promise.resolve({ status: 'started' })
+        });
+      }
+      return Promise.resolve({ ok: true, status: 200, headers: { get: () => null }, json: () => Promise.resolve({ running: [], runs: [] }) });
+    };
+    const ideaItem38 = { id: 'idea-explore-1', title: 'Explore Idea', type: 'idea', status: 'planned' };
+    testExports.openWorktreeModal(ideaItem38, null);
+    documentMock.getElementById('btn-worktree-confirm').click();
+    await new Promise(r => setTimeout(r, 20));
+    assert.ok(capturedRunBody38, 'Worktree confirm dispatched /run for idea');
+    assert.strictEqual(capturedRunBody38.mode, 'idea', 'Idea card Explore confirm must launch idea mode, not implement');
+    fetchStub = prevFetch38;
+
+    // 2. Navigating back to empty hash returns from detail to board
+    testExports.setViewMode('detail');
+    testExports.state.selected = 'idea-explore-1';
+    global.location.hash = '';
+    testExports.applyRoute();
+    assert.strictEqual(testExports.state.selected, null, 'Empty hash clears selected item');
+    assert.strictEqual(testExports.state.viewMode, 'board', 'Empty hash returns viewMode to board');
+
+    // 3. fillSelect preserves currently selected filter value even when 0 items match
+    const statusSel38 = documentMock.getElementById('f-status');
+    statusSel38.value = 'blocked';
+    testExports.fillSelect(statusSel38, ['planned', 'done'], 'Any status');
+    assert.strictEqual(statusSel38.value, 'blocked', 'Selected filter value stays selected when no items currently match');
+    statusSel38.value = '';
+    console.log('PASS: Idea Explore mode, Back route, and filter preservation verified');
+  }
+
   console.log('\n========================================');
   console.log('ALL VIEWER TRAJECTORY TESTS PASSED (0)');
   console.log('========================================');

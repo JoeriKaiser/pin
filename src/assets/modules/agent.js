@@ -209,12 +209,6 @@ function cacheTrajectory(itemId) {
   };
 }
 
-var scheduleTimer = null;
-function scheduleCacheTrajectory(itemId) {
-  clearTimeout(scheduleTimer);
-  scheduleTimer = setTimeout(function () { cacheTrajectory(itemId); }, 200);
-}
-
 function createTrajectory(timingStart, now) {
   return {
     startTime: timingStart ? (timingStart * 1000) : now, startedAt: timingStart, finishedAt: null, turns: 0, calls: 0, timer: null,
@@ -351,7 +345,6 @@ export function openAgentDrawer(itemId) {
       }
       receivedEvents++;
       handleAgentStreamEvent(data);
-      scheduleCacheTrajectory(itemId);
     } catch (err) {
       console.error('Error parsing SSE event:', err);
     }
@@ -359,6 +352,10 @@ export function openAgentDrawer(itemId) {
 
   source.onerror = function () {
     if (state.activeRuns.has(itemId)) return;
+    if (state.currentStreamingId !== itemId) {
+      source.close();
+      return;
+    }
     updateDurationDisplay();
     if (els.agentStatusPill && els.agentStatusPill.textContent === 'Running') {
       setStatusPill('Completed', 'status-completed');
@@ -370,6 +367,7 @@ export function openAgentDrawer(itemId) {
     if (state.currentStream === source) state.currentStream = null;
     if (receivedEvents === 0) {
       fetchItemLog(itemId).then(function (res) {
+        if (state.currentStreamingId !== itemId) return;
         if (res.status === 200) {
           var link = node('span', '', 'Log available: '), a = node('a', '', '.pin_vault/runs/' + itemId + '.log');
           a.href = BASE + 'items/' + encodeURIComponent(itemId) + '/log'; a.target = '_blank'; a.rel = 'noopener';

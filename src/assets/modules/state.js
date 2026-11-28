@@ -170,6 +170,9 @@ export function fillSelect(select, values, first, order, formatLabel) {
   base.value = '';
   select.appendChild(base);
   var sorted = values.slice();
+  if (cur && sorted.indexOf(cur) === -1) {
+    sorted.push(cur);
+  }
   if (order) {
     sorted.sort(function (a, b) {
       var ia = order.indexOf(a), ib = order.indexOf(b);

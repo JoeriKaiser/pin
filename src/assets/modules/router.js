@@ -9,14 +9,16 @@ export function setOnRouteChanged(fn) {
 }
 
 export function route() {
+  var hasLocation = false;
   var hash = '';
   try {
-    if (typeof location !== 'undefined' && location && location.hash) {
-      hash = location.hash;
+    if (typeof location !== 'undefined' && location) {
+      hasLocation = true;
+      if (location.hash) hash = location.hash;
     }
   } catch (_) {}
-  if (!hash) return state ? state.selected : null;
-  if (hash === '#/agents') return null;
+  if (!hasLocation) return state ? state.selected : null;
+  if (!hash || hash === '#' || hash === '#/' || hash === '#/agents') return null;
   var match = hash.match(/^#\/(?:idea|item)\/(.+)$/);
   if (!match) return null;
   try {
@@ -43,7 +45,7 @@ export function applyRoute() {
       if (state.viewMode !== 'detail') {
         setViewMode('detail');
       }
-    } else if (state.viewMode === 'agents') {
+    } else if (state.viewMode !== 'board') {
       setViewMode('board');
     }
   }

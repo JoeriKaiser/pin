@@ -1,5 +1,5 @@
 import { els } from './dom.js';
-import { state, updateShown } from './state.js';
+import { state, updateShown, fillSelect } from './state.js';
 import { stripAnsi, cleanThoughtText, escapeHtml, formatStatusLabel } from './formatters.js';
 import {
   setReaderTab, renderActions, renderHandoff, renderList, renderDetail
@@ -30,7 +30,7 @@ import {
   initTheme, toggleTheme
 } from './bind.js';
 import { ingest, checkUpdate, connectEvents, refreshData } from './boot.js';
-import { setRoute } from './router.js';
+import { setRoute, applyRoute } from './router.js';
 import { renderAgentsTable, formatDuration, updateAgentDurations } from './agents-view.js';
 import {
   loadRunnerSettings, loadRunnerModels, openRunnerDialog, closeRunnerDialog,
@@ -107,9 +107,11 @@ if (typeof window !== 'undefined') {
     sendAgentChatMessage: sendAgentChatMessage,
     ingest: ingest,
     updateShown: updateShown,
+    fillSelect: fillSelect,
     connectEvents: connectEvents,
     refreshData: refreshData,
     setRoute: setRoute,
+    applyRoute: applyRoute,
     computeRenderKey: computeRenderKey,
     renderAgentsTable: renderAgentsTable,
     formatDuration: formatDuration,

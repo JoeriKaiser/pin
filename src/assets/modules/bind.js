@@ -1,4 +1,4 @@
-import { state, find } from './state.js';
+import { state, find, itemType } from './state.js';
 import { els, $ } from './dom.js';
 import { sendCancel, sendRun, sendCommitPr, sendMessage, sendFinish, sendUpdate, sendSync } from './api.js';
 import { text, clear, node, showToast, formatStatusLabel } from './formatters.js';
@@ -125,13 +125,15 @@ export function sendAgentChatMessage(itemId) {
     })
     .catch(function (err) {
       showToast(err.message || 'Failed to send message', true);
-      if (els.agentChatInput) {
-        els.agentChatInput.value = message;
-        if (state.chatDrafts && itemId) state.chatDrafts[itemId] = message;
-        els.agentChatInput.disabled = false;
-        els.agentChatInput.focus();
+      if (state.chatDrafts && itemId) state.chatDrafts[itemId] = message;
+      if (state.currentStreamingId === itemId) {
+        if (els.agentChatInput) {
+          els.agentChatInput.value = message;
+          els.agentChatInput.disabled = false;
+          els.agentChatInput.focus();
+        }
+        if (els.btnAgentChatSend) els.btnAgentChatSend.disabled = false;
       }
-      if (els.btnAgentChatSend) els.btnAgentChatSend.disabled = false;
     });
 }
 
@@ -475,7 +477,10 @@ export function bindForms() {
       var item = state.pendingWorktreeItem;
       var interactive = !!(els.worktreeInteractiveCheckbox && els.worktreeInteractiveCheckbox.checked);
       closeWorktreeModal();
-      if (item) sendRunItem(item.id, false, undefined, undefined, interactive);
+      if (item) {
+        var optMode = itemType(item) === 'idea' ? 'idea' : undefined;
+        sendRunItem(item.id, false, undefined, optMode, interactive);
+      }
     });
   }
   if (els.btnWorktreeConfirm) {
@@ -483,7 +488,10 @@ export function bindForms() {
       var item = state.pendingWorktreeItem;
       var interactive = !!(els.worktreeInteractiveCheckbox && els.worktreeInteractiveCheckbox.checked);
       closeWorktreeModal();
-      if (item) sendRunItem(item.id, true, 'Worktree start failed: ', undefined, interactive);
+      if (item) {
+        var optMode = itemType(item) === 'idea' ? 'idea' : undefined;
+        sendRunItem(item.id, true, 'Worktree start failed: ', optMode, interactive);
+      }
     });
   }
 }
