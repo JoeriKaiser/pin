@@ -213,8 +213,8 @@ Duplicate titles are rejected by default. Use `--allow-duplicate` only when the 
 
 - `pin context [--project <name>] [--tag <name>] [--kind <kind>] [--type <type>] [--status <status>] [--parent <id>] [--limit <n>] [--group kind] [--archived|--all] [--format json|plain]`
 - `pin add <markdown> [--kind technical|product|business|project] [--stdin] [--project <name>] [--title <title>] [--tags <csv>] [--priority low|medium|high] [--type idea|task|bug|decision] [--status <status>] [--actor <name>] [--parent <id>] [--depends-on <id>] [--allow-duplicate] [--format json|plain]`
-- `pin list [--project <name>] [--tag <name>] [--kind <kind>] [--type <type>] [--status <status>] [--claimed-by <actor>] [--parent <id>] [--ready] [--archived|--all] [--format json|table|plain]`
-- `pin list-project [--tag <name>] [--kind <kind>] [--type <type>] [--status <status>] [--claimed-by <actor>] [--parent <id>] [--ready] [--archived|--all] [--format json|table|plain]`
+- `pin list [--project <name>] [--tag <name>] [--kind <kind>] [--type <type>] [--status <status>] [--claimed-by <actor>] [--parent <id>] [--ready] [--limit <n>] [--archived|--all] [--format json|table|plain]`
+- `pin list-project [--tag <name>] [--kind <kind>] [--type <type>] [--status <status>] [--claimed-by <actor>] [--parent <id>] [--ready] [--limit <n>] [--archived|--all] [--format json|table|plain]`
 - `pin search <query> [--project <name>] [--tag <name>] [--kind <kind>] [--type <type>] [--status <status>] [--claimed-by <actor>] [--parent <id>] [--ready] [--limit <n>] [--archived|--all] [--format json|table|plain]`
 - `pin tree [id|prefix|filename] [--project <name>] [--archived|--all] [--format json|plain]`
 - `pin next [--project <name>] [--tag <name>] [--kind <kind>] [--type <type>] [--parent <id>] [--limit <n>] [--format json|plain]`
