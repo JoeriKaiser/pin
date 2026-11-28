@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fs::{create_dir_all, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
@@ -7,13 +7,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::acp::protocol::{
-    ClientInfo, ContentBlock, InitializeParams, InitializeResult, JsonRpcNotification,
-    JsonRpcRequest, JsonRpcResponse, RequestPermissionOutcome, RequestPermissionParams,
-    RequestPermissionResult, SessionCancelParams, SessionNewParams, SessionNewResult,
-    SessionPromptParams, SessionPromptResult, SessionSetConfigOptionParams,
+    ClientInfo, ContentBlock, InitializeParams, InitializeResult, JsonRpcError,
+    JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, RequestPermissionOutcome,
+    RequestPermissionParams, RequestPermissionResult, SessionCancelParams, SessionNewParams,
+    SessionNewResult, SessionPromptParams, SessionPromptResult, SessionSetConfigOptionParams,
 };
 use crate::cli::split_shell_words;
 
@@ -23,7 +23,7 @@ pub enum AcpError {
     Json(serde_json::Error),
     Timeout(String),
     Protocol(String),
-    ChildExited,
+    ChildExited(Option<String>),
 }
 
 impl std::fmt::Display for AcpError {
@@ -33,7 +33,10 @@ impl std::fmt::Display for AcpError {
             AcpError::Json(e) => write!(f, "JSON error: {e}"),
             AcpError::Timeout(msg) => write!(f, "Timeout: {msg}"),
             AcpError::Protocol(msg) => write!(f, "Protocol error: {msg}"),
-            AcpError::ChildExited => write!(f, "Child process exited unexpectedly"),
+            AcpError::ChildExited(Some(detail)) => {
+                write!(f, "Child process exited unexpectedly ({detail})")
+            }
+            AcpError::ChildExited(None) => write!(f, "Child process exited unexpectedly"),
         }
     }
 }
@@ -58,8 +61,11 @@ pub struct AcpClient {
     next_id: AtomicU64,
     response_dispatch: Arc<Mutex<HashMap<u64, Sender<serde_json::Value>>>>,
     subscribers: Arc<Mutex<Vec<Sender<serde_json::Value>>>>,
+    recent_stderr: Arc<Mutex<VecDeque<String>>>,
     timeout: Duration,
 }
+
+const MAX_RECENT_STDERR_LINES: usize = 8;
 
 impl AcpClient {
     pub fn spawn(cmd_line: &str, cwd: &Path, log_path: &Path) -> Result<Self, AcpError> {
@@ -68,6 +74,12 @@ impl AcpClient {
             return Err(AcpError::Protocol(
                 "Empty command line provided".to_string(),
             ));
+        }
+
+        // Create the log parent directory before spawning so a filesystem error
+        // never leaks a live child process.
+        if let Some(parent) = log_path.parent() {
+            create_dir_all(parent)?;
         }
 
         let mut cmd = Command::new(&words[0]);
@@ -98,27 +110,42 @@ impl AcpClient {
             .take()
             .ok_or_else(|| AcpError::Protocol("Failed to open child stderr".to_string()))?;
 
-        // Ensure parent directories exist for log file
-        if let Some(parent) = log_path.parent() {
-            create_dir_all(parent)?;
-        }
+        let recent_stderr: Arc<Mutex<VecDeque<String>>> =
+            Arc::new(Mutex::new(VecDeque::with_capacity(MAX_RECENT_STDERR_LINES)));
 
-        // Spawn stderr logging thread
+        // Spawn stderr logging thread (read raw bytes so invalid UTF-8 never kills the loop)
         let stderr_log_path = log_path.to_path_buf();
+        let stderr_tail = Arc::clone(&recent_stderr);
         thread::spawn(move || {
-            let mut file = match OpenOptions::new()
+            let mut file = OpenOptions::new()
                 .create(true)
                 .append(true)
                 .open(&stderr_log_path)
-            {
-                Ok(f) => f,
-                Err(_) => return,
-            };
+                .ok();
 
-            let reader = BufReader::new(stderr);
-            for line in reader.lines().map_while(Result::ok) {
-                let _ = writeln!(file, "{line}");
-                let _ = file.flush();
+            let mut reader = BufReader::new(stderr);
+            let mut buf = Vec::new();
+            loop {
+                buf.clear();
+                match reader.read_until(b'\n', &mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {
+                        let line = String::from_utf8_lossy(&buf);
+                        let trimmed = line.trim_end_matches(['\r', '\n']);
+                        if let Some(ref mut f) = file {
+                            let _ = writeln!(f, "{trimmed}");
+                            let _ = f.flush();
+                        }
+                        if !trimmed.is_empty() {
+                            if let Ok(mut tail) = stderr_tail.lock() {
+                                if tail.len() >= MAX_RECENT_STDERR_LINES {
+                                    tail.pop_front();
+                                }
+                                tail.push_back(trimmed.to_string());
+                            }
+                        }
+                    }
+                }
             }
         });
 
@@ -132,10 +159,17 @@ impl AcpClient {
         let reader_subscribers = Arc::clone(&subscribers);
         let reader_stdin = Arc::clone(&stdin_writer);
 
-        // Spawn stdout reader thread
+        // Spawn stdout reader thread (read raw bytes so non-UTF-8 output never kills the loop)
         thread::spawn(move || {
-            let reader = BufReader::new(stdout);
-            for line in reader.lines().map_while(Result::ok) {
+            let mut reader = BufReader::new(stdout);
+            let mut buf = Vec::new();
+            loop {
+                buf.clear();
+                match reader.read_until(b'\n', &mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {}
+                }
+                let line = String::from_utf8_lossy(&buf);
                 if line.trim().is_empty() {
                     continue;
                 }
@@ -146,12 +180,11 @@ impl AcpClient {
 
                 // Check if it's an incoming request or notification from the agent
                 let method = value.get("method").and_then(|m| m.as_str());
-                let id_val = value.get("id");
+                let id_val = value.get("id").filter(|id| !id.is_null());
 
                 if let Some(method) = method {
-                    // Agent calling session/request_permission
-                    if method == "session/request_permission" {
-                        if let Some(req_id) = id_val.and_then(|id| id.as_u64()) {
+                    if let Some(req_id) = id_val {
+                        if method == "session/request_permission" {
                             let params_val = value
                                 .get("params")
                                 .cloned()
@@ -164,6 +197,12 @@ impl AcpClient {
                                     .options
                                     .iter()
                                     .find(|o| o.kind == "allow_once")
+                                    .or_else(|| {
+                                        params.options.iter().find(|o| o.kind == "allow_always")
+                                    })
+                                    .or_else(|| {
+                                        params.options.iter().find(|o| o.kind.starts_with("allow"))
+                                    })
                                     .or_else(|| params.options.first())
                                     .map(|o| o.option_id.clone())
                                     .unwrap_or_else(|| "allow".to_string())
@@ -172,7 +211,7 @@ impl AcpClient {
                             };
 
                             let resp = JsonRpcResponse::ok(
-                                req_id,
+                                req_id.clone(),
                                 RequestPermissionResult {
                                     outcome: RequestPermissionOutcome {
                                         outcome: "selected".to_string(),
@@ -187,16 +226,31 @@ impl AcpClient {
                                     let _ = writer.flush();
                                 }
                             }
+                        } else {
+                            // Reply with JSON-RPC Method not found so an agent calling an
+                            // unsupported client method does not deadlock waiting for a response.
+                            let resp = JsonRpcResponse::<serde_json::Value>::err(
+                                req_id.clone(),
+                                JsonRpcError {
+                                    code: -32601,
+                                    message: format!("Method not found: {method}"),
+                                    data: None,
+                                },
+                            );
+                            if let Ok(serialized) = serde_json::to_string(&resp) {
+                                if let Ok(mut writer) = reader_stdin.lock() {
+                                    let _ = writeln!(writer, "{serialized}");
+                                    let _ = writer.flush();
+                                }
+                            }
                         }
                         continue;
                     }
 
                     // Agent sending notification (e.g., session/update)
-                    if id_val.is_none() {
-                        let mut subs = reader_subscribers.lock().unwrap();
-                        subs.retain(|sub| sub.send(value.clone()).is_ok());
-                        continue;
-                    }
+                    let mut subs = reader_subscribers.lock().unwrap();
+                    subs.retain(|sub| sub.send(value.clone()).is_ok());
+                    continue;
                 }
 
                 // If response with id: dispatch to waiting caller
@@ -218,8 +272,33 @@ impl AcpClient {
             next_id: AtomicU64::new(1),
             response_dispatch,
             subscribers,
+            recent_stderr,
             timeout: Duration::from_secs(30),
         })
+    }
+
+    fn exit_diagnostics(&self) -> Option<String> {
+        let mut parts = Vec::new();
+        if let Ok(mut guard) = self.child.lock() {
+            if let Some(ref mut child) = *guard {
+                if let Ok(Some(status)) = child.try_wait() {
+                    parts.push(format!("status: {status}"));
+                }
+            }
+        }
+        // Give stderr thread a brief moment to flush final error lines when child exits.
+        thread::sleep(Duration::from_millis(20));
+        if let Ok(tail) = self.recent_stderr.lock() {
+            if !tail.is_empty() {
+                let joined = tail.iter().cloned().collect::<Vec<_>>().join(" | ");
+                parts.push(format!("stderr: {joined}"));
+            }
+        }
+        if parts.is_empty() {
+            None
+        } else {
+            Some(parts.join("; "))
+        }
     }
 
     fn write_json(&self, json_str: &str) -> Result<(), AcpError> {
@@ -286,7 +365,7 @@ impl AcpClient {
                             AcpError::Protocol("Lock poisoned on dispatch".to_string())
                         })?;
                         dispatch.remove(&id);
-                        return Err(AcpError::ChildExited);
+                        return Err(AcpError::ChildExited(self.exit_diagnostics()));
                     }
                 },
                 None => match rx.recv() {
@@ -296,7 +375,7 @@ impl AcpClient {
                             AcpError::Protocol("Lock poisoned on dispatch".to_string())
                         })?;
                         dispatch.remove(&id);
-                        return Err(AcpError::ChildExited);
+                        return Err(AcpError::ChildExited(self.exit_diagnostics()));
                     }
                 },
             };
@@ -317,12 +396,7 @@ impl AcpClient {
     pub fn initialize(&self) -> Result<InitializeResult, AcpError> {
         let params = InitializeParams {
             protocol_version: 1,
-            client_capabilities: serde_json::json!({
-                "fs": {
-                    "read": true,
-                    "write": true
-                }
-            }),
+            client_capabilities: serde_json::json!({}),
             client_info: ClientInfo {
                 name: "pin".to_string(),
                 title: Some("Pin Idea Registry".to_string()),
@@ -393,6 +467,51 @@ impl AcpClient {
         let notif = JsonRpcNotification::new("session/cancel", params);
         let serialized = serde_json::to_string(&notif)?;
         self.write_json(&serialized)
+    }
+
+    /// Sends SIGTERM on Unix and waits up to `grace` for the child to exit cleanly
+    /// before falling back to `kill()` (SIGKILL).
+    pub fn terminate_gracefully(&self, grace: Duration) -> Result<(), AcpError> {
+        #[cfg(unix)]
+        {
+            extern "C" {
+                fn kill(pid: i32, sig: i32) -> i32;
+            }
+            let pgid = {
+                let guard = self
+                    .child
+                    .lock()
+                    .map_err(|_| AcpError::Protocol("Lock poisoned on child".to_string()))?;
+                guard
+                    .as_ref()
+                    .and_then(|c| i32::try_from(c.id()).ok())
+                    .filter(|&id| id > 0)
+            };
+            if let Some(pgid) = pgid {
+                unsafe {
+                    kill(-pgid, 15);
+                }
+                let deadline = Instant::now() + grace;
+                while Instant::now() < deadline {
+                    let exited = {
+                        let mut guard = self.child.lock().map_err(|_| {
+                            AcpError::Protocol("Lock poisoned on child".to_string())
+                        })?;
+                        match guard.as_mut() {
+                            Some(child) => matches!(child.try_wait(), Ok(Some(_))),
+                            None => true,
+                        }
+                    };
+                    if exited {
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(25));
+                }
+            }
+        }
+        #[cfg(not(unix))]
+        let _ = grace;
+        self.kill()
     }
 
     pub fn kill(&self) -> Result<(), AcpError> {
@@ -524,5 +643,85 @@ done
         thread::sleep(Duration::from_millis(100));
         let log_content = std::fs::read_to_string(&log_path).unwrap_or_default();
         assert!(log_content.contains("agent stderr log"));
+    }
+
+    #[test]
+    fn test_acp_client_handles_string_ids_unhandled_methods_and_non_utf8() {
+        let dir = tempdir().unwrap();
+        let log_path = dir.path().join("nested").join("agent.log");
+        let script_path = dir.path().join("mock_agent_edge.sh");
+
+        let script = r#"#!/bin/sh
+# Emit non-UTF-8 bytes on stdout and stderr before JSON-RPC traffic
+printf '\xff\xfe non-utf8 stdout\n'
+printf '\xff\xfe non-utf8 stderr\n' >&2
+while IFS= read -r line; do
+  req_id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  case "$line" in
+    *initialize*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentCapabilities":{}}}\n' "$req_id"
+      ;;
+    *session/new*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"s-edge","configOptions":[]}}\n' "$req_id"
+      ;;
+    *session/prompt*)
+      # Send permission request with a STRING id and reject_once before allow_always
+      printf '{"jsonrpc":"2.0","id":"perm-str-1","method":"session/request_permission","params":{"sessionId":"s-edge","options":[{"optionId":"rej-1","name":"Reject","kind":"reject_once"},{"optionId":"all-1","name":"Allow always","kind":"allow_always"}]}}\n'
+      IFS= read -r perm_resp
+      case "$perm_resp" in
+        *'"id":"perm-str-1"'*'"optionId":"all-1"'*) ;;
+        *) exit 2 ;;
+      esac
+      # Send an unsupported client method request with a string id
+      printf '{"jsonrpc":"2.0","id":"fs-req-1","method":"fs/read_text_file","params":{"path":"foo"}}\n'
+      IFS= read -r fs_resp
+      case "$fs_resp" in
+        *'"id":"fs-req-1"'*'-32601'*) ;;
+        *) exit 3 ;;
+      esac
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "$req_id"
+      ;;
+  esac
+done
+"#;
+        std::fs::write(&script_path, script).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        let cmd = script_path.to_string_lossy().to_string();
+        let client = AcpClient::spawn(&cmd, dir.path(), &log_path).unwrap();
+        assert_eq!(client.initialize().unwrap().protocol_version, 1);
+        let session_id = client.new_session(dir.path()).unwrap();
+        let prompt_res = client.prompt(&session_id, "go").unwrap();
+        assert_eq!(prompt_res.stop_reason.as_deref(), Some("end_turn"));
+    }
+
+    #[test]
+    fn test_acp_client_child_exited_includes_stderr_diagnostics() {
+        let dir = tempdir().unwrap();
+        let log_path = dir.path().join("crash.log");
+        let script_path = dir.path().join("crash_agent.sh");
+        std::fs::write(
+            &script_path,
+            "#!/bin/sh\necho 'missing API key' >&2\nexit 1\n",
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        let cmd = script_path.to_string_lossy().to_string();
+        let client = AcpClient::spawn(&cmd, dir.path(), &log_path).unwrap();
+        let err = client.initialize().unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("missing API key"),
+            "expected stderr in error, got: {msg}"
+        );
     }
 }

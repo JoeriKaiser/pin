@@ -22,7 +22,7 @@ impl<T> JsonRpcRequest<T> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonRpcResponse<T> {
     pub jsonrpc: String,
-    pub id: u64,
+    pub id: serde_json::Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<T>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -30,19 +30,19 @@ pub struct JsonRpcResponse<T> {
 }
 
 impl<T> JsonRpcResponse<T> {
-    pub fn ok(id: u64, result: T) -> Self {
+    pub fn ok(id: impl Into<serde_json::Value>, result: T) -> Self {
         Self {
             jsonrpc: "2.0".to_string(),
-            id,
+            id: id.into(),
             result: Some(result),
             error: None,
         }
     }
 
-    pub fn err(id: u64, error: JsonRpcError) -> Self {
+    pub fn err(id: impl Into<serde_json::Value>, error: JsonRpcError) -> Self {
         Self {
             jsonrpc: "2.0".to_string(),
-            id,
+            id: id.into(),
             result: None,
             error: Some(error),
         }
