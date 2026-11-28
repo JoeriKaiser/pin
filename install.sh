@@ -52,8 +52,8 @@ if [ -n "$TARGET" ]; then
             if verify_checksum "$TEMP_DIR/pin" "$TEMP_DIR/pin.sha256"; then
                 BINARY_NAME="pin"
             else
-                echo "Error: Checksum verification failed for pre-compiled binary." >&2
-                echo "Falling back to source compilation..."
+                echo "Error: Checksum verification failed for pre-compiled binary. Aborting install." >&2
+                exit 1
             fi
         else
             echo "Warning: Could not download checksum file. Falling back to source compilation..."
@@ -94,13 +94,17 @@ LOCAL_BIN_DIR="$HOME/.local/bin"
 
 echo "==> Installing pin binary..."
 if [ -w "/usr/local/bin" ]; then
-    cp "$TEMP_DIR/$BINARY_NAME" "$INSTALL_PATH"
-    chmod +x "$INSTALL_PATH"
+    STAGED_BIN="/usr/local/bin/.pin.tmp.$$"
+    cp "$TEMP_DIR/$BINARY_NAME" "$STAGED_BIN"
+    chmod +x "$STAGED_BIN"
+    mv -f "$STAGED_BIN" "$INSTALL_PATH"
     echo "Installed pin to $INSTALL_PATH"
 else
     mkdir -p "$LOCAL_BIN_DIR"
-    cp "$TEMP_DIR/$BINARY_NAME" "$LOCAL_BIN_DIR/pin"
-    chmod +x "$LOCAL_BIN_DIR/pin"
+    STAGED_BIN="$LOCAL_BIN_DIR/.pin.tmp.$$"
+    cp "$TEMP_DIR/$BINARY_NAME" "$STAGED_BIN"
+    chmod +x "$STAGED_BIN"
+    mv -f "$STAGED_BIN" "$LOCAL_BIN_DIR/pin"
     echo "Installed pin to $LOCAL_BIN_DIR/pin"
 
     # Check if ~/.local/bin is in PATH

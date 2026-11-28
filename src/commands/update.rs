@@ -1,7 +1,9 @@
 use crate::cli::{ArgReader, CliError, CliResult};
 use crate::model::OutputFormat;
 use crate::output::default_format;
-use crate::update::{check_for_updates, install_update_with_check, CURRENT_VERSION};
+use crate::update::{
+    check_for_updates, install_update_with_check, record_failed_check_backoff, CURRENT_VERSION,
+};
 use std::path::Path;
 
 pub fn update(args: &[String], command: &str, _vault_path: &Path) -> CliResult<()> {
@@ -23,7 +25,9 @@ pub fn update(args: &[String], command: &str, _vault_path: &Path) -> CliResult<(
     }
 
     if check_cache {
-        let _ = check_for_updates(false);
+        if check_for_updates(false).is_err() {
+            record_failed_check_backoff();
+        }
         return Ok(());
     }
 

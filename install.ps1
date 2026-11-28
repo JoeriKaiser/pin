@@ -61,12 +61,26 @@ try {
 
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
     $destination = Join-Path $InstallDir "pin.exe"
+    $backupPath = Join-Path $InstallDir "pin.old.exe"
+    if (Test-Path $backupPath) {
+        Remove-Item -Force $backupPath -ErrorAction SilentlyContinue
+    }
+    if (Test-Path $destination) {
+        try {
+            Move-Item -Path $destination -Destination $backupPath -Force
+        }
+        catch {
+            # Fall through to Copy-Item if rename is not needed or blocked
+        }
+    }
     Copy-Item $assetPath $destination -Force
 
     if (-not $NoPathUpdate) {
         $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
         $entries = @($userPath -split ";" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-        if ($entries -notcontains $InstallDir) {
+        $normalizedInstall = $InstallDir.TrimEnd('\', '/')
+        $normalizedEntries = @($entries | ForEach-Object { $_.TrimEnd('\', '/') })
+        if ($normalizedEntries -notcontains $normalizedInstall) {
             $newPath = (@($entries) + $InstallDir) -join ";"
             [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
             Write-Host "Added $InstallDir to your user PATH. Open a new terminal to use it."
