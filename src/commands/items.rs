@@ -83,6 +83,12 @@ pub fn add(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> {
         reader.idx += 1;
     }
 
+    if use_stdin && content.is_some() {
+        return Err(CliError::usage(
+            "Cannot combine content argument with --stdin",
+        ));
+    }
+
     if use_stdin || content.is_none() {
         if let Some(stdin_content) = read_stdin_content() {
             content = Some(stdin_content);
@@ -446,10 +452,15 @@ pub fn edit(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> 
             "--tags" => new_tags = Some(reader.next_val("--tags")?.to_string()),
             "--kind" => {
                 let val = reader.next_val("--kind")?;
-                new_kind = Some(
-                    val.parse::<Kind>()
-                        .map_err(|_| CliError::usage(format!("Unknown kind '{val}'")))?,
-                );
+                let parsed = val
+                    .parse::<Kind>()
+                    .map_err(|_| CliError::usage(format!("Unknown kind '{val}'")))?;
+                if parsed == Kind::Unspecified {
+                    return Err(CliError::usage(
+                        "Invalid kind 'unspecified' (use technical, product, business, or project)",
+                    ));
+                }
+                new_kind = Some(parsed);
             }
             "--type" => {
                 let val = reader.next_val("--type")?;
@@ -477,7 +488,10 @@ pub fn edit(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> 
         if new_body.is_some() {
             return Err(CliError::usage("Cannot combine --body and --stdin"));
         }
-        use std::io::Read;
+        use std::io::{IsTerminal, Read};
+        if std::io::stdin().is_terminal() {
+            return Err(CliError::usage("--stdin requires piped input"));
+        }
         let mut buf = String::new();
         std::io::stdin()
             .read_to_string(&mut buf)
@@ -514,43 +528,65 @@ pub fn edit(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> 
             }
         }
 
+        let mut changed = false;
         if let Some(t) = new_title {
-            let trimmed = t.trim();
+            let trimmed = truncate_title(t.trim());
             if trimmed.is_empty() {
                 return Err(CliError::usage("--title cannot be empty"));
             }
-            meta.title = trimmed.to_string();
+            if meta.title != trimmed {
+                meta.title = trimmed;
+                changed = true;
+            }
         }
         if let Some(p) = new_priority {
-            meta.priority = Some(p);
+            if meta.priority != Some(p) {
+                meta.priority = Some(p);
+                changed = true;
+            }
         }
         if let Some(tags) = new_tags {
             let trimmed = tags.trim();
-            meta.tags = if trimmed.is_empty() {
+            let next_tags = if trimmed.is_empty() {
                 None
             } else {
                 Some(trimmed.to_string())
             };
+            if meta.tags != next_tags {
+                meta.tags = next_tags;
+                changed = true;
+            }
         }
         if let Some(k) = new_kind {
-            meta.kind = k;
+            if meta.kind != k {
+                meta.kind = k;
+                changed = true;
+            }
         }
         if let Some(wt) = new_type {
-            meta.item_type = Some(wt);
+            if meta.item_type != Some(wt) {
+                meta.item_type = Some(wt);
+                changed = true;
+            }
         }
         if let Some(mut body) = new_body {
             if !body.is_empty() && !body.ends_with('\n') {
                 body.push('\n');
             }
-            meta.body = body;
+            if meta.body != body {
+                meta.body = body;
+                changed = true;
+            }
         }
 
-        meta.updated_at = Some(chrono::Utc::now().timestamp());
-        meta.revision = Some(meta.current_revision() + 1);
+        if changed {
+            meta.updated_at = Some(chrono::Utc::now().timestamp());
+            meta.revision = Some(meta.current_revision() + 1);
 
-        let new_doc = render_full_document(&meta);
-        atomic_write(&path, &new_doc)
-            .map_err(|e| CliError::usage(format!("Failed to save edited proposal: {e}")))?;
+            let new_doc = render_full_document(&meta);
+            atomic_write(&path, &new_doc)
+                .map_err(|e| CliError::usage(format!("Failed to save edited proposal: {e}")))?;
+        }
 
         let fmt = format.unwrap_or_else(|| default_format(OutputFormat::Plain));
         if fmt == OutputFormat::Json {
@@ -564,12 +600,14 @@ pub fn edit(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> 
             let res = EditJson {
                 edited: &meta.id,
                 filename: &filename,
-                changed: true,
+                changed,
                 revision: meta.current_revision(),
             };
             println!("{}", serde_json::to_string(&res).unwrap_or_default());
-        } else {
+        } else if changed {
             println!("Saved changes to {filename}");
+        } else {
+            println!("No changes to {filename}");
         }
         return Ok(());
     }
@@ -579,6 +617,17 @@ pub fn edit(args: &[String], command: &str, vault_path: &Path) -> CliResult<()> 
 
     let mut temp_issues = Vec::new();
     let original_meta = parse_front_matter_detailed(&filename, &original_content, &mut temp_issues);
+    if let Some(exp) = expect_revision {
+        let actual = original_meta
+            .as_ref()
+            .map(|m| m.current_revision())
+            .unwrap_or(1);
+        if actual != exp {
+            return Err(CliError::usage(format!(
+                "Revision conflict: expected {exp}, found {actual}"
+            )));
+        }
+    }
     let edited_id = original_meta
         .map(|m| m.id)
         .unwrap_or_else(|| filename.clone());

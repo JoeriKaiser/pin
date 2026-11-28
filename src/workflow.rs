@@ -283,7 +283,8 @@ pub fn claim_item(
     let from_status = meta.current_status();
     meta.status = Some(Status::InProgress);
     meta.claimed_by = Some(actor.to_string());
-    meta.claim_expires_at = Some(now + (lease_seconds as i64));
+    let lease_i64 = i64::try_from(lease_seconds).unwrap_or(i64::MAX);
+    meta.claim_expires_at = Some(now.saturating_add(lease_i64));
 
     meta.activity.push(ActivityEvent {
         at: now,
