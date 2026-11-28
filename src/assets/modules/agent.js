@@ -200,6 +200,7 @@ export function closeAgentDrawer() {
 }
 
 function cacheTrajectory(itemId) {
+  flushPendingMarkdown();
   if (!itemId || !state.trajectory) return;
   state.trajectoryCache = state.trajectoryCache || {};
   state.trajectoryCache[itemId] = {
@@ -219,7 +220,45 @@ function createTrajectory(timingStart, now) {
   };
 }
 
+var pendingMdRaf = null;
+var pendingMdTarget = null;
+var pendingMdRaw = '';
+
+function flushPendingMarkdown() {
+  if (pendingMdRaf !== null && typeof cancelAnimationFrame === 'function') {
+    cancelAnimationFrame(pendingMdRaf);
+  }
+  pendingMdRaf = null;
+  if (pendingMdTarget) {
+    var target = pendingMdTarget;
+    var raw = pendingMdRaw;
+    pendingMdTarget = null;
+    pendingMdRaw = '';
+    renderMarkdownSnippet(raw, target);
+    scrollTrajectoryStreamToBottom();
+  }
+}
+
+function scheduleMarkdownRender(raw, targetEl) {
+  if (typeof requestAnimationFrame !== 'function' || raw.length < 256) {
+    renderMarkdownSnippet(raw, targetEl);
+    return;
+  }
+  if (pendingMdTarget && pendingMdTarget !== targetEl) {
+    flushPendingMarkdown();
+  }
+  pendingMdTarget = targetEl;
+  pendingMdRaw = raw;
+  if (pendingMdRaf === null) {
+    pendingMdRaf = requestAnimationFrame(function () {
+      pendingMdRaf = null;
+      flushPendingMarkdown();
+    });
+  }
+}
+
 function resetActiveAssistantRow() {
+  flushPendingMarkdown();
   if (!state.trajectory) return;
   state.trajectory.activeAssistantRow = null;
   state.trajectory.activeAssistantTextEl = null;
@@ -549,7 +588,7 @@ export function handleAgentStreamEvent(data) {
     if (cleaned && state.trajectory.activeAssistantTextEl) {
       if (isMessage) {
         state.trajectory.activeAssistantRaw = (state.trajectory.activeAssistantRaw || '') + cleaned;
-        renderMarkdownSnippet(state.trajectory.activeAssistantRaw, state.trajectory.activeAssistantTextEl);
+        scheduleMarkdownRender(state.trajectory.activeAssistantRaw, state.trajectory.activeAssistantTextEl);
       } else {
         var aNodes = state.trajectory.activeAssistantTextEl.childNodes || state.trajectory.activeAssistantTextEl.children;
         var aLast = aNodes && aNodes.length > 0 ? aNodes[aNodes.length - 1] : null;
