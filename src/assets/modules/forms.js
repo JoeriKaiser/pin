@@ -218,16 +218,51 @@ export function setSpecModalTab(tab) {
   }
 }
 
+var SPEC_DRAFT_KEY = 'pin-spec-draft';
+
+function saveSpecDraft() {
+  try {
+    if (typeof sessionStorage === 'undefined' || !sessionStorage || typeof sessionStorage.setItem !== 'function') return;
+    var fields = collectTicketFields('spec-modal');
+    if (fields.title || fields.body || fields.tags) {
+      sessionStorage.setItem(SPEC_DRAFT_KEY, JSON.stringify(fields));
+    } else if (typeof sessionStorage.removeItem === 'function') {
+      sessionStorage.removeItem(SPEC_DRAFT_KEY);
+    }
+  } catch (_) {}
+}
+
+function loadSpecDraft() {
+  try {
+    if (typeof sessionStorage === 'undefined' || !sessionStorage || typeof sessionStorage.getItem !== 'function') return null;
+    var raw = sessionStorage.getItem(SPEC_DRAFT_KEY);
+    if (!raw) return null;
+    var parsed = JSON.parse(raw);
+    return (parsed && typeof parsed === 'object') ? parsed : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+export function clearSpecDraft() {
+  try {
+    if (typeof sessionStorage !== 'undefined' && sessionStorage && typeof sessionStorage.removeItem === 'function') {
+      sessionStorage.removeItem(SPEC_DRAFT_KEY);
+    }
+  } catch (_) {}
+}
+
 export function openSpecModal(initial) {
-  initial = initial || {};
+  var hasInitial = !!(initial && (initial.title || initial.body || initial.tags || initial.type || initial.kind || initial.priority));
+  var src = hasInitial ? initial : (loadSpecDraft() || {});
   var activeProject = (state.scope && state.scope !== 'all') ? state.scope : '';
-  if (els.specModalTitle) els.specModalTitle.value = initial.title || '';
-  if (els.specModalBody) els.specModalBody.value = initial.body || '';
-  if (els.specModalType) els.specModalType.value = initial.type || 'task';
-  if (els.specModalKind) els.specModalKind.value = initial.kind || 'technical';
-  if (els.specModalPriority) els.specModalPriority.value = initial.priority || '';
-  if (els.specModalTags) els.specModalTags.value = initial.tags || '';
-  if (els.specModalProject) els.specModalProject.value = initial.project || activeProject;
+  if (els.specModalTitle) els.specModalTitle.value = src.title || '';
+  if (els.specModalBody) els.specModalBody.value = src.body || '';
+  if (els.specModalType) els.specModalType.value = src.type || 'task';
+  if (els.specModalKind) els.specModalKind.value = src.kind || 'technical';
+  if (els.specModalPriority) els.specModalPriority.value = src.priority || '';
+  if (els.specModalTags) els.specModalTags.value = src.tags || '';
+  if (els.specModalProject) els.specModalProject.value = src.project || activeProject;
 
   setSpecModalTab('write');
   showSpecModalError('');
@@ -240,14 +275,19 @@ export function openSpecModal(initial) {
     }
   }
 
-  if (initial.title && els.specModalBody && els.specModalBody.focus) {
+  if (src.title && els.specModalBody && els.specModalBody.focus) {
     els.specModalBody.focus();
   } else if (els.specModalTitle && els.specModalTitle.focus) {
     els.specModalTitle.focus();
   }
 }
 
-export function closeSpecModal() {
+export function closeSpecModal(discardDraft) {
+  if (discardDraft) {
+    clearSpecDraft();
+  } else {
+    saveSpecDraft();
+  }
   showSpecModalError('');
   if (els.specModal) {
     if (els.specModal.close) {
@@ -304,7 +344,7 @@ export function submitSpecModal() {
   })
   .then(function (newItem) {
     setSpecModalDisabled(false);
-    closeSpecModal();
+    closeSpecModal(true);
     showToast('Created ' + (newItem && newItem.type ? newItem.type : 'task') + ': ' + ((newItem && newItem.title) || fields.title), false);
     if (newItem && newItem.id && !find(newItem.id)) {
       state.items.unshift(newItem);

@@ -112,14 +112,22 @@ export function renderWorkerBox(item) {
   els.workerCard.appendChild(node('h3', '', 'Agent Run'));
 
   var header = node('div', 'worker-card-header');
-  var waiting = state.activeRuns.has(item.id) && isRunWaiting(item.id);
+  var isActive = state.activeRuns.has(item.id);
+  var waiting = isActive && isRunWaiting(item.id);
+  var runInfo = isActive ? getRunInfo(item.id) : null;
   if (waiting) {
     var waitBadge = node('span', 'card-waiting-indicator');
-    waitBadge.appendChild(node('span', 'needs-reply-dot'));
+    var waitDot = node('span', 'needs-reply-dot');
+    waitDot.setAttribute('aria-hidden', 'true');
+    waitBadge.appendChild(waitDot);
     waitBadge.appendChild(document.createTextNode('Needs reply'));
     header.appendChild(waitBadge);
-  } else if (state.activeRuns.has(item.id)) {
-    header.appendChild(node('span', 'worker-actor', item.claimed_by ? '@' + item.claimed_by : 'Agent running'));
+  } else if (isActive) {
+    var modeText = runInfo && runInfo.mode === 'commit_pr'
+      ? 'Commit + PR'
+      : (runInfo && runInfo.mode === 'idea' ? 'Idea agent' : 'Implementing');
+    var actorLabel = item.claimed_by ? '@' + item.claimed_by + ' · ' + modeText : modeText;
+    header.appendChild(node('span', 'worker-actor', actorLabel));
   } else {
     header.appendChild(node('span', 'worker-actor', 'No active run'));
   }
@@ -129,7 +137,6 @@ export function renderWorkerBox(item) {
   els.workerCard.appendChild(header);
 
   if (waiting) {
-    var runInfo = getRunInfo(item.id);
     var callout = node('div', 'worker-waiting-callout');
     callout.appendChild(node('p', 'worker-waiting-preview', summarizeQuestionPreview(runInfo && runInfo.last_message, 160)));
     var replyNowBtn = node('button', 'action-btn primary action-btn-small', 'Reply Now');
@@ -142,6 +149,16 @@ export function renderWorkerBox(item) {
   }
 
   var meta = node('div', 'worker-meta');
+  if (runInfo) {
+    if (runInfo.model) {
+      meta.appendChild(node('span', '', 'Model: ' + runInfo.model));
+    }
+    if (runInfo.worktree_path) {
+      meta.appendChild(node('span', '', 'Worktree: ' + runInfo.worktree_path));
+    } else if (runInfo.is_primary_worktree) {
+      meta.appendChild(node('span', '', 'Checkout: primary'));
+    }
+  }
   if (item.created_by) {
     meta.appendChild(node('span', '', 'Created by @' + item.created_by));
   }
@@ -152,6 +169,20 @@ export function renderWorkerBox(item) {
 
 export function renderDependencies(item) {
   if (!els.dependenciesCard) return;
+  var preservedForm = null;
+  if (els.dependenciesCard.dataset && els.dependenciesCard.dataset.itemId === item.id && els.dependenciesCard.querySelector) {
+    var existingForm = els.dependenciesCard.querySelector('.dep-add-form');
+    if (existingForm && existingForm.style && existingForm.style.display !== 'none') {
+      var existingSel = existingForm.querySelector('.dep-add-select');
+      var existingInp = existingForm.querySelector('.dep-add-input');
+      preservedForm = {
+        relType: existingSel ? existingSel.value : 'depend',
+        inputVal: existingInp ? existingInp.value : '',
+        hadFocus: typeof document !== 'undefined' && document.activeElement === existingInp
+      };
+    }
+  }
+  if (els.dependenciesCard.dataset) els.dependenciesCard.dataset.itemId = item.id;
   clear(els.dependenciesCard);
   els.dependenciesCard.appendChild(node('h3', '', 'Relationships'));
 
@@ -417,6 +448,16 @@ export function renderDependencies(item) {
     form.style.display = 'flex';
     inp.focus();
   });
+
+  if (preservedForm) {
+    sel.value = preservedForm.relType;
+    inp.value = preservedForm.inputVal;
+    addBtn.style.display = 'none';
+    form.style.display = 'flex';
+    if (preservedForm.hadFocus && typeof inp.focus === 'function') {
+      try { inp.focus(); } catch (_) {}
+    }
+  }
 
   cancelBtn.addEventListener('click', function () {
     form.style.display = 'none';

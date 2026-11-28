@@ -8,7 +8,7 @@ import { handleCardDrop, setViewMode, setBoardCallbacks, renderBoard } from './b
 import { renderAgentsTable, stopAgentsTicker, setAgentsViewCallbacks } from './agents-view.js';
 import { renderList, renderDetail, setReaderTab, setDetailCallbacks } from './detail.js';
 import {
-  SPEC_SNIPPETS, collectTicketFields, expandQuickAdd, collapseQuickAdd, submitQuickAdd,
+  SPEC_SNIPPETS, collectTicketFields, expandQuickAdd, collapseQuickAdd, resetQuickAdd, submitQuickAdd,
   openSpecModal, closeSpecModal, setSpecModalTab, submitSpecModal,
   closeActionModal, triggerModalSubmit, openCompleteModal, openBlockedModal, openCloseModal,
   convertIdeaToSpec, setFormCallbacks, openWorktreeModal, closeWorktreeModal,
@@ -400,7 +400,7 @@ export function bindForms() {
   if (els.quickAddExpandBtn) {
     els.quickAddExpandBtn.addEventListener('click', function () {
       var initial = collectTicketFields('quick-add');
-      collapseQuickAdd();
+      resetQuickAdd();
       openSpecModal(initial);
     });
   }
