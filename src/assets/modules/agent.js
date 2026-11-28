@@ -699,10 +699,35 @@ export function formatToolCallInline(update) {
   return { name: name, argsStr: argsStr, previewStr: prevStr, status: st };
 }
 
-export function openToolInspector(callId) {
+var lastInspectorTrigger = null;
+
+function syncInspectorNavButtons(callId) {
+  if (!state.trajectory || !state.trajectory.toolCalls) return;
+  var ids = Object.keys(state.trajectory.toolCalls);
+  var idx = ids.indexOf(callId);
+  if (els.btnInspectorPrev) els.btnInspectorPrev.disabled = idx <= 0;
+  if (els.btnInspectorNext) els.btnInspectorNext.disabled = idx < 0 || idx >= ids.length - 1;
+}
+
+export function stepToolInspector(delta) {
+  if (!els.toolInspector || els.toolInspector.hidden || !state.trajectory || !state.trajectory.toolCalls) return;
+  var ids = Object.keys(state.trajectory.toolCalls);
+  var cur = els.toolInspector.dataset.activeCallId;
+  var idx = ids.indexOf(cur);
+  if (idx < 0) return;
+  var next = idx + delta;
+  if (next >= 0 && next < ids.length) {
+    openToolInspector(ids[next], true);
+  }
+}
+
+export function openToolInspector(callId, preserveTrigger) {
   if (!els.toolInspector || !state.trajectory) return;
   var rec = state.trajectory.toolCalls[callId];
   if (!rec) return;
+  if (!preserveTrigger && typeof document !== 'undefined' && document.activeElement) {
+    lastInspectorTrigger = document.activeElement;
+  }
   els.toolInspector.dataset.activeCallId = callId;
   els.toolInspector.hidden = false;
   if (els.inspectorTitle) text(els.inspectorTitle, rec.name || 'Tool Call');
@@ -712,10 +737,18 @@ export function openToolInspector(callId) {
   }
   if (els.inspectorArgs) text(els.inspectorArgs, typeof rec.rawInput === 'object' && rec.rawInput ? JSON.stringify(rec.rawInput, null, 2) : String(rec.rawInput || ''));
   if (els.inspectorOutput) text(els.inspectorOutput, typeof rec.rawOutput === 'object' && rec.rawOutput ? JSON.stringify(rec.rawOutput, null, 2) : stripAnsi(String(rec.rawOutput || '')));
+  syncInspectorNavButtons(callId);
+  if (!preserveTrigger && els.btnCloseInspector && typeof els.btnCloseInspector.focus === 'function') {
+    try { els.btnCloseInspector.focus(); } catch (_) {}
+  }
 }
 
 export function closeToolInspector() {
   if (els.toolInspector) { els.toolInspector.hidden = true; delete els.toolInspector.dataset.activeCallId; }
+  if (lastInspectorTrigger && lastInspectorTrigger.isConnected && typeof lastInspectorTrigger.focus === 'function') {
+    try { lastInspectorTrigger.focus(); } catch (_) {}
+  }
+  lastInspectorTrigger = null;
 }
 
 var copyFeedbackTimer = null;

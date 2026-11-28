@@ -16,7 +16,7 @@ import {
 } from './forms.js';
 import {
   openAgentDrawer, closeAgentDrawer, updateActiveRuns, toggleAllToolCards,
-  openToolInspector, closeToolInspector, copyToolOutput, filterTrajectoryRows,
+  openToolInspector, closeToolInspector, stepToolInspector, copyToolOutput, filterTrajectoryRows,
   appendTrajectoryContextRow, setAgentCallbacks, announceAgentStatus
 } from './agent.js';
 import { bindRunnerUi, closeRunnerDialog } from './runner.js';
@@ -565,6 +565,8 @@ export function bindAgent() {
       }
     });
   }
+  if (els.btnInspectorPrev) els.btnInspectorPrev.addEventListener('click', function () { stepToolInspector(-1); });
+  if (els.btnInspectorNext) els.btnInspectorNext.addEventListener('click', function () { stepToolInspector(1); });
   if (els.btnCloseInspector) els.btnCloseInspector.addEventListener('click', closeToolInspector);
   if (els.btnCopyToolOutput) els.btnCopyToolOutput.addEventListener('click', copyToolOutput);
 }
