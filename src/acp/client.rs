@@ -344,6 +344,10 @@ impl AcpClient {
                 .lock()
                 .map_err(|_| AcpError::Protocol("Lock poisoned on dispatch".to_string()))?;
             dispatch.remove(&id);
+            if matches!(&e, AcpError::Io(io_err) if io_err.kind() == std::io::ErrorKind::BrokenPipe)
+            {
+                return Err(AcpError::ChildExited(self.exit_diagnostics()));
+            }
             return Err(e);
         }
 
@@ -691,7 +695,7 @@ done
             std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
 
-        let cmd = script_path.to_string_lossy().to_string();
+        let cmd = format!("sh {}", script_path.to_string_lossy());
         let client = AcpClient::spawn(&cmd, dir.path(), &log_path).unwrap();
         assert_eq!(client.initialize().unwrap().protocol_version, 1);
         let session_id = client.new_session(dir.path()).unwrap();
@@ -709,13 +713,8 @@ done
             "#!/bin/sh\necho 'missing API key' >&2\nexit 1\n",
         )
         .unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
 
-        let cmd = script_path.to_string_lossy().to_string();
+        let cmd = format!("sh {}", script_path.to_string_lossy());
         let client = AcpClient::spawn(&cmd, dir.path(), &log_path).unwrap();
         let err = client.initialize().unwrap_err();
         let msg = err.to_string();
