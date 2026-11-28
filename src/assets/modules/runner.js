@@ -190,6 +190,58 @@ function defaultMatchesQuery(query) {
   return true;
 }
 
+var PROVIDER_LABELS = {
+  anthropic: 'Anthropic',
+  openai: 'OpenAI',
+  google: 'Google',
+  deepseek: 'DeepSeek',
+  xai: 'xAI',
+  meta: 'Meta',
+  mistral: 'Mistral',
+  cohere: 'Cohere',
+  bedrock: 'Bedrock',
+  vertex: 'Vertex',
+  openrouter: 'OpenRouter',
+  ollama: 'Ollama',
+  'github-copilot': 'GitHub Copilot'
+};
+
+function providerGroupForModel(model) {
+  var val = String((model && model.value) || '');
+  var slash = val.indexOf('/');
+  if (slash <= 0) return 'Other';
+  var key = val.slice(0, slash).toLowerCase();
+  if (PROVIDER_LABELS[key]) return PROVIDER_LABELS[key];
+  return key.charAt(0).toUpperCase() + key.slice(1);
+}
+
+function groupModelsByProvider(models) {
+  var groups = [];
+  var byKey = {};
+  for (var i = 0; i < models.length; i += 1) {
+    var label = providerGroupForModel(models[i]);
+    if (!byKey[label]) {
+      byKey[label] = { label: label, items: [] };
+      groups.push(byKey[label]);
+    }
+    byKey[label].items.push(models[i]);
+  }
+  return groups;
+}
+
+function appendModelOption(listbox, model, optIndex, selected, currentDefault, terms) {
+  var entry = buildOptionElement({
+    value: model.value,
+    name: model.name || model.value,
+    meta: model.value,
+    description: model.description || '',
+    _custom: !!model._custom
+  }, optIndex, selected, currentDefault, terms);
+  listbox.appendChild(entry.el);
+  renderedOptions.push(entry);
+  return optIndex + 1;
+}
+
 function appendHighlightedText(parent, rawText, terms) {
   var str = String(rawText == null ? '' : rawText);
   if (!terms || !terms.length || !str) {
@@ -490,18 +542,21 @@ export function renderRunnerModelList() {
     optIndex += 1;
   }
 
-  models.forEach(function (model) {
-    var entry = buildOptionElement({
-      value: model.value,
-      name: model.name || model.value,
-      meta: model.value,
-      description: model.description || '',
-      _custom: !!model._custom
-    }, optIndex, selected, runner.modelCurrent, terms);
-    listbox.appendChild(entry.el);
-    renderedOptions.push(entry);
-    optIndex += 1;
-  });
+  var providerGroups = !terms.length ? groupModelsByProvider(models) : null;
+  if (providerGroups && providerGroups.length >= 2) {
+    providerGroups.forEach(function (group) {
+      var header = node('div', 'runner-model-group-label', group.label);
+      header.setAttribute('role', 'presentation');
+      listbox.appendChild(header);
+      group.items.forEach(function (model) {
+        optIndex = appendModelOption(listbox, model, optIndex, selected, runner.modelCurrent, terms);
+      });
+    });
+  } else {
+    models.forEach(function (model) {
+      optIndex = appendModelOption(listbox, model, optIndex, selected, runner.modelCurrent, terms);
+    });
+  }
 
   if (!renderedOptions.length) {
     var emptyWrap = node('div', 'runner-model-empty');

@@ -4290,6 +4290,22 @@ a {
   display: none;
 }
 
+.runner-model-group-label {
+  padding: var(--space-1-5) var(--space-2-5) var(--space-0-5);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--faint);
+  user-select: none;
+}
+
+.runner-model-group-label:not(:first-child) {
+  margin-top: var(--space-1);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--line-subtle);
+}
+
 .runner-model-option {
   display: flex;
   flex-direction: column;

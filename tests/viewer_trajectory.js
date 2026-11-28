@@ -1949,6 +1949,10 @@ async function runHarness() {
   const initialOptions = runnerModelListbox.querySelectorAll('[role="option"]');
   assert.strictEqual(initialOptions.length, 4, 'model listbox has default plus options');
   assert.ok(initialOptions.some(o => o.textContent.indexOf('Mock Fast') !== -1), 'friendly model name shown');
+  const groupLabels = runnerModelListbox.querySelectorAll('.runner-model-group-label');
+  assert.strictEqual(groupLabels.length, 2, 'unfiltered models with 2+ providers render provider group headers');
+  assert.strictEqual(groupLabels[0].textContent, 'Mock', 'first provider header formatted');
+  assert.strictEqual(groupLabels[1].textContent, 'Other', 'second provider header formatted');
   assert.strictEqual(runnerModelFilter.value, 'Agent default (Mock Default)', 'combobox displays current selection');
 
   // Typing in combobox opens listbox and filters accurately (including multi-term and highlights)
