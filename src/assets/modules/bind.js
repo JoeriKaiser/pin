@@ -19,7 +19,7 @@ import {
   openToolInspector, closeToolInspector, stepToolInspector, copyToolOutput, filterTrajectoryRows,
   appendTrajectoryContextRow, setAgentCallbacks, announceAgentStatus
 } from './agent.js';
-import { bindRunnerUi, closeRunnerDialog } from './runner.js';
+import { bindRunnerUi, closeRunnerDialog, isRunnerModelListboxOpen, closeRunnerModelListbox } from './runner.js';
 import { bindAlertsUi, setAlertCallbacks, closeAlertsDialog } from './alerts.js';
 import {
   bindReplyInboxUi, setReplyInboxCallbacks, openReplyModal, closeReplyModal,
@@ -587,8 +587,14 @@ export function bindGlobalShortcuts() {
       return;
     }
     if (els.runnerDialog && (els.runnerDialog.open || els.runnerDialog.hasAttribute('open'))) {
-      if (event.key === 'Escape') { event.preventDefault(); closeRunnerDialog(); }
-      else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        if (isRunnerModelListboxOpen()) {
+          closeRunnerModelListbox(true);
+        } else {
+          closeRunnerDialog();
+        }
+      } else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
         event.preventDefault();
         if (els.btnRunnerSave && !els.btnRunnerSave.disabled) els.btnRunnerSave.click();
       }

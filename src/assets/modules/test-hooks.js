@@ -37,7 +37,9 @@ import {
   renderRunner, renderRunnerModelList, applyRunnerSettings,
   saveRunnerSettingsFromDialog, handleRunnerSettingsEvent, runnerModelLabel,
   runnerSummaryText, bindRunnerUi, onRunnerCommandInput, harnessForCommand,
-  renderRunnerHarness, setRunnerHarness
+  renderRunnerHarness, setRunnerHarness,
+  openRunnerModelListbox, closeRunnerModelListbox, isRunnerModelListboxOpen,
+  selectRunnerModel
 } from './runner.js';
 import {
   getWaitingRuns, syncWaitingAlerts, handleGlobalWaitingEvent,
@@ -133,6 +135,10 @@ if (typeof window !== 'undefined') {
     harnessForCommand: harnessForCommand,
     renderRunnerHarness: renderRunnerHarness,
     setRunnerHarness: setRunnerHarness,
+    openRunnerModelListbox: openRunnerModelListbox,
+    closeRunnerModelListbox: closeRunnerModelListbox,
+    isRunnerModelListboxOpen: isRunnerModelListboxOpen,
+    selectRunnerModel: selectRunnerModel,
     getWaitingRuns: getWaitingRuns,
     syncWaitingAlerts: syncWaitingAlerts,
     handleGlobalWaitingEvent: handleGlobalWaitingEvent,

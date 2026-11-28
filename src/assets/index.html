@@ -417,8 +417,15 @@
           <label for="runner-model-filter">Model</label>
           <button id="btn-runner-refresh-models" class="control text-button" type="button">Refresh</button>
         </div>
-        <input id="runner-model-filter" type="search" placeholder="Filter models…" autocomplete="off" spellcheck="false">
-        <select id="runner-model-select" aria-label="Model"></select>
+        <div id="runner-model-combobox" class="runner-model-combobox">
+          <div class="runner-model-input-wrap">
+            <input id="runner-model-filter" class="runner-model-input" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="runner-model-listbox" placeholder="Search or choose a model…" autocomplete="off" spellcheck="false">
+            <button id="btn-runner-model-clear" class="runner-model-icon-btn" type="button" aria-label="Clear model search" hidden><svg class="ui-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
+            <button id="btn-runner-model-toggle" class="runner-model-icon-btn runner-model-toggle" type="button" tabindex="-1" aria-label="Toggle model list" aria-expanded="false"><svg class="ui-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6l4 4 4-4"/></svg></button>
+          </div>
+          <input id="runner-model-select" type="hidden" value="">
+          <div id="runner-model-listbox" class="runner-model-listbox" role="listbox" aria-label="Available models" hidden></div>
+        </div>
         <p id="runner-model-status" class="runner-model-status" aria-live="polite"></p>
       </div>
     </div>

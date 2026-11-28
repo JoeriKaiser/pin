@@ -7,6 +7,12 @@ var activeModelsRequest = null;
 var activeModelsCommand = '';
 var modelsRequestSeq = 0;
 
+var modelDropdownOpen = false;
+var modelFilterActive = false;
+var modelFilterQuery = '';
+var activeOptionIndex = -1;
+var renderedOptions = [];
+
 export function runnerModelLabel(value) {
   if (!value) return '';
   var models = state.runner.models || [];
@@ -66,22 +72,179 @@ function dialogOpen() {
     (els.runnerDialog.hasAttribute && els.runnerDialog.hasAttribute('open'))));
 }
 
-function visibleModels() {
+function selectedModelValue() {
+  if (els.runnerModelSelect) return String(els.runnerModelSelect.value || '');
+  return state.runner.model ? String(state.runner.model) : '';
+}
+
+function defaultModelLabel() {
   var runner = state.runner;
-  var filterEl = els.runnerModelFilter;
-  var filter = filterEl ? String(filterEl.value || '').toLowerCase().trim() : '';
-  var selected = els.runnerModelSelect ? els.runnerModelSelect.value : '';
-  var keep = selected || runner.model || '';
-  var out = [];
+  var label = 'Agent default';
+  if (runner.modelCurrent) {
+    label += ' (' + runnerModelLabel(runner.modelCurrent) + ')';
+  }
+  return label;
+}
 
-  (runner.models || []).forEach(function (model) {
+function selectedModelDisplayText() {
+  var selected = selectedModelValue();
+  if (!selected) return defaultModelLabel();
+  return runnerModelLabel(selected);
+}
+
+function activeSearchQuery() {
+  if (!modelFilterActive) return '';
+  return String(modelFilterQuery || '').trim();
+}
+
+function allSelectableModels() {
+  var runner = state.runner;
+  var models = (runner.models || []).slice();
+  var selected = selectedModelValue();
+  if (selected && !models.some(function (m) { return m.value === selected; })) {
+    models.unshift({
+      value: selected,
+      name: selected,
+      description: 'Configured outside the advertised model list',
+      _custom: true
+    });
+  }
+  return models;
+}
+
+function filterModels(query) {
+  var q = String(query || '').toLowerCase().trim();
+  var models = allSelectableModels();
+  if (!q) return models;
+  return models.filter(function (model) {
     var haystack = (model.value + ' ' + (model.name || '') + ' ' + (model.description || '')).toLowerCase();
-    if (!filter || haystack.indexOf(filter) !== -1 || model.value === keep) {
-      out.push(model);
-    }
+    return haystack.indexOf(q) !== -1;
   });
+}
 
-  return out;
+function defaultMatchesQuery(query) {
+  var q = String(query || '').toLowerCase().trim();
+  if (!q) return true;
+  var runner = state.runner;
+  var haystack = ('agent default ' + (runner.modelCurrent || '') + ' ' +
+    (runner.modelCurrent ? runnerModelLabel(runner.modelCurrent) : '')).toLowerCase();
+  return haystack.indexOf(q) !== -1;
+}
+
+function updateClearButton() {
+  var clearBtn = els.runnerModelClear;
+  if (!clearBtn) return;
+  var searching = modelFilterActive && String(modelFilterQuery || '').length > 0;
+  var hasSelection = selectedModelValue() !== '';
+  clearBtn.hidden = !(searching || hasSelection);
+  if (clearBtn.setAttribute) {
+    clearBtn.setAttribute('aria-label', searching ? 'Clear model search' : 'Reset to agent default');
+    clearBtn.setAttribute('title', searching ? 'Clear model search' : 'Reset to agent default');
+  }
+}
+
+function syncComboboxExpanded() {
+  var expanded = modelDropdownOpen ? 'true' : 'false';
+  if (els.runnerModelFilter && els.runnerModelFilter.setAttribute) {
+    els.runnerModelFilter.setAttribute('aria-expanded', expanded);
+  }
+  if (els.runnerModelToggle && els.runnerModelToggle.setAttribute) {
+    els.runnerModelToggle.setAttribute('aria-expanded', expanded);
+  }
+  if (els.runnerModelListbox) {
+    els.runnerModelListbox.hidden = !modelDropdownOpen;
+  }
+  if (els.runnerModelCombobox && els.runnerModelCombobox.classList) {
+    if (modelDropdownOpen) els.runnerModelCombobox.classList.add('is-open');
+    else els.runnerModelCombobox.classList.remove('is-open');
+  }
+}
+
+function setActiveOption(index, scrollIntoView) {
+  if (!renderedOptions.length) {
+    activeOptionIndex = -1;
+    if (els.runnerModelFilter && els.runnerModelFilter.removeAttribute) {
+      els.runnerModelFilter.removeAttribute('aria-activedescendant');
+    }
+    return;
+  }
+  var clamped = ((index % renderedOptions.length) + renderedOptions.length) % renderedOptions.length;
+  activeOptionIndex = clamped;
+  for (var i = 0; i < renderedOptions.length; i += 1) {
+    var entry = renderedOptions[i];
+    var isActive = i === clamped;
+    if (entry.el && entry.el.classList) {
+      if (isActive) entry.el.classList.add('is-active');
+      else entry.el.classList.remove('is-active');
+    }
+  }
+  var activeEntry = renderedOptions[clamped];
+  if (els.runnerModelFilter && els.runnerModelFilter.setAttribute) {
+    els.runnerModelFilter.setAttribute('aria-activedescendant', activeEntry.id);
+  }
+  if (scrollIntoView && activeEntry.el && activeEntry.el.scrollIntoView) {
+    activeEntry.el.scrollIntoView({ block: 'nearest' });
+  }
+}
+
+export function isRunnerModelListboxOpen() {
+  return modelDropdownOpen;
+}
+
+export function openRunnerModelListbox() {
+  modelDropdownOpen = true;
+  renderRunnerModelList();
+  syncComboboxExpanded();
+  var selected = selectedModelValue();
+  var idx = 0;
+  for (var i = 0; i < renderedOptions.length; i += 1) {
+    if (renderedOptions[i].value === selected) {
+      idx = i;
+      break;
+    }
+  }
+  setActiveOption(renderedOptions.length ? idx : -1, true);
+  if (els.runnerModelListbox && els.runnerModelListbox.scrollIntoView) {
+    els.runnerModelListbox.scrollIntoView({ block: 'nearest' });
+  }
+}
+
+export function closeRunnerModelListbox(restoreFocus) {
+  if (!modelDropdownOpen && !modelFilterActive) return;
+  modelDropdownOpen = false;
+  modelFilterActive = false;
+  modelFilterQuery = '';
+  activeOptionIndex = -1;
+  if (els.runnerModelFilter) {
+    els.runnerModelFilter.value = selectedModelDisplayText();
+    if (els.runnerModelFilter.removeAttribute) {
+      els.runnerModelFilter.removeAttribute('aria-activedescendant');
+    }
+    if (restoreFocus && els.runnerModelFilter.focus) {
+      els.runnerModelFilter.focus();
+    }
+  }
+  syncComboboxExpanded();
+  updateClearButton();
+  renderRunnerModelStatus();
+}
+
+export function selectRunnerModel(value) {
+  var nextValue = value ? String(value) : '';
+  if (els.runnerModelSelect) els.runnerModelSelect.value = nextValue;
+  modelDropdownOpen = false;
+  modelFilterActive = false;
+  modelFilterQuery = '';
+  activeOptionIndex = -1;
+  if (els.runnerModelFilter) {
+    els.runnerModelFilter.value = selectedModelDisplayText();
+    if (els.runnerModelFilter.removeAttribute) {
+      els.runnerModelFilter.removeAttribute('aria-activedescendant');
+    }
+  }
+  syncComboboxExpanded();
+  updateClearButton();
+  renderRunnerModelList();
 }
 
 export function renderRunnerModelStatus() {
@@ -90,7 +253,9 @@ export function renderRunnerModelStatus() {
 
   var runner = state.runner;
   var total = (runner.models || []).length;
-  var visible = visibleModels().length;
+  var query = activeSearchQuery();
+  var matched = filterModels(query).length;
+  var includeDefault = defaultMatchesQuery(query);
   var message;
 
   if (runner.modelsError) {
@@ -101,8 +266,14 @@ export function renderRunnerModelStatus() {
     message = 'Open the model list to load options from ' + (runner.command || 'the agent') + '.';
   } else if (!total) {
     message = 'No models advertised by ' + (runner.modelsCommand || runner.command || 'this agent') + '. Runs use the agent default.';
-  } else if (visible !== total) {
-    message = visible + ' of ' + total + ' models loaded from ' + runner.modelsCommand + '.';
+  } else if (query) {
+    if (matched === 0 && !includeDefault) {
+      message = 'No models match "' + query + '".';
+    } else if (matched === 0) {
+      message = 'Agent default matches "' + query + '".';
+    } else {
+      message = matched + ' of ' + total + ' models match "' + query + '".';
+    }
   } else {
     message = total + ' models loaded from ' + runner.modelsCommand;
     if (runner.modelCurrent) {
@@ -124,37 +295,124 @@ export function renderRunner() {
   renderRunnerModelStatus();
 }
 
-export function renderRunnerModelList() {
-  var select = els.runnerModelSelect;
-  if (!select) return;
+function buildOptionElement(item, index, selectedValue, currentDefault) {
+  var optionId = 'runner-model-opt-' + index;
+  var isSelected = item.value === selectedValue;
+  var el = node('div', 'runner-model-option' + (isSelected ? ' is-selected' : ''));
+  el.id = optionId;
+  el.setAttribute('role', 'option');
+  el.setAttribute('aria-selected', isSelected ? 'true' : 'false');
+  el.dataset.value = item.value;
 
-  var runner = state.runner;
-  var previous = select.value || runner.model || '';
-  var models = visibleModels();
+  var mainRow = node('div', 'runner-model-option-main');
+  var nameWrap = node('div', 'runner-model-option-title');
+  nameWrap.appendChild(node('span', 'runner-model-option-name', item.name || item.value));
 
-  clear(select);
-
-  var defaultLabel = 'Agent default';
-  if (runner.modelCurrent) {
-    defaultLabel += ' (' + runnerModelLabel(runner.modelCurrent) + ')';
+  if (item.isDefaultOption) {
+    nameWrap.appendChild(node('span', 'runner-model-badge', 'Default'));
+  } else if (item._custom) {
+    nameWrap.appendChild(node('span', 'runner-model-badge', 'Current'));
+  } else if (currentDefault && item.value === currentDefault) {
+    nameWrap.appendChild(node('span', 'runner-model-badge', 'Agent default'));
   }
-  var defaultOption = node('option', '', defaultLabel);
-  defaultOption.value = '';
-  select.appendChild(defaultOption);
+
+  mainRow.appendChild(nameWrap);
+  if (isSelected) {
+    var check = node('span', 'runner-model-check', '✓');
+    check.setAttribute('aria-hidden', 'true');
+    mainRow.appendChild(check);
+  }
+  el.appendChild(mainRow);
+
+  if (item.meta) {
+    el.appendChild(node('div', 'runner-model-option-id', item.meta));
+  }
+  if (item.description) {
+    el.appendChild(node('div', 'runner-model-option-desc', item.description));
+  }
+
+  return { id: optionId, value: item.value, el: el };
+}
+
+export function renderRunnerModelList() {
+  var listbox = els.runnerModelListbox;
+  var runner = state.runner;
+  var selected = selectedModelValue();
+  var query = activeSearchQuery();
+
+  if (!modelFilterActive && els.runnerModelFilter) {
+    els.runnerModelFilter.value = selectedModelDisplayText();
+  }
+  updateClearButton();
+
+  if (!listbox) {
+    renderRunnerModelStatus();
+    return;
+  }
+
+  clear(listbox);
+  renderedOptions = [];
+
+  if (runner.loadingModels && !(runner.models || []).length) {
+    listbox.appendChild(node('div', 'runner-model-empty', 'Loading models from ' + (runner.command || 'agent') + '…'));
+    setActiveOption(-1, false);
+    renderRunnerModelStatus();
+    return;
+  }
+
+  var models = filterModels(query);
+  var includeDefault = defaultMatchesQuery(query);
+  var optIndex = 0;
+
+  if (includeDefault) {
+    var defaultItem = {
+      value: '',
+      name: defaultModelLabel(),
+      meta: runner.modelCurrent ? runner.modelCurrent : 'Uses the agent configured default',
+      description: '',
+      isDefaultOption: true
+    };
+    var defEntry = buildOptionElement(defaultItem, optIndex, selected, runner.modelCurrent);
+    listbox.appendChild(defEntry.el);
+    renderedOptions.push(defEntry);
+    optIndex += 1;
+  }
 
   models.forEach(function (model) {
-    var option = node('option', '', (model.name || model.value) + '  ·  ' + model.value);
-    option.value = model.value;
-    if (model.description) option.title = model.description;
-    select.appendChild(option);
+    var entry = buildOptionElement({
+      value: model.value,
+      name: model.name || model.value,
+      meta: model.value,
+      description: model.description || '',
+      _custom: !!model._custom
+    }, optIndex, selected, runner.modelCurrent);
+    listbox.appendChild(entry.el);
+    renderedOptions.push(entry);
+    optIndex += 1;
   });
 
-  if (previous && models.some(function (model) { return model.value === previous; })) {
-    select.value = previous;
-  } else if (runner.model && models.some(function (model) { return model.value === runner.model; })) {
-    select.value = runner.model;
-  } else {
-    select.value = '';
+  if (!renderedOptions.length) {
+    var emptyWrap = node('div', 'runner-model-empty');
+    emptyWrap.appendChild(node('span', '', 'No models match "' + query + '".'));
+    var clearBtn = node('button', 'control text-button runner-model-empty-clear', 'Clear search');
+    clearBtn.type = 'button';
+    clearBtn.addEventListener('click', function () {
+      modelFilterActive = true;
+      modelFilterQuery = '';
+      if (els.runnerModelFilter) {
+        els.runnerModelFilter.value = '';
+        if (els.runnerModelFilter.focus) els.runnerModelFilter.focus();
+      }
+      renderRunnerModelList();
+      setActiveOption(0, false);
+    });
+    emptyWrap.appendChild(clearBtn);
+    listbox.appendChild(emptyWrap);
+    setActiveOption(-1, false);
+  } else if (modelDropdownOpen) {
+    var nextActive = activeOptionIndex;
+    if (nextActive < 0 || nextActive >= renderedOptions.length) nextActive = 0;
+    setActiveOption(nextActive, false);
   }
 
   renderRunnerModelStatus();
@@ -178,6 +436,10 @@ export function applyRunnerSettings(settings) {
     runner.loadingModels = false;
     runner.modelsCommand = '';
     runner.modelsError = '';
+  }
+
+  if (els.runnerModelSelect && (!dialogOpen() || !modelDropdownOpen)) {
+    els.runnerModelSelect.value = runner.model || '';
   }
 
   if (dialogOpen()) {
@@ -232,7 +494,7 @@ export function loadRunnerModels(refresh) {
 
   runner.loadingModels = true;
   runner.modelsError = '';
-  renderRunnerModelStatus();
+  renderRunnerModelList();
 
   var promise = fetchRunnerModels(!!refresh)
     .then(function (res) {
@@ -266,7 +528,7 @@ export function loadRunnerModels(refresh) {
       runner.loadingModels = false;
       runner.modelsLoaded = false;
       runner.modelsError = err.message || 'Could not load models';
-      renderRunnerModelStatus();
+      renderRunnerModelList();
       return null;
     })
     .then(function (result) {
@@ -286,9 +548,16 @@ export function openRunnerDialog() {
   var runner = state.runner;
 
   showRunnerError('');
+  modelDropdownOpen = false;
+  modelFilterActive = false;
+  modelFilterQuery = '';
+  activeOptionIndex = -1;
+
   if (els.runnerCommandInput) els.runnerCommandInput.value = runner.command || '';
   if (els.runnerActorInput) els.runnerActorInput.value = runner.actor || '';
-  if (els.runnerModelFilter) els.runnerModelFilter.value = '';
+  if (els.runnerModelSelect) els.runnerModelSelect.value = runner.model || '';
+  if (els.runnerModelFilter) els.runnerModelFilter.value = selectedModelDisplayText();
+  syncComboboxExpanded();
   renderRunnerHarness();
   renderRunnerModelList();
 
@@ -306,6 +575,11 @@ export function openRunnerDialog() {
 }
 
 export function closeRunnerDialog() {
+  modelDropdownOpen = false;
+  modelFilterActive = false;
+  modelFilterQuery = '';
+  activeOptionIndex = -1;
+  syncComboboxExpanded();
   if (!els.runnerDialog) return;
   if (els.runnerDialog.close) els.runnerDialog.close();
   else if (els.runnerDialog.removeAttribute) els.runnerDialog.removeAttribute('open');
@@ -383,10 +657,9 @@ export function saveRunnerSettingsFromDialog() {
   var commandChanged = command !== state.runner.command;
   var selectedModel = els.runnerModelSelect ? (els.runnerModelSelect.value || null) : null;
 
-  // If model discovery has not finished, the select only contains the
-  // "Agent default" option. Preserve a CLI/env-seeded model instead of
-  // silently clearing it just because the list is still loading.
-  if (!state.runner.modelsLoaded && state.runner.model) {
+  // If model discovery has not finished, preserve a CLI/env-seeded model
+  // instead of silently clearing it while the list is still loading.
+  if (!state.runner.modelsLoaded && state.runner.model && !selectedModel) {
     selectedModel = state.runner.model;
   }
 
@@ -413,12 +686,15 @@ export function saveRunnerSettingsFromDialog() {
 
       if (commandChanged) {
         showToast('Agent command updated');
-        if (els.runnerModelFilter) els.runnerModelFilter.value = '';
+        modelFilterActive = false;
+        modelFilterQuery = '';
+        if (els.runnerModelSelect) els.runnerModelSelect.value = '';
         state.runner.modelsLoaded = false;
         renderRunnerModelList();
         return loadRunnerModels(false).then(function (data) {
           if (!data) return settings;
           if ((data.options || []).length) {
+            openRunnerModelListbox();
             if (els.runnerModelStatus) {
               text(els.runnerModelStatus, 'Agent switched. Choose a model, then save again.');
             }
@@ -454,13 +730,151 @@ export function handleRunnerSettingsEvent(settings) {
   }
 }
 
+function onModelFilterInput() {
+  modelFilterActive = true;
+  modelFilterQuery = els.runnerModelFilter ? els.runnerModelFilter.value : '';
+  modelDropdownOpen = true;
+  renderRunnerModelList();
+  syncComboboxExpanded();
+  setActiveOption(renderedOptions.length ? 0 : -1, false);
+}
+
+function onModelFilterKeydown(event) {
+  var key = event.key;
+  if (key === 'ArrowDown') {
+    if (event.preventDefault) event.preventDefault();
+    if (!modelDropdownOpen) {
+      openRunnerModelListbox();
+    } else {
+      setActiveOption(activeOptionIndex + 1, true);
+    }
+    return;
+  }
+  if (key === 'ArrowUp') {
+    if (event.preventDefault) event.preventDefault();
+    if (!modelDropdownOpen) {
+      openRunnerModelListbox();
+      if (renderedOptions.length) setActiveOption(renderedOptions.length - 1, true);
+    } else {
+      setActiveOption(activeOptionIndex - 1, true);
+    }
+    return;
+  }
+  if (key === 'Home' && modelDropdownOpen && renderedOptions.length) {
+    if (event.preventDefault) event.preventDefault();
+    setActiveOption(0, true);
+    return;
+  }
+  if (key === 'End' && modelDropdownOpen && renderedOptions.length) {
+    if (event.preventDefault) event.preventDefault();
+    setActiveOption(renderedOptions.length - 1, true);
+    return;
+  }
+  if (key === 'Enter' && !event.metaKey && !event.ctrlKey) {
+    if (event.preventDefault) event.preventDefault();
+    if (modelDropdownOpen && activeOptionIndex >= 0 && renderedOptions[activeOptionIndex]) {
+      selectRunnerModel(renderedOptions[activeOptionIndex].value);
+    } else if (!modelDropdownOpen) {
+      openRunnerModelListbox();
+    }
+    return;
+  }
+  if (key === 'Escape' && modelDropdownOpen) {
+    if (event.preventDefault) event.preventDefault();
+    if (event.stopPropagation) event.stopPropagation();
+    closeRunnerModelListbox(true);
+    return;
+  }
+  if (key === 'Tab' && modelDropdownOpen) {
+    closeRunnerModelListbox(false);
+  }
+}
+
+function onModelClearClick() {
+  var searching = modelFilterActive && String(modelFilterQuery || '').length > 0;
+  if (searching) {
+    modelFilterActive = true;
+    modelFilterQuery = '';
+    if (els.runnerModelFilter) {
+      els.runnerModelFilter.value = '';
+      if (els.runnerModelFilter.focus) els.runnerModelFilter.focus();
+    }
+    if (!modelDropdownOpen) openRunnerModelListbox();
+    else {
+      renderRunnerModelList();
+      setActiveOption(renderedOptions.length ? 0 : -1, false);
+    }
+    return;
+  }
+  selectRunnerModel('');
+  if (els.runnerModelFilter && els.runnerModelFilter.focus) els.runnerModelFilter.focus();
+}
+
+function onModelToggleClick() {
+  if (modelDropdownOpen) {
+    closeRunnerModelListbox(true);
+  } else {
+    openRunnerModelListbox();
+    if (els.runnerModelFilter && els.runnerModelFilter.focus) {
+      els.runnerModelFilter.focus();
+      if (!modelFilterActive && els.runnerModelFilter.select) els.runnerModelFilter.select();
+    }
+  }
+}
+
+var runnerUiBound = false;
 export function bindRunnerUi() {
+  if (runnerUiBound) return;
+  runnerUiBound = true;
   if (els.btnRunner) els.btnRunner.addEventListener('click', openRunnerDialog);
   if (els.btnRunnerClose) els.btnRunnerClose.addEventListener('click', closeRunnerDialog);
   if (els.btnRunnerCancel) els.btnRunnerCancel.addEventListener('click', closeRunnerDialog);
   if (els.btnRunnerSave) els.btnRunnerSave.addEventListener('click', saveRunnerSettingsFromDialog);
   if (els.btnRunnerRefreshModels) els.btnRunnerRefreshModels.addEventListener('click', refreshRunnerModels);
-  if (els.runnerModelFilter) els.runnerModelFilter.addEventListener('input', renderRunnerModelList);
+  if (els.runnerModelFilter) {
+    els.runnerModelFilter.addEventListener('input', onModelFilterInput);
+    els.runnerModelFilter.addEventListener('keydown', onModelFilterKeydown);
+    els.runnerModelFilter.addEventListener('focus', function () {
+      if (!modelFilterActive && els.runnerModelFilter.select) {
+        els.runnerModelFilter.select();
+      }
+    });
+    els.runnerModelFilter.addEventListener('click', function () {
+      if (!modelDropdownOpen) {
+        openRunnerModelListbox();
+        if (!modelFilterActive && els.runnerModelFilter.select) {
+          els.runnerModelFilter.select();
+        }
+      }
+    });
+  }
+  if (els.runnerModelClear) {
+    els.runnerModelClear.addEventListener('mousedown', function (event) {
+      if (event && event.preventDefault) event.preventDefault();
+    });
+    els.runnerModelClear.addEventListener('click', onModelClearClick);
+  }
+  if (els.runnerModelToggle) {
+    els.runnerModelToggle.addEventListener('mousedown', function (event) {
+      if (event && event.preventDefault) event.preventDefault();
+    });
+    els.runnerModelToggle.addEventListener('click', onModelToggleClick);
+  }
+  if (els.runnerModelListbox) {
+    els.runnerModelListbox.addEventListener('mousedown', function (event) {
+      // Keep focus in the combobox input while clicking an option.
+      if (event && event.preventDefault) event.preventDefault();
+    });
+    els.runnerModelListbox.addEventListener('click', function (event) {
+      var target = event && event.target && event.target.closest
+        ? event.target.closest('[role="option"]')
+        : null;
+      if (!target) return;
+      var value = target.dataset ? target.dataset.value : '';
+      selectRunnerModel(value);
+      if (els.runnerModelFilter && els.runnerModelFilter.focus) els.runnerModelFilter.focus();
+    });
+  }
   if (els.runnerCommandInput) els.runnerCommandInput.addEventListener('input', onRunnerCommandInput);
   if (els.runnerHarnessOmp) {
     els.runnerHarnessOmp.addEventListener('click', function () { setRunnerHarness('omp'); });
@@ -469,9 +883,20 @@ export function bindRunnerUi() {
     els.runnerHarnessOpenCode.addEventListener('click', function () { setRunnerHarness('opencode'); });
   }
   if (els.runnerDialog) {
+    els.runnerDialog.addEventListener('click', function (event) {
+      if (!modelDropdownOpen || !els.runnerModelCombobox) return;
+      var target = event && event.target;
+      if (target && els.runnerModelCombobox.contains && !els.runnerModelCombobox.contains(target)) {
+        closeRunnerModelListbox(false);
+      }
+    });
     els.runnerDialog.addEventListener('cancel', function (event) {
       if (event && event.preventDefault) event.preventDefault();
-      closeRunnerDialog();
+      if (modelDropdownOpen) {
+        closeRunnerModelListbox(true);
+      } else {
+        closeRunnerDialog();
+      }
     });
   }
 }
