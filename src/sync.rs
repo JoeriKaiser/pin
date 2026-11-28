@@ -32,7 +32,7 @@ impl GitItemStatus {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GitItemInfo {
     pub id: String,
     pub status: GitItemStatus,

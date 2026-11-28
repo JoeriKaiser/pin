@@ -80,6 +80,13 @@ impl ViewerBroadcaster {
             subs.retain(|tx| tx.send(event.clone()).is_ok());
         }
     }
+
+    pub fn has_subscribers(&self) -> bool {
+        self.subscribers
+            .lock()
+            .map(|subs| !subs.is_empty())
+            .unwrap_or(false)
+    }
 }
 
 pub struct ViewSnapshot {
@@ -1726,11 +1733,23 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                 }
 
                 let payload: RunPayload = if content_length > 0 {
-                    serde_json::from_slice(&body_bytes).unwrap_or(RunPayload {
-                        use_worktree: None,
-                        mode: Some("idea".to_string()),
-                        interactive: Some(true),
-                    })
+                    match serde_json::from_slice(&body_bytes) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            let msg = json_error_bytes(format!("Invalid JSON: {e}"));
+                            send_response(
+                                &mut stream,
+                                400,
+                                "Bad Request",
+                                "application/json; charset=utf-8",
+                                &msg,
+                                false,
+                                true,
+                                None,
+                            );
+                            return;
+                        }
+                    }
                 } else {
                     RunPayload {
                         use_worktree: None,
@@ -1830,11 +1849,17 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                         return;
                     }
                     Err(err) => {
+                        let (code, reason) = match err {
+                            crate::acp::manager::AcpManagerError::ItemNotFound(_) => {
+                                (404, "Not Found")
+                            }
+                            _ => (400, "Bad Request"),
+                        };
                         let msg = json_error_bytes(err.to_string());
                         send_response(
                             &mut stream,
-                            400,
-                            "Bad Request",
+                            code,
+                            reason,
                             "application/json; charset=utf-8",
                             &msg,
                             false,
@@ -1867,11 +1892,17 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                         return;
                     }
                     Err(err) => {
+                        let (code, reason) = match err {
+                            crate::acp::manager::AcpManagerError::ItemNotFound(_) => {
+                                (404, "Not Found")
+                            }
+                            _ => (400, "Bad Request"),
+                        };
                         let msg = json_error_bytes(err.to_string());
                         send_response(
                             &mut stream,
-                            400,
-                            "Bad Request",
+                            code,
+                            reason,
                             "application/json; charset=utf-8",
                             &msg,
                             false,
@@ -1904,11 +1935,17 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                         );
                     }
                     Err(err) => {
+                        let (code, reason) = match err {
+                            crate::acp::manager::AcpManagerError::ItemNotFound(_) => {
+                                (404, "Not Found")
+                            }
+                            _ => (400, "Bad Request"),
+                        };
                         let msg = json_error_bytes(err.to_string());
                         send_response(
                             &mut stream,
-                            400,
-                            "Bad Request",
+                            code,
+                            reason,
                             "application/json; charset=utf-8",
                             &msg,
                             true,
@@ -2174,13 +2211,22 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                 .join("runs")
                 .join(format!("{canonical_id}.log"));
             if log_path.is_file() {
-                if let Ok(bytes) = std::fs::read(&log_path) {
+                if let Ok(mut file) = std::fs::File::open(&log_path) {
+                    use std::io::Seek;
+                    const MAX_LOG_BYTES: u64 = 2 * 1024 * 1024;
+                    let file_len = file.metadata().map(|m| m.len()).unwrap_or(0);
+                    let mut out = Vec::new();
+                    if file_len > MAX_LOG_BYTES {
+                        let _ = file.seek(std::io::SeekFrom::End(-(MAX_LOG_BYTES as i64)));
+                        out.extend_from_slice(b"[... truncated earlier log output ...]\n");
+                    }
+                    let _ = file.read_to_end(&mut out);
                     send_response(
                         &mut stream,
                         200,
                         "OK",
                         "text/plain; charset=utf-8",
-                        &bytes,
+                        &out,
                         true,
                         method == "GET",
                         None,
@@ -2216,15 +2262,19 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                 );
                 return;
             }
-            let timing = snapshot.acp_manager.get_run_timing(id);
+            let canonical_id = match crate::vault::resolve_selector(&snapshot.vault_path, id) {
+                Ok(f) => f.strip_suffix(".md").unwrap_or(&f).to_string(),
+                Err(_) => id.to_string(),
+            };
+            let timing = snapshot.acp_manager.get_run_timing(&canonical_id);
             let has_transcript_file = snapshot
                 .vault_path
                 .join("runs")
-                .join(format!("{id}.events.jsonl"))
+                .join(format!("{canonical_id}.events.jsonl"))
                 .is_file();
             if method == "GET"
                 && timing.is_none()
-                && !snapshot.acp_manager.is_item_running(id)
+                && !snapshot.acp_manager.is_item_running(&canonical_id)
                 && !has_transcript_file
             {
                 send_response(
@@ -2403,14 +2453,28 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
         let (git_statuses, response_etag) = if is_git_stale {
             let resolver = crate::sync::GitStatusResolver::new(snapshot.repo_path.clone());
             let fresh_map = resolver.resolve_all(&ideas);
-            let next_gen = snapshot.git_generation.fetch_add(1, Ordering::Relaxed) + 1;
-            if let Ok(mut cache_guard) = snapshot.git_cache.lock() {
+            let changed = if let Ok(mut cache_guard) = snapshot.git_cache.lock() {
+                let prev_same = cache_guard
+                    .as_ref()
+                    .is_some_and(|(_, prev)| prev == &fresh_map);
                 *cache_guard = Some((Instant::now(), fresh_map.clone()));
+                !prev_same
+            } else {
+                true
+            };
+            let cur_gen = if changed {
+                snapshot.git_generation.fetch_add(1, Ordering::Relaxed) + 1
+            } else {
+                snapshot.git_generation.load(Ordering::Relaxed)
+            };
+            let fresh_etag = format!("{}-g{cur_gen}", compute_vault_etag(&snapshot.vault_path));
+            if let Some(if_none) = &if_none_match {
+                if etags_match(if_none, &fresh_etag) {
+                    send_not_modified(&mut stream, &fresh_etag);
+                    return;
+                }
             }
-            (
-                fresh_map,
-                format!("{}-g{next_gen}", compute_vault_etag(&snapshot.vault_path)),
-            )
+            (fresh_map, fresh_etag)
         } else {
             let cached = snapshot
                 .git_cache
@@ -2711,6 +2775,9 @@ pub fn serve_view(
             let mut last_etag = compute_vault_etag(&watcher_snap.vault_path);
             loop {
                 thread::sleep(std::time::Duration::from_millis(500));
+                if !watcher_snap.broadcaster.has_subscribers() {
+                    continue;
+                }
                 let current_etag = compute_vault_etag(&watcher_snap.vault_path);
                 if current_etag != last_etag {
                     last_etag = current_etag;
