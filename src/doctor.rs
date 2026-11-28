@@ -62,16 +62,49 @@ pub fn scan_vault(vault_path: &Path) -> VaultScan {
     let mut paths: Vec<_> = entries.flatten().map(|e| e.path()).collect();
     paths.sort();
 
+    let now_sys = std::time::SystemTime::now();
+
     for path in paths {
-        if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("md") {
-            let filename = path
-                .file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or("")
-                .to_string();
-            if filename.starts_with('.') {
-                continue;
+        if !path.is_file() {
+            continue;
+        }
+        let filename = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_string();
+
+        if filename.starts_with('.') {
+            if filename.ends_with(".edit-recovery.tmp") {
+                scan.issues.push(Issue {
+                    severity: Severity::Warning,
+                    code: "orphaned_recovery_file".to_string(),
+                    filename: filename.clone(),
+                    message: "Orphaned edit recovery file left behind by a failed edit (remove with 'pin doctor --repair')".to_string(),
+                    field: None,
+                });
+            } else if filename.ends_with(".lock") {
+                let is_stale = fs::metadata(&path)
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .and_then(|mtime| now_sys.duration_since(mtime).ok())
+                    .is_some_and(|age| age.as_secs() >= 30);
+                if is_stale {
+                    scan.issues.push(Issue {
+                        severity: Severity::Warning,
+                        code: "stale_lock_file".to_string(),
+                        filename: filename.clone(),
+                        message:
+                            "Stale lock file older than 30s (remove with 'pin doctor --repair')"
+                                .to_string(),
+                        field: None,
+                    });
+                }
             }
+            continue;
+        }
+
+        if path.extension().and_then(|s| s.to_str()) == Some("md") {
             scan.files_scanned += 1;
 
             let content = match fs::read_to_string(&path) {
@@ -338,34 +371,59 @@ pub fn repair_vault(vault_path: &Path) -> usize {
     let mut paths: Vec<_> = entries.flatten().map(|e| e.path()).collect();
     paths.sort();
 
-    // Pass 1: gather all valid item IDs in the vault
+    // Pass 1: gather all valid item IDs (and track invalid->derived ID remaps)
+    // and clean up stale lock / orphaned recovery files.
+    let now_sys = std::time::SystemTime::now();
     let mut valid_ids = HashSet::new();
+    let mut id_remap: HashMap<String, String> = HashMap::new();
     for path in &paths {
-        if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("md") {
-            let filename = path
-                .file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or("")
-                .to_string();
-            if filename.starts_with('.') {
-                continue;
+        if !path.is_file() {
+            continue;
+        }
+        let filename = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_string();
+        if filename.starts_with('.') {
+            if filename.ends_with(".edit-recovery.tmp") {
+                if fs::remove_file(path).is_ok() {
+                    repaired_count += 1;
+                }
+            } else if filename.ends_with(".lock") {
+                let is_stale = fs::metadata(path)
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .and_then(|mtime| now_sys.duration_since(mtime).ok())
+                    .is_some_and(|age| age.as_secs() >= 30);
+                if is_stale && fs::remove_file(path).is_ok() {
+                    repaired_count += 1;
+                }
             }
+            continue;
+        }
+        if path.extension().and_then(|s| s.to_str()) == Some("md") {
             if let Ok(content) = fs::read_to_string(path) {
                 let mut issues = Vec::new();
                 if let Some(meta) = parse_front_matter_detailed(&filename, &content, &mut issues) {
-                    let id =
-                        if meta.id.len() == 12 && meta.id.chars().all(|c| c.is_ascii_hexdigit()) {
-                            meta.id
-                        } else {
-                            derive_deterministic_id(&filename)
-                        };
+                    let is_valid =
+                        meta.id.len() == 12 && meta.id.chars().all(|c| c.is_ascii_hexdigit());
+                    let id = if is_valid {
+                        meta.id
+                    } else {
+                        let derived = derive_deterministic_id(&filename);
+                        if !meta.id.is_empty() && meta.id != derived {
+                            id_remap.insert(meta.id, derived.clone());
+                        }
+                        derived
+                    };
                     valid_ids.insert(id);
                 }
             }
         }
     }
 
-    // Pass 2: repair invalid schema, ID, and dangling/self relationships
+    // Pass 2: repair invalid schema, ID, and dangling/self relationships under FileLock
     for path in paths {
         if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("md") {
             let filename = path
@@ -376,6 +434,10 @@ pub fn repair_vault(vault_path: &Path) -> usize {
             if filename.starts_with('.') {
                 continue;
             }
+            let _lock = match crate::workflow::FileLock::acquire(vault_path, &filename) {
+                Ok(l) => l,
+                Err(_) => continue,
+            };
             let content = match fs::read_to_string(&path) {
                 Ok(c) => c,
                 Err(_) => continue,
@@ -397,28 +459,62 @@ pub fn repair_vault(vault_path: &Path) -> usize {
                     needs_repair = true;
                 }
 
-                if let Some(parent_id) = &meta.parent_id {
-                    if parent_id == &meta.id || !valid_ids.contains(parent_id) {
+                if let Some(parent_id) = meta.parent_id.clone() {
+                    let resolved_parent = id_remap.get(&parent_id).cloned().unwrap_or(parent_id);
+                    if resolved_parent == meta.id || !valid_ids.contains(&resolved_parent) {
                         meta.parent_id = None;
+                        needs_repair = true;
+                    } else if meta.parent_id.as_deref() != Some(resolved_parent.as_str()) {
+                        meta.parent_id = Some(resolved_parent);
                         needs_repair = true;
                     }
                 }
 
-                let orig_dep_len = meta.depends_on.len();
-                meta.depends_on
-                    .retain(|d| d != &meta.id && valid_ids.contains(d));
-                if meta.depends_on.len() != orig_dep_len {
+                let mut new_deps = Vec::with_capacity(meta.depends_on.len());
+                let mut deps_changed = false;
+                for dep in &meta.depends_on {
+                    let resolved = id_remap.get(dep).cloned().unwrap_or_else(|| dep.clone());
+                    if resolved != *dep {
+                        deps_changed = true;
+                    }
+                    if resolved != meta.id
+                        && valid_ids.contains(&resolved)
+                        && !new_deps.contains(&resolved)
+                    {
+                        new_deps.push(resolved);
+                    } else {
+                        deps_changed = true;
+                    }
+                }
+                if deps_changed {
+                    meta.depends_on = new_deps;
                     needs_repair = true;
                 }
 
-                let orig_rel_len = meta.related.len();
-                meta.related
-                    .retain(|r| r != &meta.id && valid_ids.contains(r));
-                if meta.related.len() != orig_rel_len {
+                let mut new_rel = Vec::with_capacity(meta.related.len());
+                let mut rel_changed = false;
+                for rel in &meta.related {
+                    let resolved = id_remap.get(rel).cloned().unwrap_or_else(|| rel.clone());
+                    if resolved != *rel {
+                        rel_changed = true;
+                    }
+                    if resolved != meta.id
+                        && valid_ids.contains(&resolved)
+                        && !new_rel.contains(&resolved)
+                    {
+                        new_rel.push(resolved);
+                    } else {
+                        rel_changed = true;
+                    }
+                }
+                if rel_changed {
+                    meta.related = new_rel;
                     needs_repair = true;
                 }
 
                 if needs_repair {
+                    meta.updated_at = Some(chrono::Utc::now().timestamp());
+                    meta.revision = Some(meta.current_revision() + 1);
                     let new_doc = render_full_document(&meta);
                     if atomic_write(&path, &new_doc).is_ok() {
                         repaired_count += 1;
@@ -455,6 +551,10 @@ pub fn upgrade_vault(vault_path: &Path) -> usize {
             if filename.starts_with('.') {
                 continue;
             }
+            let _lock = match crate::workflow::FileLock::acquire(vault_path, &filename) {
+                Ok(l) => l,
+                Err(_) => continue,
+            };
             let content = match fs::read_to_string(&path) {
                 Ok(c) => c,
                 Err(_) => continue,
@@ -494,6 +594,7 @@ pub fn upgrade_vault(vault_path: &Path) -> usize {
                 }
 
                 if needs_upgrade {
+                    meta.updated_at = Some(chrono::Utc::now().timestamp());
                     let new_doc = render_full_document(&meta);
                     if atomic_write(&path, &new_doc).is_ok() {
                         upgraded_count += 1;
@@ -517,6 +618,8 @@ pub fn is_repairable_code(code: &str) -> bool {
         || code == "dangling_dependency"
         || code == "self_related"
         || code == "dangling_related"
+        || code == "orphaned_recovery_file"
+        || code == "stale_lock_file"
 }
 
 pub fn emit_doctor_report(
