@@ -1,8 +1,9 @@
 use crate::acp::client::{AcpClient, AcpError};
 use crate::acp::worktree::{WorktreeError, WorktreeManager};
 use crate::workflow::WorkflowError;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -143,6 +144,7 @@ pub struct RunLiveState {
     pub waiting_for_user: bool,
     pub waiting_since: Option<i64>,
     pub current_turn_message: String,
+    pub full_assistant_text: String,
     pub last_message: Option<String>,
     pub last_activity: Option<String>,
 }
@@ -157,6 +159,8 @@ pub enum PromptCommand {
 pub struct ActiveRun {
     pub item_id: String,
     pub client: Arc<AcpClient>,
+    pub session_id: Arc<Mutex<Option<String>>>,
+    pub pre_run_status: crate::model::Status,
     pub worktree_path: Option<PathBuf>,
     pub is_new_worktree: bool,
     pub is_primary_worktree: bool,
@@ -197,12 +201,26 @@ pub struct CompletedRun {
     pub stop_reason: Option<String>,
 }
 
+struct StartingRunGuard {
+    starting_runs: Arc<Mutex<HashSet<String>>>,
+    key: String,
+}
+
+impl Drop for StartingRunGuard {
+    fn drop(&mut self) {
+        if let Ok(mut set) = self.starting_runs.lock() {
+            set.remove(&self.key);
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct AcpManager {
     vault_path: PathBuf,
     repo_path: PathBuf,
     runner: Arc<Mutex<RunnerSettings>>,
     model_cache: Arc<Mutex<HashMap<String, RunnerModels>>>,
+    starting_runs: Arc<Mutex<HashSet<String>>>,
     active_runs: Arc<Mutex<HashMap<String, ActiveRun>>>,
     completed_runs: Arc<Mutex<Vec<CompletedRun>>>,
     global_subscribers: Arc<Mutex<Vec<std::sync::mpsc::Sender<serde_json::Value>>>>,
@@ -223,6 +241,7 @@ impl AcpManager {
             repo_path,
             runner: Arc::new(Mutex::new(runner)),
             model_cache: Arc::new(Mutex::new(HashMap::new())),
+            starting_runs: Arc::new(Mutex::new(HashSet::new())),
             active_runs: Arc::new(Mutex::new(HashMap::new())),
             completed_runs: Arc::new(Mutex::new(Vec::new())),
             global_subscribers: Arc::new(Mutex::new(Vec::new())),
@@ -744,14 +763,18 @@ impl AcpManager {
             }
         };
 
-        // 1. Reject if canonical_id is already running or primary checkout is busy
-        //    before creating any worktree on disk.
-        {
+        // 1. Reserve canonical_id in starting_runs and reject if already running
+        //    or primary checkout is busy before creating any worktree on disk.
+        let _start_guard = {
+            let mut starting = self
+                .starting_runs
+                .lock()
+                .map_err(|_| AcpManagerError::Io("Lock poisoned on starting_runs".to_string()))?;
             let runs = self
                 .active_runs
                 .lock()
                 .map_err(|_| AcpManagerError::Io("Lock poisoned on active_runs".to_string()))?;
-            if resolve_run_key(&runs, &canonical_id).is_some() {
+            if starting.contains(&canonical_id) || resolve_run_key(&runs, &canonical_id).is_some() {
                 return Err(AcpManagerError::AlreadyRunning(canonical_id));
             }
 
@@ -760,7 +783,28 @@ impl AcpManager {
                     return Err(AcpManagerError::PrimaryBusy(busy_run.item_id.clone()));
                 }
             }
-        }
+            starting.insert(canonical_id.clone());
+            StartingRunGuard {
+                starting_runs: Arc::clone(&self.starting_runs),
+                key: canonical_id.clone(),
+            }
+        };
+
+        // Capture the item's status before beginning the run so error/cancel
+        // restores the real prior status instead of clobbering Created/Blocked.
+        let pre_run_status = fs::read_to_string(self.vault_path.join(&filename))
+            .ok()
+            .and_then(|raw| {
+                let mut diag = Vec::new();
+                crate::frontmatter::parse_front_matter_detailed(&filename, &raw, &mut diag)
+            })
+            .map(|m| m.current_status())
+            .filter(|s| *s != crate::model::Status::InProgress)
+            .unwrap_or(if matches!(mode, RunMode::CommitPr) {
+                crate::model::Status::Done
+            } else {
+                crate::model::Status::Planned
+            });
 
         // Determine working directory using canonical_id so short prefixes match logs/worktrees.
         let expected_wt = WorktreeManager::worktree_path(&self.repo_path, &canonical_id);
@@ -966,9 +1010,13 @@ impl AcpManager {
             None
         };
 
+        let session_id_shared: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+
         let active_run = ActiveRun {
             item_id: canonical_id.clone(),
             client: Arc::clone(&client),
+            session_id: Arc::clone(&session_id_shared),
+            pre_run_status,
             worktree_path: worktree_path.clone(),
             is_new_worktree,
             is_primary_worktree: is_primary,
@@ -998,6 +1046,7 @@ impl AcpManager {
         }
         // 9. Spawn worker thread
         let worker_client = Arc::clone(&client);
+        let worker_session_id = Arc::clone(&session_id_shared);
         let worker_event_buffer = Arc::clone(&event_buffer);
         let worker_subscribers = Arc::clone(&subscribers);
         let worker_cancel = Arc::clone(&cancel_requested);
@@ -1025,9 +1074,24 @@ impl AcpManager {
                 .join(format!("{worker_item_id}.events.jsonl"));
             let fwd_disk_path = disk_events_path.clone();
             thread::spawn(move || {
+                let mut disk_writer = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&fwd_disk_path)
+                    .ok()
+                    .map(BufWriter::new);
                 while let Ok(event) = client_event_rx.recv() {
                     record_live_event(&fwd_live, &event);
-                    push_event(&fwd_buffer, &fwd_subs, Some(&fwd_disk_path), event);
+                    push_event_with_writer(
+                        &fwd_buffer,
+                        &fwd_subs,
+                        disk_writer.as_mut(),
+                        None,
+                        event,
+                    );
+                }
+                if let Some(ref mut w) = disk_writer {
+                    let _ = w.flush();
                 }
             });
 
@@ -1051,6 +1115,9 @@ impl AcpManager {
                     .map_err(|e| format!("New session failed: {e}"))?;
                 let session_id = session.session_id.clone();
                 session_id_opt = Some(session_id.clone());
+                if let Ok(mut sid) = worker_session_id.lock() {
+                    *sid = Some(session_id.clone());
+                }
 
                 // The user picked a model in the viewer: apply it to this
                 // session before the first prompt so every turn uses it.
@@ -1185,12 +1252,21 @@ impl AcpManager {
                     // Give the event forwarding thread a moment to flush queued events
                     thread::sleep(Duration::from_millis(50));
 
-                    // Extract summary and test evidence from events/text
+                    // Extract summary and test evidence from full accumulated assistant prose
+                    // (which is not truncated by the ring buffer) with fallback to buffered events.
                     let events = worker_event_buffer
                         .lock()
                         .map(|buf| buf.clone())
                         .unwrap_or_default();
-                    let (summary, evidence) = extract_summary_and_evidence(&events);
+                    let full_text = worker_live_state
+                        .lock()
+                        .map(|live| live.full_assistant_text.clone())
+                        .unwrap_or_default();
+                    let (summary, evidence) = if !full_text.trim().is_empty() {
+                        extract_summary_and_evidence_from_text(&full_text)
+                    } else {
+                        extract_summary_and_evidence(&events)
+                    };
                     let (mut pr_url, mut pr_number) = extract_pr_info(&events);
                     if pr_url.is_none() {
                         let (u, n) = crate::workflow::extract_pr_from_text(&summary);
@@ -1323,32 +1399,41 @@ impl AcpManager {
                     }
 
                     // Return an item that is still in_progress to its pre-run
-                    // status (Done for CommitPr, Planned otherwise) without
-                    // overwriting a status the user set manually.
-                    let restore_status = if matches!(mode, RunMode::CommitPr) {
-                        crate::model::Status::Done
-                    } else {
-                        crate::model::Status::Planned
-                    };
+                    // status without overwriting a status the user set manually.
                     let _ = crate::workflow::release_item_to_status(
                         &worker_vault_path,
                         &worker_filename,
                         Some(&worker_runner.actor),
                         true,
                         None,
-                        restore_status,
+                        pre_run_status,
                     );
 
+                    let mut final_err_msg = err_msg.clone();
                     if worker_is_new_worktree {
-                        let _ =
-                            WorktreeManager::remove_worktree(&worker_repo_path, &worker_item_id);
+                        if WorktreeManager::has_uncommitted_changes(
+                            &worker_repo_path,
+                            &worker_item_id,
+                        ) {
+                            let wt_path =
+                                WorktreeManager::worktree_path(&worker_repo_path, &worker_item_id);
+                            final_err_msg.push_str(&format!(
+                                " (preserved worktree with uncommitted changes at {})",
+                                wt_path.display()
+                            ));
+                        } else {
+                            let _ = WorktreeManager::remove_worktree(
+                                &worker_repo_path,
+                                &worker_item_id,
+                            );
+                        }
                     }
 
                     // Sends {"type": "error", "message": err.to_string()} to subscribers
                     let finished_at = chrono::Utc::now().timestamp();
                     let error_event = serde_json::json!({
                         "type": "error",
-                        "message": err_msg.clone(),
+                        "message": final_err_msg.clone(),
                         "startedAt": started_at,
                         "finishedAt": finished_at
                     });
@@ -1397,24 +1482,6 @@ impl AcpManager {
         let run = {
             if let Ok(mut runs) = self.active_runs.lock() {
                 let key = resolve_run_key(&runs, item_id);
-                if let Some(k) = &key {
-                    if let Some(r) = runs.get(k) {
-                        let cancel_event = serde_json::json!({
-                            "type": "error",
-                            "message": "Cancelled by user"
-                        });
-                        let cancel_disk_path = self
-                            .vault_path
-                            .join("runs")
-                            .join(format!("{}.events.jsonl", r.item_id));
-                        push_event(
-                            &r.event_buffer,
-                            &r.subscribers,
-                            Some(&cancel_disk_path),
-                            cancel_event,
-                        );
-                    }
-                }
                 key.and_then(|k| runs.remove(&k))
             } else {
                 None
@@ -1422,7 +1489,45 @@ impl AcpManager {
         };
         if let Some(run) = run {
             run.cancel_requested.store(true, Ordering::SeqCst);
-            let _ = run.client.kill();
+            if let Ok(sid_guard) = run.session_id.lock() {
+                if let Some(sid) = sid_guard.as_deref() {
+                    let _ = run.client.cancel(sid);
+                }
+            }
+            let _ = run.client.terminate_gracefully(Duration::from_millis(400));
+
+            let canonical_id = &run.item_id;
+            let mut cancel_msg = "Cancelled by user".to_string();
+            if run.is_new_worktree && run.worktree_path.is_some() {
+                if WorktreeManager::has_uncommitted_changes(&self.repo_path, canonical_id) {
+                    if let Some(wt_path) = &run.worktree_path {
+                        cancel_msg.push_str(&format!(
+                            " (preserved worktree with uncommitted changes at {})",
+                            wt_path.display()
+                        ));
+                    }
+                } else {
+                    let _ = WorktreeManager::remove_worktree(&self.repo_path, canonical_id);
+                }
+            }
+
+            let finished_at = chrono::Utc::now().timestamp();
+            let cancel_event = serde_json::json!({
+                "type": "error",
+                "message": cancel_msg.clone(),
+                "startedAt": run.started_at,
+                "finishedAt": finished_at
+            });
+            let cancel_disk_path = self
+                .vault_path
+                .join("runs")
+                .join(format!("{canonical_id}.events.jsonl"));
+            push_event(
+                &run.event_buffer,
+                &run.subscribers,
+                Some(&cancel_disk_path),
+                cancel_event,
+            );
 
             let final_events = run
                 .event_buffer
@@ -1434,20 +1539,14 @@ impl AcpManager {
                     item_id: run.item_id.clone(),
                     events: final_events,
                     started_at: run.started_at,
-                    finished_at: chrono::Utc::now().timestamp(),
-                    stop_reason: Some("Cancelled by user".to_string()),
+                    finished_at,
+                    stop_reason: Some(cancel_msg),
                 });
                 if comp.len() > 50 {
                     comp.remove(0);
                 }
             }
 
-            let canonical_id = &run.item_id;
-            let restore_status = if matches!(run.mode, RunMode::CommitPr) {
-                crate::model::Status::Done
-            } else {
-                crate::model::Status::Planned
-            };
             if let Ok(filename) = crate::vault::resolve_selector(&self.vault_path, canonical_id) {
                 let _ = crate::workflow::release_item_to_status(
                     &self.vault_path,
@@ -1455,12 +1554,8 @@ impl AcpManager {
                     Some(&run.runner.actor),
                     true,
                     None,
-                    restore_status,
+                    run.pre_run_status,
                 );
-            }
-
-            if run.is_new_worktree && run.worktree_path.is_some() {
-                let _ = WorktreeManager::remove_worktree(&self.repo_path, canonical_id);
             }
 
             if let Ok(mut subs) = self.global_subscribers.lock() {
@@ -1604,16 +1699,25 @@ fn record_live_event(live_state: &Arc<Mutex<RunLiveState>>, event: &serde_json::
         if !chunks.is_empty() {
             if let Ok(mut live) = live_state.lock() {
                 const MAX_TURN_BYTES: usize = 16 * 1024;
+                const MAX_FULL_ASSISTANT_BYTES: usize = 256 * 1024;
                 for chunk in chunks {
-                    if live.current_turn_message.len() >= MAX_TURN_BYTES {
-                        break;
+                    if live.current_turn_message.len() < MAX_TURN_BYTES {
+                        let remaining = MAX_TURN_BYTES - live.current_turn_message.len();
+                        if chunk.len() <= remaining {
+                            live.current_turn_message.push_str(&chunk);
+                        } else {
+                            live.current_turn_message
+                                .push_str(&truncate_utf8(&chunk, remaining));
+                        }
                     }
-                    let remaining = MAX_TURN_BYTES - live.current_turn_message.len();
-                    if chunk.len() <= remaining {
-                        live.current_turn_message.push_str(&chunk);
-                    } else {
-                        live.current_turn_message
-                            .push_str(&truncate_utf8(&chunk, remaining));
+                    if live.full_assistant_text.len() < MAX_FULL_ASSISTANT_BYTES {
+                        let remaining = MAX_FULL_ASSISTANT_BYTES - live.full_assistant_text.len();
+                        if chunk.len() <= remaining {
+                            live.full_assistant_text.push_str(&chunk);
+                        } else {
+                            live.full_assistant_text
+                                .push_str(&truncate_utf8(&chunk, remaining));
+                        }
                     }
                 }
             }
@@ -1849,8 +1953,18 @@ fn push_event(
     disk_path: Option<&Path>,
     event: serde_json::Value,
 ) {
+    push_event_with_writer(event_buffer, subscribers, None, disk_path, event);
+}
+
+fn push_event_with_writer(
+    event_buffer: &Arc<Mutex<Vec<serde_json::Value>>>,
+    subscribers: &Arc<Mutex<Vec<Sender<serde_json::Value>>>>,
+    disk_writer: Option<&mut BufWriter<fs::File>>,
+    disk_path: Option<&Path>,
+    event: serde_json::Value,
+) {
     if let Ok(mut buf) = event_buffer.lock() {
-        if buf.len() >= 500 {
+        if buf.len() >= 2000 {
             buf.remove(0);
         }
         buf.push(event.clone());
@@ -1858,9 +1972,13 @@ fn push_event(
     if let Ok(mut subs) = subscribers.lock() {
         subs.retain(|sub| sub.send(event.clone()).is_ok());
     }
-    if let Some(path) = disk_path {
+    if let Some(writer) = disk_writer {
         if let Ok(line) = serde_json::to_string(&event) {
-            use std::io::Write;
+            let _ = writeln!(writer, "{line}");
+            let _ = writer.flush();
+        }
+    } else if let Some(path) = disk_path {
+        if let Ok(line) = serde_json::to_string(&event) {
             if let Ok(mut file) = std::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
@@ -1972,6 +2090,10 @@ fn extract_summary_and_evidence(events: &[serde_json::Value]) -> (String, String
     }
 
     let full_text = text_chunks.concat();
+    extract_summary_and_evidence_from_text(&full_text)
+}
+
+fn extract_summary_and_evidence_from_text(full_text: &str) -> (String, String) {
     let full_text_trimmed = full_text.trim();
 
     if full_text_trimmed.is_empty() {
@@ -2385,12 +2507,15 @@ mod tests {
             waiting_for_user: true,
             waiting_since: Some(250),
             current_turn_message: String::new(),
+            full_assistant_text: String::new(),
             last_message: Some("Which option do you prefer?".to_string()),
             last_activity: Some("Waiting for reply".to_string()),
         }));
         let run1 = ActiveRun {
             item_id: "item-b".to_string(),
             client: Arc::clone(&client),
+            session_id: Arc::new(Mutex::new(None)),
+            pre_run_status: crate::model::Status::Planned,
             worktree_path: Some(PathBuf::from("/tmp/wt-b")),
             is_new_worktree: false,
             is_primary_worktree: false,
@@ -2406,6 +2531,8 @@ mod tests {
         let run2 = ActiveRun {
             item_id: "item-a".to_string(),
             client: Arc::clone(&client),
+            session_id: Arc::new(Mutex::new(None)),
+            pre_run_status: crate::model::Status::Done,
             worktree_path: None,
             is_new_worktree: false,
             is_primary_worktree: true,
@@ -2823,6 +2950,8 @@ done
         let run = ActiveRun {
             item_id: item_id.to_string(),
             client,
+            session_id: Arc::new(Mutex::new(None)),
+            pre_run_status: crate::model::Status::Done,
             worktree_path: Some(existing_wt.clone()),
             is_new_worktree: false,
             is_primary_worktree: false,
@@ -2870,6 +2999,8 @@ done
         let make_run = |id: &str| ActiveRun {
             item_id: id.to_string(),
             client: Arc::clone(&client),
+            session_id: Arc::new(Mutex::new(None)),
+            pre_run_status: crate::model::Status::Done,
             worktree_path: None,
             is_new_worktree: false,
             is_primary_worktree: true,
@@ -2902,5 +3033,104 @@ done
             Some("abc222222222".to_string())
         );
         let _ = client.kill();
+    }
+
+    #[test]
+    fn test_cancel_restores_pre_run_created_status_and_preserves_dirty_new_worktree() {
+        let vault_dir = tempfile::tempdir().unwrap();
+        let repo_dir = tempfile::tempdir().unwrap();
+        let item_id = "cc1122334455";
+        let item_file = vault_dir.path().join(format!("{item_id}.md"));
+        fs::write(
+            &item_file,
+            format!(
+                "---\nschema: 2\nid: \"{item_id}\"\nproject: \"pin\"\nkind: \"technical\"\ntype: \"idea\"\ntimestamp: 1700000000\ncreated_at_ns: 1700000000000000000\ntitle: \"Explore idea\"\nstatus: \"in_progress\"\nclaimed_by: \"agent:test\"\nrevision: 2\n---\n\n# Explore idea\n"
+            ),
+        )
+        .unwrap();
+
+        // Initialize a real git repo and provision a worktree with an uncommitted file.
+        let repo = repo_dir.path();
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["init", "-b", "main"])
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["config", "user.name", "Test"])
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["config", "user.email", "test@test.com"])
+            .output()
+            .unwrap();
+        fs::write(repo.join("README.md"), "base").unwrap();
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["add", "."])
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["commit", "-m", "init"])
+            .output()
+            .unwrap();
+
+        let wt = WorktreeManager::provision_worktree(repo, item_id).unwrap();
+        let dirty_file = wt.join("draft.txt");
+        fs::write(&dirty_file, "uncommitted agent work").unwrap();
+
+        let mgr = AcpManager::new(vault_dir.path().to_path_buf(), repo.to_path_buf(), None);
+        let log_path = vault_dir.path().join("cancel_dirty.log");
+        let client = Arc::new(AcpClient::spawn("sleep 60", repo, &log_path).unwrap());
+        let run = ActiveRun {
+            item_id: item_id.to_string(),
+            client,
+            session_id: Arc::new(Mutex::new(None)),
+            pre_run_status: crate::model::Status::Created,
+            worktree_path: Some(wt.clone()),
+            is_new_worktree: true,
+            is_primary_worktree: false,
+            event_buffer: Arc::new(Mutex::new(Vec::new())),
+            subscribers: Arc::new(Mutex::new(Vec::new())),
+            started_at: 1700000000,
+            cancel_requested: Arc::new(AtomicBool::new(false)),
+            prompt_sender: None,
+            mode: RunMode::Idea { use_worktree: true },
+            runner: RunnerSettings {
+                command: "sleep 60".to_string(),
+                actor: "agent:test".to_string(),
+                model: None,
+            },
+            live_state: Arc::new(Mutex::new(RunLiveState::default())),
+        };
+        mgr.active_runs
+            .lock()
+            .unwrap()
+            .insert(item_id.to_string(), run);
+
+        mgr.cancel_run(item_id).unwrap();
+
+        assert!(
+            dirty_file.exists(),
+            "dirty new worktree must be preserved on cancel"
+        );
+        let content = fs::read_to_string(&item_file).unwrap();
+        let mut issues = Vec::new();
+        let meta = crate::frontmatter::parse_front_matter_detailed(
+            &format!("{item_id}.md"),
+            &content,
+            &mut issues,
+        )
+        .unwrap();
+        assert_eq!(meta.current_status(), crate::model::Status::Created);
+        assert_eq!(meta.claimed_by, None);
     }
 }
