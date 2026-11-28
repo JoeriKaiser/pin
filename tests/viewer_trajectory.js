@@ -2030,6 +2030,14 @@ async function runHarness() {
   assert.strictEqual(runnerToast.textContent, 'Runner updated', 'runner save toast text');
   assert.ok(runnerToast.classList.contains('toast-success'), 'runner save toast uses success style');
 
+  // Reopening the dialog surfaces the recently saved model once under Recent
+  testExports.openRunnerDialog();
+  const labelsAfterSave = runnerModelListbox.querySelectorAll('.runner-model-group-label').map(el => el.textContent);
+  assert.strictEqual(labelsAfterSave[0], 'Recent', 'recently saved model appears under Recent header');
+  const fastMatchesAfterSave = runnerModelListbox.querySelectorAll('[role="option"]').filter(o => o.dataset.value === 'mock/fast');
+  assert.strictEqual(fastMatchesAfterSave.length, 1, 'recent model is not duplicated in provider groups');
+  testExports.closeRunnerDialog();
+
   testExports.handleRunnerSettingsEvent({ command: 'opencode acp', actor: 'agent:opencode', model: null });
   await new Promise(r => setTimeout(r, 10));
   assert.strictEqual(testExports.state.runner.command, 'opencode acp', 'SSE updates the agent command');

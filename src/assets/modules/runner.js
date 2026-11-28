@@ -190,6 +190,50 @@ function defaultMatchesQuery(query) {
   return true;
 }
 
+var RECENT_MODELS_KEY = 'pin.runner.recentModels.v1';
+var MAX_RECENT_MODELS = 3;
+var recentModelsMemory = {};
+
+function readRecentModelsMap() {
+  try {
+    if (typeof localStorage !== 'undefined' && localStorage.getItem) {
+      var raw = localStorage.getItem(RECENT_MODELS_KEY);
+      if (raw) {
+        var parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') return parsed;
+      }
+    }
+  } catch (_) {}
+  return recentModelsMemory;
+}
+
+function writeRecentModelsMap(map) {
+  recentModelsMemory = map;
+  try {
+    if (typeof localStorage !== 'undefined' && localStorage.setItem) {
+      localStorage.setItem(RECENT_MODELS_KEY, JSON.stringify(map));
+    }
+  } catch (_) {}
+}
+
+function recentModelValuesForCommand(command) {
+  if (!command) return [];
+  var map = readRecentModelsMap();
+  var list = map && Array.isArray(map[command]) ? map[command] : [];
+  return list.slice(0, MAX_RECENT_MODELS);
+}
+
+function recordRecentModel(command, modelValue) {
+  if (!command || !modelValue) return;
+  var map = readRecentModelsMap();
+  var next = {};
+  Object.keys(map || {}).forEach(function (k) { next[k] = map[k]; });
+  var list = Array.isArray(next[command]) ? next[command].filter(function (v) { return v !== modelValue; }) : [];
+  list.unshift(modelValue);
+  next[command] = list.slice(0, MAX_RECENT_MODELS);
+  writeRecentModelsMap(next);
+}
+
 var PROVIDER_LABELS = {
   anthropic: 'Anthropic',
   openai: 'OpenAI',
@@ -542,7 +586,34 @@ export function renderRunnerModelList() {
     optIndex += 1;
   }
 
-  var providerGroups = !terms.length ? groupModelsByProvider(models) : null;
+  var remainingModels = models;
+  if (!terms.length && models.length > 1) {
+    var recentValues = recentModelValuesForCommand(runner.modelsCommand || runner.command);
+    if (recentValues.length) {
+      var recentItems = [];
+      var recentSet = {};
+      recentValues.forEach(function (val) {
+        for (var r = 0; r < models.length; r += 1) {
+          if (models[r].value === val && !recentSet[val]) {
+            recentItems.push(models[r]);
+            recentSet[val] = true;
+            break;
+          }
+        }
+      });
+      if (recentItems.length) {
+        var recentHeader = node('div', 'runner-model-group-label', 'Recent');
+        recentHeader.setAttribute('role', 'presentation');
+        listbox.appendChild(recentHeader);
+        recentItems.forEach(function (model) {
+          optIndex = appendModelOption(listbox, model, optIndex, selected, runner.modelCurrent, terms);
+        });
+        remainingModels = models.filter(function (m) { return !recentSet[m.value]; });
+      }
+    }
+  }
+
+  var providerGroups = !terms.length ? groupModelsByProvider(remainingModels) : null;
   if (providerGroups && providerGroups.length >= 2) {
     providerGroups.forEach(function (group) {
       var header = node('div', 'runner-model-group-label', group.label);
@@ -553,7 +624,7 @@ export function renderRunnerModelList() {
       });
     });
   } else {
-    models.forEach(function (model) {
+    remainingModels.forEach(function (model) {
       optIndex = appendModelOption(listbox, model, optIndex, selected, runner.modelCurrent, terms);
     });
   }
@@ -872,6 +943,10 @@ export function saveRunnerSettingsFromDialog() {
           }
           return settings;
         });
+      }
+
+      if (!commandChanged && settings && settings.model) {
+        recordRecentModel(settings.command || command, settings.model);
       }
 
       showToast('Runner updated');
