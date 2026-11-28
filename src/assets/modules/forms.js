@@ -75,9 +75,13 @@ export function expandQuickAdd(focusTarget, defaultType) {
 }
 
 export function collapseQuickAdd() {
+  var hadFocus = typeof document !== 'undefined' && document.activeElement && els.quickAddForm && els.quickAddForm.contains && els.quickAddForm.contains(document.activeElement);
   if (els.quickAddForm) els.quickAddForm.hidden = true;
   if (els.quickAddTrigger) els.quickAddTrigger.hidden = false;
   if (els.quickIdeaTrigger) els.quickIdeaTrigger.hidden = false;
+  if (hadFocus && els.quickAddTrigger && typeof els.quickAddTrigger.focus === 'function') {
+    try { els.quickAddTrigger.focus(); } catch (_) {}
+  }
 }
 
 export function resetQuickAdd() {

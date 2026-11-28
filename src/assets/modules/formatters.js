@@ -83,6 +83,9 @@ export function showToast(message, isError) {
   clearTimeout(toastTimer);
   text(els.toast, message);
   els.toast.hidden = false;
+  if (typeof els.toast.showPopover === 'function') {
+    try { els.toast.showPopover(); } catch (_) {}
+  }
   if (els.toast.classList) {
     els.toast.classList.toggle('toast-error', !!isError);
     els.toast.classList.toggle('toast-success', !isError);
@@ -94,6 +97,9 @@ export function showToast(message, isError) {
   }
   toastTimer = setTimeout(function () {
     els.toast.hidden = true;
+    if (typeof els.toast.hidePopover === 'function') {
+      try { els.toast.hidePopover(); } catch (_) {}
+    }
   }, isError ? 6500 : 3500);
 }
 

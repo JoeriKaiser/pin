@@ -171,7 +171,7 @@
         <p>Choose an item from the list to inspect its details, relationships, and activity.</p>
       </div>
     </div>
-    <article id="proposal" hidden>
+    <article id="proposal" role="tabpanel" aria-labelledby="tab-task-spec" hidden>
       <div class="split-detail">
         <div class="prose-pane">
           <header class="proposal-header">
@@ -198,7 +198,7 @@
         </aside>
       </div>
     </article>
-    <aside id="agent-drawer" class="agent-drawer" aria-label="Agent execution" hidden>
+    <aside id="agent-drawer" class="agent-drawer" role="tabpanel" aria-labelledby="tab-agent-trajectory" aria-label="Agent execution" hidden>
       <div class="agent-drawer-header">
         <div class="agent-drawer-title-group">
           <h2>Agent execution</h2>
@@ -371,8 +371,8 @@
           </div>
         </div>
         <div class="spec-modal-pane-wrap">
-          <textarea id="spec-modal-body" class="spec-modal-textarea" rows="12" placeholder="Detailed specification, context, requirements, and acceptance criteria… (Markdown)"></textarea>
-          <div id="spec-modal-preview" class="prose spec-modal-preview" hidden></div>
+          <textarea id="spec-modal-body" class="spec-modal-textarea" rows="12" aria-label="Specification body" placeholder="Detailed specification, context, requirements, and acceptance criteria… (Markdown)"></textarea>
+          <div id="spec-modal-preview" class="prose spec-modal-preview" role="tabpanel" aria-labelledby="spec-tab-preview" hidden></div>
         </div>
       </div>
     </div>
@@ -548,7 +548,7 @@
   </div>
 </dialog>
 
-<div id="toast" class="toast" hidden></div>
+<div id="toast" class="toast" popover="manual" hidden></div>
 <div id="toast-announcer" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></div>
 
 <footer><span id="snapshot"></span><span id="update-footer" class="update-footer"></span><span id="live-status">● Live viewer</span></footer>

@@ -892,6 +892,10 @@ function bindDialogLightDismiss() {
         onClose();
       }
     });
+    dlg.addEventListener('cancel', function (e) {
+      if (e && typeof e.preventDefault === 'function') e.preventDefault();
+      onClose();
+    });
     dlg.addEventListener('close', function () {
       if (lastNonDialogFocus && lastNonDialogFocus.isConnected && typeof lastNonDialogFocus.focus === 'function') {
         try { lastNonDialogFocus.focus(); } catch (_) {}
