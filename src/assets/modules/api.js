@@ -37,6 +37,19 @@ export function fetchItemLog(id) {
   return fetch(BASE + 'items/' + encodeURIComponent(id) + '/log');
 }
 
+export function fetchWorktree(id) {
+  return fetch(BASE + 'items/' + encodeURIComponent(id) + '/worktree', { cache: 'no-cache' });
+}
+
+export function deleteWorktree(id) {
+  return fetch(BASE + 'items/' + encodeURIComponent(id) + '/worktree', {
+    method: 'DELETE',
+    headers: {
+      'X-Pin-Action': 'true'
+    }
+  });
+}
+
 export function ensureActionOk(res) {
   if (res && typeof res.ok === 'boolean' && !res.ok) {
     var parseBody = typeof res.json === 'function'
@@ -117,6 +130,17 @@ export function sendCancel(id) {
 
 export function createItem(payload) {
   return fetch(BASE + 'items', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Pin-Action': 'true'
+    },
+    body: JSON.stringify(payload)
+  });
+}
+
+export function updateItem(id, payload) {
+  return fetch(BASE + 'items/' + encodeURIComponent(id) + '/edit', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

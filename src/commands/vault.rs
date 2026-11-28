@@ -258,6 +258,19 @@ pub fn transfer(args: &[String], command: &str, vault_path: &Path) -> CliResult<
             return Err(CliError::usage("Source directory not found"));
         }
 
+        fs::create_dir_all(&vault_path)
+            .map_err(|e| CliError::usage(format!("Failed to create vault directory: {e}")))?;
+
+        if let (Ok(src_canon), Ok(dst_canon)) =
+            (fs::canonicalize(target_dir), fs::canonicalize(vault_path))
+        {
+            if src_canon == dst_canon {
+                return Err(CliError::usage(
+                    "Source and destination directories are the same",
+                ));
+            }
+        }
+
         let entries = fs::read_dir(target_dir)
             .map_err(|e| CliError::usage(format!("Failed to read source directory: {e}")))?;
 
@@ -273,6 +286,9 @@ pub fn transfer(args: &[String], command: &str, vault_path: &Path) -> CliResult<
                     .and_then(|s| s.to_str())
                     .unwrap_or("")
                     .to_string();
+                if filename.starts_with('.') {
+                    continue;
+                }
                 let content = fs::read_to_string(&path).map_err(|_| {
                     CliError::usage(format!("'{filename}' is not a valid pin file"))
                 })?;
@@ -286,23 +302,22 @@ pub fn transfer(args: &[String], command: &str, vault_path: &Path) -> CliResult<
                         "'{filename}' is not a valid pin file"
                     )));
                 }
-                valid_entries.push((path, filename));
+                valid_entries.push((filename, content));
             }
         }
 
-        fs::create_dir_all(&vault_path)
-            .map_err(|e| CliError::usage(format!("Failed to create vault directory: {e}")))?;
-
         let (mut copied, mut skipped) = (0, 0);
-        for (src_path, filename) in valid_entries {
+        for (filename, content) in valid_entries {
             let dest_path = vault_path.join(&filename);
             if dest_path.exists() && !force {
                 skipped += 1;
                 continue;
             }
-            if fs::copy(&src_path, &dest_path).is_ok() {
-                copied += 1;
-            }
+            let _lock = crate::workflow::FileLock::acquire(vault_path, &filename)
+                .map_err(|e| CliError::usage(e.to_string()))?;
+            crate::vault::atomic_write(&dest_path, &content)
+                .map_err(|e| CliError::usage(format!("Failed to import '{filename}': {e}")))?;
+            copied += 1;
         }
 
         let fmt = format.unwrap_or_else(|| default_format(OutputFormat::Plain));
@@ -326,21 +341,35 @@ pub fn transfer(args: &[String], command: &str, vault_path: &Path) -> CliResult<
         fs::create_dir_all(target_dir)
             .map_err(|e| CliError::usage(format!("Failed to create export directory: {e}")))?;
 
+        if let (Ok(src_canon), Ok(dst_canon)) =
+            (fs::canonicalize(vault_path), fs::canonicalize(target_dir))
+        {
+            if src_canon == dst_canon {
+                return Err(CliError::usage(
+                    "Source and destination directories are the same",
+                ));
+            }
+        }
+
         let (mut copied, mut skipped) = (0, 0);
         if let Ok(entries) = fs::read_dir(&vault_path) {
             for entry in entries.flatten() {
                 let src_path = entry.path();
                 if src_path.is_file() && src_path.extension().and_then(|s| s.to_str()) == Some("md")
                 {
-                    if let Some(filename) = src_path.file_name() {
+                    if let Some(filename) = src_path.file_name().and_then(|s| s.to_str()) {
+                        if filename.starts_with('.') {
+                            continue;
+                        }
                         let dest_path = target_dir.join(filename);
                         if dest_path.exists() && !force {
                             skipped += 1;
                             continue;
                         }
-                        if fs::copy(&src_path, &dest_path).is_ok() {
-                            copied += 1;
-                        }
+                        fs::copy(&src_path, &dest_path).map_err(|e| {
+                            CliError::usage(format!("Failed to export '{filename}': {e}"))
+                        })?;
+                        copied += 1;
                     }
                 }
             }

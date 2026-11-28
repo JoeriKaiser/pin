@@ -66,17 +66,13 @@ pub fn calculate_search_score(meta: &IdeaMeta, query: &str) -> Option<usize> {
 
 pub fn sort_search_results(ideas: &mut [IdeaMeta]) {
     ideas.sort_by(|a, b| {
-        let score_cmp = b.score.unwrap_or(0).cmp(&a.score.unwrap_or(0));
-        if score_cmp != std::cmp::Ordering::Equal {
-            return score_cmp;
-        }
-
-        let prio_cmp = b.priority_rank().cmp(&a.priority_rank());
-        if prio_cmp != std::cmp::Ordering::Equal {
-            return prio_cmp;
-        }
-
-        b.timestamp.cmp(&a.timestamp)
+        b.score
+            .unwrap_or(0)
+            .cmp(&a.score.unwrap_or(0))
+            .then_with(|| b.priority_rank().cmp(&a.priority_rank()))
+            .then_with(|| b.timestamp.cmp(&a.timestamp))
+            .then_with(|| b.created_at_ns.cmp(&a.created_at_ns))
+            .then_with(|| a.id.cmp(&b.id))
     });
 }
 

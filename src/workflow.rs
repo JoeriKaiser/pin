@@ -283,7 +283,8 @@ pub fn claim_item(
     let from_status = meta.current_status();
     meta.status = Some(Status::InProgress);
     meta.claimed_by = Some(actor.to_string());
-    meta.claim_expires_at = Some(now + (lease_seconds as i64));
+    let lease_i64 = i64::try_from(lease_seconds).unwrap_or(i64::MAX);
+    meta.claim_expires_at = Some(now.saturating_add(lease_i64));
 
     meta.activity.push(ActivityEvent {
         at: now,
@@ -1126,10 +1127,11 @@ pub fn next_ready_items_filtered(
                 }
             }
             if let Some(parent) = parent_id {
-                let matches_parent = item
-                    .parent_id
-                    .as_deref()
-                    .is_some_and(|p| p == parent || p.starts_with(parent));
+                let norm = parent.trim().trim_end_matches(".md").to_ascii_lowercase();
+                let matches_parent = item.parent_id.as_deref().is_some_and(|p| {
+                    let pl = p.to_ascii_lowercase();
+                    pl == norm || pl.starts_with(&norm)
+                });
                 if !matches_parent {
                     return false;
                 }
@@ -1153,6 +1155,8 @@ pub fn next_ready_items_filtered(
         b.priority_rank()
             .cmp(&a.priority_rank())
             .then_with(|| a.timestamp.cmp(&b.timestamp))
+            .then_with(|| a.created_at_ns.cmp(&b.created_at_ns))
+            .then_with(|| a.id.cmp(&b.id))
     });
 
     if ready.len() > limit {

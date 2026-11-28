@@ -35,10 +35,10 @@ pub fn print_usage() {
          [--priority low|medium|high] [--allow-duplicate] [--format json|plain]\n  \
          list [--project <name>] [--tag <name>] [--kind <kind>] [--type <type>]\n       \
          [--status <status>] [--claimed-by <actor>] [--parent <id>] [--ready]\n       \
-         [--archived|--all] [--format json|table|plain]\n  \
+         [--limit <n>] [--archived|--all] [--format json|table|plain]\n  \
          list-project [--tag <name>] [--kind <kind>] [--type <type>]\n               \
-         [--status <status>] [--claimed-by <actor>] [--parent <id>] [--ready] [--archived|--all]\n               \
-         [--format json|table|plain]\n  \
+         [--status <status>] [--claimed-by <actor>] [--parent <id>] [--ready] [--limit <n>]\n               \
+         [--archived|--all] [--format json|table|plain]\n  \
          search <query> [--project <name>] [--tag <name>] [--kind <kind>]\n                 \
          [--type <type>] [--status <status>] [--claimed-by <actor>] [--parent <id>] [--ready]\n                 \
          [--limit <n>] [--archived|--all] [--format json|table|plain]\n  \

@@ -200,6 +200,7 @@ export function closeAgentDrawer() {
 }
 
 function cacheTrajectory(itemId) {
+  flushPendingMarkdown();
   if (!itemId || !state.trajectory) return;
   state.trajectoryCache = state.trajectoryCache || {};
   state.trajectoryCache[itemId] = {
@@ -207,12 +208,6 @@ function cacheTrajectory(itemId) {
     turnsText: els.metricTurns ? els.metricTurns.textContent : '', callsText: els.metricCalls ? els.metricCalls.textContent : '',
     statusText: els.agentStatusPill ? els.agentStatusPill.textContent : '', statusClass: els.agentStatusPill ? els.agentStatusPill.className : ''
   };
-}
-
-var scheduleTimer = null;
-function scheduleCacheTrajectory(itemId) {
-  clearTimeout(scheduleTimer);
-  scheduleTimer = setTimeout(function () { cacheTrajectory(itemId); }, 200);
 }
 
 function createTrajectory(timingStart, now) {
@@ -225,7 +220,45 @@ function createTrajectory(timingStart, now) {
   };
 }
 
+var pendingMdRaf = null;
+var pendingMdTarget = null;
+var pendingMdRaw = '';
+
+function flushPendingMarkdown() {
+  if (pendingMdRaf !== null && typeof cancelAnimationFrame === 'function') {
+    cancelAnimationFrame(pendingMdRaf);
+  }
+  pendingMdRaf = null;
+  if (pendingMdTarget) {
+    var target = pendingMdTarget;
+    var raw = pendingMdRaw;
+    pendingMdTarget = null;
+    pendingMdRaw = '';
+    renderMarkdownSnippet(raw, target);
+    scrollTrajectoryStreamToBottom();
+  }
+}
+
+function scheduleMarkdownRender(raw, targetEl) {
+  if (typeof requestAnimationFrame !== 'function' || raw.length < 256) {
+    renderMarkdownSnippet(raw, targetEl);
+    return;
+  }
+  if (pendingMdTarget && pendingMdTarget !== targetEl) {
+    flushPendingMarkdown();
+  }
+  pendingMdTarget = targetEl;
+  pendingMdRaw = raw;
+  if (pendingMdRaf === null) {
+    pendingMdRaf = requestAnimationFrame(function () {
+      pendingMdRaf = null;
+      flushPendingMarkdown();
+    });
+  }
+}
+
 function resetActiveAssistantRow() {
+  flushPendingMarkdown();
   if (!state.trajectory) return;
   state.trajectory.activeAssistantRow = null;
   state.trajectory.activeAssistantTextEl = null;
@@ -351,7 +384,6 @@ export function openAgentDrawer(itemId) {
       }
       receivedEvents++;
       handleAgentStreamEvent(data);
-      scheduleCacheTrajectory(itemId);
     } catch (err) {
       console.error('Error parsing SSE event:', err);
     }
@@ -359,6 +391,10 @@ export function openAgentDrawer(itemId) {
 
   source.onerror = function () {
     if (state.activeRuns.has(itemId)) return;
+    if (state.currentStreamingId !== itemId) {
+      source.close();
+      return;
+    }
     updateDurationDisplay();
     if (els.agentStatusPill && els.agentStatusPill.textContent === 'Running') {
       setStatusPill('Completed', 'status-completed');
@@ -370,6 +406,7 @@ export function openAgentDrawer(itemId) {
     if (state.currentStream === source) state.currentStream = null;
     if (receivedEvents === 0) {
       fetchItemLog(itemId).then(function (res) {
+        if (state.currentStreamingId !== itemId) return;
         if (res.status === 200) {
           var link = node('span', '', 'Log available: '), a = node('a', '', '.pin_vault/runs/' + itemId + '.log');
           a.href = BASE + 'items/' + encodeURIComponent(itemId) + '/log'; a.target = '_blank'; a.rel = 'noopener';
@@ -551,7 +588,7 @@ export function handleAgentStreamEvent(data) {
     if (cleaned && state.trajectory.activeAssistantTextEl) {
       if (isMessage) {
         state.trajectory.activeAssistantRaw = (state.trajectory.activeAssistantRaw || '') + cleaned;
-        renderMarkdownSnippet(state.trajectory.activeAssistantRaw, state.trajectory.activeAssistantTextEl);
+        scheduleMarkdownRender(state.trajectory.activeAssistantRaw, state.trajectory.activeAssistantTextEl);
       } else {
         var aNodes = state.trajectory.activeAssistantTextEl.childNodes || state.trajectory.activeAssistantTextEl.children;
         var aLast = aNodes && aNodes.length > 0 ? aNodes[aNodes.length - 1] : null;
@@ -701,10 +738,35 @@ export function formatToolCallInline(update) {
   return { name: name, argsStr: argsStr, previewStr: prevStr, status: st };
 }
 
-export function openToolInspector(callId) {
+var lastInspectorTrigger = null;
+
+function syncInspectorNavButtons(callId) {
+  if (!state.trajectory || !state.trajectory.toolCalls) return;
+  var ids = Object.keys(state.trajectory.toolCalls);
+  var idx = ids.indexOf(callId);
+  if (els.btnInspectorPrev) els.btnInspectorPrev.disabled = idx <= 0;
+  if (els.btnInspectorNext) els.btnInspectorNext.disabled = idx < 0 || idx >= ids.length - 1;
+}
+
+export function stepToolInspector(delta) {
+  if (!els.toolInspector || els.toolInspector.hidden || !state.trajectory || !state.trajectory.toolCalls) return;
+  var ids = Object.keys(state.trajectory.toolCalls);
+  var cur = els.toolInspector.dataset.activeCallId;
+  var idx = ids.indexOf(cur);
+  if (idx < 0) return;
+  var next = idx + delta;
+  if (next >= 0 && next < ids.length) {
+    openToolInspector(ids[next], true);
+  }
+}
+
+export function openToolInspector(callId, preserveTrigger) {
   if (!els.toolInspector || !state.trajectory) return;
   var rec = state.trajectory.toolCalls[callId];
   if (!rec) return;
+  if (!preserveTrigger && typeof document !== 'undefined' && document.activeElement) {
+    lastInspectorTrigger = document.activeElement;
+  }
   els.toolInspector.dataset.activeCallId = callId;
   els.toolInspector.hidden = false;
   if (els.inspectorTitle) text(els.inspectorTitle, rec.name || 'Tool Call');
@@ -714,10 +776,18 @@ export function openToolInspector(callId) {
   }
   if (els.inspectorArgs) text(els.inspectorArgs, typeof rec.rawInput === 'object' && rec.rawInput ? JSON.stringify(rec.rawInput, null, 2) : String(rec.rawInput || ''));
   if (els.inspectorOutput) text(els.inspectorOutput, typeof rec.rawOutput === 'object' && rec.rawOutput ? JSON.stringify(rec.rawOutput, null, 2) : stripAnsi(String(rec.rawOutput || '')));
+  syncInspectorNavButtons(callId);
+  if (!preserveTrigger && els.btnCloseInspector && typeof els.btnCloseInspector.focus === 'function') {
+    try { els.btnCloseInspector.focus(); } catch (_) {}
+  }
 }
 
 export function closeToolInspector() {
   if (els.toolInspector) { els.toolInspector.hidden = true; delete els.toolInspector.dataset.activeCallId; }
+  if (lastInspectorTrigger && lastInspectorTrigger.isConnected && typeof lastInspectorTrigger.focus === 'function') {
+    try { lastInspectorTrigger.focus(); } catch (_) {}
+  }
+  lastInspectorTrigger = null;
 }
 
 var copyFeedbackTimer = null;

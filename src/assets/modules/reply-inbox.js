@@ -89,13 +89,22 @@ function updateWaitingDurationLabel() {
   text(els.replyModalWaiting, since ? ('Waiting ' + formatDuration(since)) : 'Waiting for reply');
 }
 
+var replySubmitting = false;
+
 function setReplySubmitting(submitting) {
-  if (els.replyModalInput) els.replyModalInput.disabled = submitting;
+  replySubmitting = !!submitting;
+  if (els.replyModalInput) els.replyModalInput.disabled = replySubmitting;
   if (els.btnReplySend) {
-    els.btnReplySend.disabled = submitting;
-    text(els.btnReplySend, submitting ? 'Sending…' : 'Send reply');
+    els.btnReplySend.disabled = replySubmitting;
+    text(els.btnReplySend, replySubmitting ? 'Sending…' : 'Send reply');
   }
-  if (els.btnReplyFinish) els.btnReplyFinish.disabled = submitting;
+  if (els.btnReplyFinish) els.btnReplyFinish.disabled = replySubmitting;
+  if (els.replyModalQueue && els.replyModalQueue.querySelectorAll) {
+    var pills = els.replyModalQueue.querySelectorAll('.reply-queue-pill');
+    for (var i = 0; i < pills.length; i++) {
+      pills[i].disabled = replySubmitting;
+    }
+  }
 }
 
 function renderReplyQueue(waitingRuns) {
@@ -124,6 +133,7 @@ function renderReplyQueue(waitingRuns) {
     btn.appendChild(node('span', 'reply-queue-num', String(idx + 1)));
     btn.appendChild(node('span', 'reply-queue-label', label));
     btn.addEventListener('click', function () {
+      if (replySubmitting) return;
       saveCurrentDraft();
       renderReplyModalForItem(run.item_id);
     });

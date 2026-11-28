@@ -159,6 +159,9 @@ export function connectEvents() {
           handleGlobalWaitingEvent(msg);
           updateActiveRuns();
         } else if (msg.type === 'run_started' || msg.type === 'run_finished') {
+          if (msg.id && state.trajectoryCache) {
+            delete state.trajectoryCache[msg.id];
+          }
           if (msg.type === 'run_finished' && msg.id && msg.pr_url) {
             var itm = find(msg.id);
             if (itm) {

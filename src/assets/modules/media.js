@@ -58,6 +58,32 @@ export function uploadScreenshot(file) {
   });
 }
 
+function notifyInput(textarea) {
+  if (!textarea || typeof textarea.dispatchEvent !== 'function') return;
+  try {
+    if (typeof Event === 'function') {
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  } catch (_) {}
+}
+
+function replacePlaceholderPreservingSelection(textarea, placeholder, replacement) {
+  var val = textarea.value;
+  var idx = val.indexOf(placeholder);
+  if (idx === -1) return false;
+  var selStart = typeof textarea.selectionStart === 'number' ? textarea.selectionStart : val.length;
+  var selEnd = typeof textarea.selectionEnd === 'number' ? textarea.selectionEnd : selStart;
+  var delta = replacement.length - placeholder.length;
+  var phEnd = idx + placeholder.length;
+  textarea.value = val.slice(0, idx) + replacement + val.slice(phEnd);
+  var nextStart = selStart >= phEnd ? selStart + delta : (selStart > idx ? idx + replacement.length : selStart);
+  var nextEnd = selEnd >= phEnd ? selEnd + delta : (selEnd > idx ? idx + replacement.length : selEnd);
+  textarea.selectionStart = Math.max(0, nextStart);
+  textarea.selectionEnd = Math.max(0, nextEnd);
+  notifyInput(textarea);
+  return true;
+}
+
 export function handleScreenshotPaste(e, textareaOverride) {
   var images = getClipboardImages(e);
   if (!images.length) return false;
@@ -77,21 +103,19 @@ export function handleScreenshotPaste(e, textareaOverride) {
     (function (img, idx) {
       var placeholder = '![Uploading screenshot' + (images.length > 1 ? (' ' + (idx + 1)) : '') + '...]()';
       insertSnippetIntoTextarea(targetTa, placeholder);
+      notifyInput(targetTa);
 
       uploadScreenshot(img)
         .then(function (res) {
           var md = (res && res.markdown) || ('![screenshot](' + (res && res.path ? res.path : '') + ')');
-          if (targetTa.value.indexOf(placeholder) !== -1) {
-            targetTa.value = targetTa.value.replace(placeholder, md);
-          } else {
+          if (!replacePlaceholderPreservingSelection(targetTa, placeholder, md)) {
             insertSnippetIntoTextarea(targetTa, md);
+            notifyInput(targetTa);
           }
           showToast('Screenshot pasted', false);
         })
         .catch(function (err) {
-          if (targetTa.value.indexOf(placeholder) !== -1) {
-            targetTa.value = targetTa.value.replace(placeholder, '');
-          }
+          replacePlaceholderPreservingSelection(targetTa, placeholder, '');
           showToast(err.message || 'Failed to paste screenshot', true);
         });
     })(images[i], i);

@@ -1,6 +1,6 @@
 import { state, find } from './state.js';
 import { els, $ } from './dom.js';
-import { createItem, sendAction, ensureActionOk, fetchData } from './api.js';
+import { createItem, updateItem, sendAction, ensureActionOk, fetchData } from './api.js';
 import { text, clear, node, showToast, showDialogError } from './formatters.js';
 import { PURIFY_CONFIG, markedRenderer, sanitizeHtml } from './markdown.js';
 import { setRoute } from './router.js';
@@ -75,9 +75,13 @@ export function expandQuickAdd(focusTarget, defaultType) {
 }
 
 export function collapseQuickAdd() {
+  var hadFocus = typeof document !== 'undefined' && document.activeElement && els.quickAddForm && els.quickAddForm.contains && els.quickAddForm.contains(document.activeElement);
   if (els.quickAddForm) els.quickAddForm.hidden = true;
   if (els.quickAddTrigger) els.quickAddTrigger.hidden = false;
   if (els.quickIdeaTrigger) els.quickIdeaTrigger.hidden = false;
+  if (hadFocus && els.quickAddTrigger && typeof els.quickAddTrigger.focus === 'function') {
+    try { els.quickAddTrigger.focus(); } catch (_) {}
+  }
 }
 
 export function resetQuickAdd() {
@@ -214,16 +218,63 @@ export function setSpecModalTab(tab) {
   }
 }
 
+var SPEC_DRAFT_KEY = 'pin-spec-draft';
+var specDraftMemory = null;
+var editingSpecItem = null;
+
+function saveSpecDraft() {
+  var fields = collectTicketFields('spec-modal');
+  var hasContent = !!(fields.title || fields.body || fields.tags);
+  specDraftMemory = hasContent ? fields : null;
+  try {
+    if (typeof sessionStorage === 'undefined' || !sessionStorage || typeof sessionStorage.setItem !== 'function') return;
+    if (hasContent) {
+      sessionStorage.setItem(SPEC_DRAFT_KEY, JSON.stringify(fields));
+    } else if (typeof sessionStorage.removeItem === 'function') {
+      sessionStorage.removeItem(SPEC_DRAFT_KEY);
+    }
+  } catch (_) {}
+}
+
+function loadSpecDraft() {
+  try {
+    if (typeof sessionStorage !== 'undefined' && sessionStorage && typeof sessionStorage.getItem === 'function') {
+      var raw = sessionStorage.getItem(SPEC_DRAFT_KEY);
+      if (raw) {
+        var parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') return parsed;
+      }
+    }
+  } catch (_) {}
+  return specDraftMemory;
+}
+
+export function clearSpecDraft() {
+  specDraftMemory = null;
+  try {
+    if (typeof sessionStorage !== 'undefined' && sessionStorage && typeof sessionStorage.removeItem === 'function') {
+      sessionStorage.removeItem(SPEC_DRAFT_KEY);
+    }
+  } catch (_) {}
+}
+
 export function openSpecModal(initial) {
-  initial = initial || {};
+  editingSpecItem = (initial && initial._editItem) ? initial._editItem : null;
+  var src = (initial !== undefined && initial !== null) ? initial : (loadSpecDraft() || {});
   var activeProject = (state.scope && state.scope !== 'all') ? state.scope : '';
-  if (els.specModalTitle) els.specModalTitle.value = initial.title || '';
-  if (els.specModalBody) els.specModalBody.value = initial.body || '';
-  if (els.specModalType) els.specModalType.value = initial.type || 'task';
-  if (els.specModalKind) els.specModalKind.value = initial.kind || 'technical';
-  if (els.specModalPriority) els.specModalPriority.value = initial.priority || '';
-  if (els.specModalTags) els.specModalTags.value = initial.tags || '';
-  if (els.specModalProject) els.specModalProject.value = initial.project || activeProject;
+  if (els.specModalTitle) els.specModalTitle.value = src.title || '';
+  if (els.specModalBody) els.specModalBody.value = src.body || '';
+  if (els.specModalType) els.specModalType.value = src.type || 'task';
+  if (els.specModalKind) els.specModalKind.value = src.kind || 'technical';
+  if (els.specModalPriority) els.specModalPriority.value = src.priority || '';
+  if (els.specModalTags) els.specModalTags.value = src.tags || '';
+  if (els.specModalProject) {
+    els.specModalProject.value = src.project || activeProject;
+    els.specModalProject.disabled = !!editingSpecItem;
+  }
+  var heading = $('spec-modal-title-heading');
+  if (heading) text(heading, editingSpecItem ? 'Edit item' : 'New task');
+  if (els.specModalSubmitBtn) text(els.specModalSubmitBtn, editingSpecItem ? 'Save changes' : 'Create task');
 
   setSpecModalTab('write');
   showSpecModalError('');
@@ -236,14 +287,24 @@ export function openSpecModal(initial) {
     }
   }
 
-  if (initial.title && els.specModalBody && els.specModalBody.focus) {
+  if (src.title && els.specModalBody && els.specModalBody.focus) {
     els.specModalBody.focus();
   } else if (els.specModalTitle && els.specModalTitle.focus) {
     els.specModalTitle.focus();
   }
 }
 
-export function closeSpecModal() {
+export function closeSpecModal(discardDraft) {
+  var wasEditing = !!editingSpecItem;
+  editingSpecItem = null;
+  if (els.specModalProject) els.specModalProject.disabled = false;
+  if (!wasEditing) {
+    if (discardDraft === true) {
+      clearSpecDraft();
+    } else {
+      saveSpecDraft();
+    }
+  }
   showSpecModalError('');
   if (els.specModal) {
     if (els.specModal.close) {
@@ -261,17 +322,21 @@ function setSpecModalDisabled(disabled) {
   if (els.specModalKind) els.specModalKind.disabled = disabled;
   if (els.specModalPriority) els.specModalPriority.disabled = disabled;
   if (els.specModalTags) els.specModalTags.disabled = disabled;
-  if (els.specModalProject) els.specModalProject.disabled = disabled;
+  if (els.specModalProject) els.specModalProject.disabled = disabled || !!editingSpecItem;
   if (els.specModalSubmitBtn) {
     els.specModalSubmitBtn.disabled = disabled;
-    text(els.specModalSubmitBtn, disabled ? 'Creating…' : 'Create task');
+    if (editingSpecItem) {
+      text(els.specModalSubmitBtn, disabled ? 'Saving…' : 'Save changes');
+    } else {
+      text(els.specModalSubmitBtn, disabled ? 'Creating…' : 'Create task');
+    }
   }
 }
 
 export function submitSpecModal() {
   var fields = collectTicketFields('spec-modal');
   if (!fields.title) {
-    showSpecModalError('Enter a title before creating the task.');
+    showSpecModalError(editingSpecItem ? 'Enter a title before saving.' : 'Enter a title before creating the task.');
     setFieldInvalid(els.specModalTitle, 'spec-modal-error');
     if (els.specModalTitle) els.specModalTitle.focus();
     return;
@@ -279,6 +344,38 @@ export function submitSpecModal() {
 
   showSpecModalError('');
   setSpecModalDisabled(true);
+
+  if (editingSpecItem) {
+    var editTarget = editingSpecItem;
+    updateItem(editTarget.id, {
+      title: fields.title,
+      body: fields.body || '',
+      type: fields.type,
+      kind: fields.kind,
+      priority: fields.priority || '',
+      tags: fields.tags || '',
+      expect_revision: editTarget.revision
+    })
+    .then(function (res) {
+      if (res && typeof res.ok === 'boolean' && !res.ok) {
+        return res.json().catch(function () { return {}; }).then(function (d) {
+          throw new Error((d && d.error) || ('Failed to save changes (' + res.status + ')'));
+        });
+      }
+      return res && typeof res.json === 'function' ? res.json() : res;
+    })
+    .then(function () {
+      setSpecModalDisabled(false);
+      closeSpecModal(true);
+      showToast('Saved changes to ' + fields.title, false);
+      callbacks.refreshData();
+    })
+    .catch(function (err) {
+      setSpecModalDisabled(false);
+      showSpecModalError(err.message || 'Failed to save changes');
+    });
+    return;
+  }
 
   createItem({
     title: fields.title,
@@ -300,7 +397,7 @@ export function submitSpecModal() {
   })
   .then(function (newItem) {
     setSpecModalDisabled(false);
-    closeSpecModal();
+    closeSpecModal(true);
     showToast('Created ' + (newItem && newItem.type ? newItem.type : 'task') + ': ' + ((newItem && newItem.title) || fields.title), false);
     if (newItem && newItem.id && !find(newItem.id)) {
       state.items.unshift(newItem);

@@ -181,8 +181,13 @@ export function applyRunnerSettings(settings) {
   }
 
   if (dialogOpen()) {
-    if (els.runnerCommandInput) els.runnerCommandInput.value = runner.command;
-    if (els.runnerActorInput) els.runnerActorInput.value = runner.actor;
+    var active = typeof document !== 'undefined' ? document.activeElement : null;
+    if (els.runnerCommandInput && active !== els.runnerCommandInput) {
+      els.runnerCommandInput.value = runner.command;
+    }
+    if (els.runnerActorInput && active !== els.runnerActorInput) {
+      els.runnerActorInput.value = runner.actor;
+    }
     renderRunnerHarness();
     renderRunnerModelList();
     if (runner.command && !runner.modelsLoaded && !runner.loadingModels) {

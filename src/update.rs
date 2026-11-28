@@ -39,9 +39,25 @@ impl SemVer {
     }
 }
 
+fn has_prerelease_tag(s: &str) -> bool {
+    let trimmed = s.trim();
+    let cleaned = trimmed
+        .strip_prefix('v')
+        .or_else(|| trimmed.strip_prefix('V'))
+        .unwrap_or(trimmed);
+    let before_build = cleaned.split('+').next().unwrap_or(cleaned);
+    before_build.contains('-')
+}
+
 pub fn is_version_newer(latest: &str, current: &str) -> bool {
     match (SemVer::parse(latest), SemVer::parse(current)) {
-        (Some(l), Some(c)) => l.is_newer_than(&c),
+        (Some(l), Some(c)) => {
+            if l != c {
+                l.is_newer_than(&c)
+            } else {
+                !has_prerelease_tag(latest) && has_prerelease_tag(current)
+            }
+        }
         _ => false,
     }
 }
@@ -257,9 +273,10 @@ pub fn fetch_text(url: &str) -> Result<String, String> {
         Err(e) => {
             #[cfg(windows)]
             {
+                let escaped_url = url.replace('\'', "''");
                 let ps_cmd = format!(
                     "(Invoke-WebRequest -UseBasicParsing -Uri '{}').Content",
-                    url
+                    escaped_url
                 );
                 if let Ok(out) = Command::new("powershell")
                     .args(["-NoProfile", "-Command", &ps_cmd])
@@ -300,9 +317,11 @@ pub fn download_file(url: &str, dest_path: &Path) -> Result<(), String> {
         Err(e) => {
             #[cfg(windows)]
             {
+                let escaped_url = url.replace('\'', "''");
+                let escaped_dest = dest_str.replace('\'', "''");
                 let ps_cmd = format!(
                     "Invoke-WebRequest -UseBasicParsing -Uri '{}' -OutFile '{}'",
-                    url, dest_str
+                    escaped_url, escaped_dest
                 );
                 if let Ok(out) = Command::new("powershell")
                     .args(["-NoProfile", "-Command", &ps_cmd])
@@ -539,6 +558,19 @@ pub fn install_update_with_check(
             check.latest_version
         ),
     })
+}
+
+/// Records a negative cache entry after a failed background check so offline
+/// terminals do not spawn `curl` on every CLI command.
+pub fn record_failed_check_backoff() {
+    let _ = write_cache(&UpdateCache {
+        checked_at: now_timestamp(),
+        latest_version: CURRENT_VERSION.to_string(),
+        current_version: CURRENT_VERSION.to_string(),
+        update_available: false,
+        release_name: None,
+        html_url: None,
+    });
 }
 
 pub fn check_and_notify_update_in_terminal() {

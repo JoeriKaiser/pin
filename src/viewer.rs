@@ -80,6 +80,13 @@ impl ViewerBroadcaster {
             subs.retain(|tx| tx.send(event.clone()).is_ok());
         }
     }
+
+    pub fn has_subscribers(&self) -> bool {
+        self.subscribers
+            .lock()
+            .map(|subs| !subs.is_empty())
+            .unwrap_or(false)
+    }
 }
 
 pub struct ViewSnapshot {
@@ -141,6 +148,24 @@ struct ActionPayload {
         alias = "target_id"
     )]
     target: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct EditItemPayload {
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    body: Option<String>,
+    #[serde(default, rename = "type")]
+    item_type: Option<String>,
+    #[serde(default)]
+    kind: Option<String>,
+    #[serde(default)]
+    priority: Option<String>,
+    #[serde(default)]
+    tags: Option<String>,
+    #[serde(default)]
+    expect_revision: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -1154,6 +1179,237 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
         }
 
         if let Some(stripped) = subpath.strip_prefix("items/") {
+            if let Some(id_part) = stripped.strip_suffix("/edit") {
+                let id = id_part.trim();
+                if !is_valid_csrf(origin_header.as_deref(), port, has_pin_action_header) {
+                    send_forbidden(&mut stream);
+                    return;
+                }
+                let mut body_bytes = vec![0u8; content_length];
+                if content_length > 0 && reader.read_exact(&mut body_bytes).is_err() {
+                    send_response(
+                        &mut stream,
+                        400,
+                        "Bad Request",
+                        "application/json; charset=utf-8",
+                        b"{\"error\":\"Failed to read body\"}",
+                        false,
+                        true,
+                        None,
+                    );
+                    return;
+                }
+                let payload: EditItemPayload = match serde_json::from_slice(&body_bytes) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        let msg = json_error_bytes(format!("Invalid JSON: {e}"));
+                        send_response(
+                            &mut stream,
+                            400,
+                            "Bad Request",
+                            "application/json; charset=utf-8",
+                            &msg,
+                            false,
+                            true,
+                            None,
+                        );
+                        return;
+                    }
+                };
+                let filename = match resolve_selector(&snapshot.vault_path, id) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        let msg = json_error_bytes(e.to_string());
+                        send_response(
+                            &mut stream,
+                            404,
+                            "Not Found",
+                            "application/json; charset=utf-8",
+                            &msg,
+                            false,
+                            true,
+                            None,
+                        );
+                        return;
+                    }
+                };
+                let _lock = match workflow::FileLock::acquire(&snapshot.vault_path, &filename) {
+                    Ok(l) => l,
+                    Err(e) => {
+                        let msg = json_error_bytes(e.to_string());
+                        send_response(
+                            &mut stream,
+                            409,
+                            "Conflict",
+                            "application/json; charset=utf-8",
+                            &msg,
+                            false,
+                            true,
+                            None,
+                        );
+                        return;
+                    }
+                };
+                let path = snapshot.vault_path.join(&filename);
+                let original = match std::fs::read_to_string(&path) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        let msg = json_error_bytes(format!("Could not read item: {e}"));
+                        send_response(
+                            &mut stream,
+                            500,
+                            "Internal Server Error",
+                            "application/json; charset=utf-8",
+                            &msg,
+                            false,
+                            true,
+                            None,
+                        );
+                        return;
+                    }
+                };
+                let mut issues = Vec::new();
+                let mut meta = match crate::frontmatter::parse_front_matter_detailed(
+                    &filename,
+                    &original,
+                    &mut issues,
+                ) {
+                    Some(m) => m,
+                    None => {
+                        send_response(
+                            &mut stream,
+                            500,
+                            "Internal Server Error",
+                            "application/json; charset=utf-8",
+                            b"{\"error\":\"Could not parse item front matter\"}",
+                            false,
+                            true,
+                            None,
+                        );
+                        return;
+                    }
+                };
+                if let Some(exp) = payload.expect_revision {
+                    let actual = meta.current_revision();
+                    if actual != exp {
+                        let msg = json_error_bytes(format!(
+                            "Revision conflict: expected {exp}, found {actual}"
+                        ));
+                        send_response(
+                            &mut stream,
+                            409,
+                            "Conflict",
+                            "application/json; charset=utf-8",
+                            &msg,
+                            false,
+                            true,
+                            None,
+                        );
+                        return;
+                    }
+                }
+                if let Some(t) = payload.title {
+                    let trimmed = crate::frontmatter::truncate_title(t.trim());
+                    if trimmed.is_empty() {
+                        send_response(
+                            &mut stream,
+                            400,
+                            "Bad Request",
+                            "application/json; charset=utf-8",
+                            b"{\"error\":\"Title cannot be empty\"}",
+                            false,
+                            true,
+                            None,
+                        );
+                        return;
+                    }
+                    meta.title = trimmed;
+                }
+                if let Some(p_str) = payload.priority {
+                    let trimmed = p_str.trim();
+                    if trimmed.is_empty() {
+                        meta.priority = None;
+                    } else if let Ok(p) = trimmed.parse::<crate::model::Priority>() {
+                        meta.priority = Some(p);
+                    } else {
+                        let msg = json_error_bytes(format!("Unknown priority '{trimmed}'"));
+                        send_response(
+                            &mut stream,
+                            400,
+                            "Bad Request",
+                            "application/json; charset=utf-8",
+                            &msg,
+                            false,
+                            true,
+                            None,
+                        );
+                        return;
+                    }
+                }
+                if let Some(k_str) = payload.kind {
+                    let trimmed = k_str.trim();
+                    if let Ok(k) = trimmed.parse::<Kind>() {
+                        if k != Kind::Unspecified {
+                            meta.kind = k;
+                        }
+                    }
+                }
+                if let Some(wt_str) = payload.item_type {
+                    if let Ok(wt) = wt_str.trim().parse::<WorkType>() {
+                        meta.item_type = Some(wt);
+                    }
+                }
+                if let Some(tags_str) = payload.tags {
+                    let trimmed = tags_str.trim();
+                    meta.tags = if trimmed.is_empty() {
+                        None
+                    } else {
+                        Some(trimmed.to_string())
+                    };
+                }
+                if let Some(mut body) = payload.body {
+                    if !body.is_empty() && !body.ends_with('\n') {
+                        body.push('\n');
+                    }
+                    meta.body = body;
+                }
+                meta.updated_at = Some(Utc::now().timestamp());
+                meta.revision = Some(meta.current_revision() + 1);
+                let new_doc = crate::frontmatter::render_full_document(&meta);
+                if let Err(e) = crate::vault::atomic_write(&path, &new_doc) {
+                    let msg = json_error_bytes(format!("Failed to save item: {e}"));
+                    send_response(
+                        &mut stream,
+                        500,
+                        "Internal Server Error",
+                        "application/json; charset=utf-8",
+                        &msg,
+                        false,
+                        true,
+                        None,
+                    );
+                    return;
+                }
+                snapshot
+                    .broadcaster
+                    .broadcast(serde_json::json!({ "type": "vault_changed" }));
+                let mut out_item = JsonIdeaOutput::from(&meta);
+                out_item.content = Some(&meta.body);
+                let resp_str =
+                    serde_json::to_string(&out_item).unwrap_or_else(|_| "{}".to_string());
+                send_response(
+                    &mut stream,
+                    200,
+                    "OK",
+                    "application/json; charset=utf-8",
+                    resp_str.as_bytes(),
+                    true,
+                    true,
+                    None,
+                );
+                return;
+            }
+
             if let Some(id_part) = stripped.strip_suffix("/action") {
                 let id = id_part.trim();
 
@@ -1726,11 +1982,23 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                 }
 
                 let payload: RunPayload = if content_length > 0 {
-                    serde_json::from_slice(&body_bytes).unwrap_or(RunPayload {
-                        use_worktree: None,
-                        mode: Some("idea".to_string()),
-                        interactive: Some(true),
-                    })
+                    match serde_json::from_slice(&body_bytes) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            let msg = json_error_bytes(format!("Invalid JSON: {e}"));
+                            send_response(
+                                &mut stream,
+                                400,
+                                "Bad Request",
+                                "application/json; charset=utf-8",
+                                &msg,
+                                false,
+                                true,
+                                None,
+                            );
+                            return;
+                        }
+                    }
                 } else {
                     RunPayload {
                         use_worktree: None,
@@ -1830,11 +2098,17 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                         return;
                     }
                     Err(err) => {
+                        let (code, reason) = match err {
+                            crate::acp::manager::AcpManagerError::ItemNotFound(_) => {
+                                (404, "Not Found")
+                            }
+                            _ => (400, "Bad Request"),
+                        };
                         let msg = json_error_bytes(err.to_string());
                         send_response(
                             &mut stream,
-                            400,
-                            "Bad Request",
+                            code,
+                            reason,
                             "application/json; charset=utf-8",
                             &msg,
                             false,
@@ -1867,11 +2141,17 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                         return;
                     }
                     Err(err) => {
+                        let (code, reason) = match err {
+                            crate::acp::manager::AcpManagerError::ItemNotFound(_) => {
+                                (404, "Not Found")
+                            }
+                            _ => (400, "Bad Request"),
+                        };
                         let msg = json_error_bytes(err.to_string());
                         send_response(
                             &mut stream,
-                            400,
-                            "Bad Request",
+                            code,
+                            reason,
                             "application/json; charset=utf-8",
                             &msg,
                             false,
@@ -1904,11 +2184,17 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                         );
                     }
                     Err(err) => {
+                        let (code, reason) = match err {
+                            crate::acp::manager::AcpManagerError::ItemNotFound(_) => {
+                                (404, "Not Found")
+                            }
+                            _ => (400, "Bad Request"),
+                        };
                         let msg = json_error_bytes(err.to_string());
                         send_response(
                             &mut stream,
-                            400,
-                            "Bad Request",
+                            code,
+                            reason,
                             "application/json; charset=utf-8",
                             &msg,
                             true,
@@ -1921,6 +2207,100 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
             }
         }
 
+        send_response(
+            &mut stream,
+            405,
+            "Method Not Allowed",
+            "text/plain; charset=utf-8",
+            b"Method Not Allowed",
+            false,
+            true,
+            None,
+        );
+        return;
+    }
+
+    if method == "DELETE" {
+        if let Some(stripped) = subpath.strip_prefix("items/") {
+            if let Some(id_part) = stripped.strip_suffix("/worktree") {
+                if !is_valid_csrf(origin_header.as_deref(), port, has_pin_action_header) {
+                    send_forbidden(&mut stream);
+                    return;
+                }
+                let id = id_part.trim();
+                if !crate::vault::validate_selector(id) {
+                    send_response(
+                        &mut stream,
+                        400,
+                        "Bad Request",
+                        "application/json; charset=utf-8",
+                        b"{\"error\":\"Invalid item selector\"}",
+                        false,
+                        true,
+                        None,
+                    );
+                    return;
+                }
+                let canonical_id = match crate::vault::resolve_selector(&snapshot.vault_path, id) {
+                    Ok(f) => f.strip_suffix(".md").unwrap_or(&f).to_string(),
+                    Err(_) => id.to_string(),
+                };
+                if snapshot.acp_manager.is_item_running(&canonical_id) {
+                    send_response(
+                        &mut stream,
+                        409,
+                        "Conflict",
+                        "application/json; charset=utf-8",
+                        b"{\"error\":\"Cannot discard worktree while agent run is active\"}",
+                        false,
+                        true,
+                        None,
+                    );
+                    return;
+                }
+                match crate::acp::worktree::WorktreeManager::remove_worktree(
+                    &snapshot.repo_path,
+                    &canonical_id,
+                ) {
+                    Ok(()) => {
+                        if let Ok(mut cache_guard) = snapshot.git_cache.lock() {
+                            *cache_guard = None;
+                        }
+                        snapshot.git_generation.fetch_add(1, Ordering::Relaxed);
+                        snapshot
+                            .broadcaster
+                            .broadcast(serde_json::json!({ "type": "git_updated" }));
+                        snapshot
+                            .broadcaster
+                            .broadcast(serde_json::json!({ "type": "vault_changed" }));
+                        send_response(
+                            &mut stream,
+                            200,
+                            "OK",
+                            "application/json; charset=utf-8",
+                            b"{\"removed\":true}",
+                            true,
+                            true,
+                            None,
+                        );
+                    }
+                    Err(e) => {
+                        let msg = json_error_bytes(format!("Failed to remove worktree: {e}"));
+                        send_response(
+                            &mut stream,
+                            500,
+                            "Internal Server Error",
+                            "application/json; charset=utf-8",
+                            &msg,
+                            false,
+                            true,
+                            None,
+                        );
+                    }
+                }
+                return;
+            }
+        }
         send_response(
             &mut stream,
             405,
@@ -2137,6 +2517,49 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
     }
 
     if let Some(stripped) = subpath.strip_prefix("items/") {
+        if let Some(id_part) = stripped.strip_suffix("/worktree") {
+            let id = id_part.trim();
+            if !crate::vault::validate_selector(id) {
+                send_response(
+                    &mut stream,
+                    400,
+                    "Bad Request",
+                    "application/json; charset=utf-8",
+                    b"{\"error\":\"Invalid item selector\"}",
+                    false,
+                    true,
+                    None,
+                );
+                return;
+            }
+            let canonical_id = match crate::vault::resolve_selector(&snapshot.vault_path, id) {
+                Ok(f) => f.strip_suffix(".md").unwrap_or(&f).to_string(),
+                Err(_) => id.to_string(),
+            };
+            let inspection = crate::acp::worktree::WorktreeManager::inspect_worktree(
+                &snapshot.repo_path,
+                &canonical_id,
+            );
+            let running = snapshot.acp_manager.is_item_running(&canonical_id);
+            let mut val =
+                serde_json::to_value(&inspection).unwrap_or_else(|_| serde_json::json!({}));
+            if let Some(obj) = val.as_object_mut() {
+                obj.insert("running".to_string(), serde_json::json!(running));
+            }
+            let payload = serde_json::to_string(&val).unwrap_or_else(|_| "{}".to_string());
+            send_response(
+                &mut stream,
+                200,
+                "OK",
+                "application/json; charset=utf-8",
+                payload.as_bytes(),
+                true,
+                method == "GET",
+                None,
+            );
+            return;
+        }
+
         if let Some(id_part) = stripped.strip_suffix("/log") {
             let id = id_part.trim();
             if !crate::vault::validate_selector(id) {
@@ -2174,13 +2597,22 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                 .join("runs")
                 .join(format!("{canonical_id}.log"));
             if log_path.is_file() {
-                if let Ok(bytes) = std::fs::read(&log_path) {
+                if let Ok(mut file) = std::fs::File::open(&log_path) {
+                    use std::io::Seek;
+                    const MAX_LOG_BYTES: u64 = 2 * 1024 * 1024;
+                    let file_len = file.metadata().map(|m| m.len()).unwrap_or(0);
+                    let mut out = Vec::new();
+                    if file_len > MAX_LOG_BYTES {
+                        let _ = file.seek(std::io::SeekFrom::End(-(MAX_LOG_BYTES as i64)));
+                        out.extend_from_slice(b"[... truncated earlier log output ...]\n");
+                    }
+                    let _ = file.read_to_end(&mut out);
                     send_response(
                         &mut stream,
                         200,
                         "OK",
                         "text/plain; charset=utf-8",
-                        &bytes,
+                        &out,
                         true,
                         method == "GET",
                         None,
@@ -2216,15 +2648,19 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
                 );
                 return;
             }
-            let timing = snapshot.acp_manager.get_run_timing(id);
+            let canonical_id = match crate::vault::resolve_selector(&snapshot.vault_path, id) {
+                Ok(f) => f.strip_suffix(".md").unwrap_or(&f).to_string(),
+                Err(_) => id.to_string(),
+            };
+            let timing = snapshot.acp_manager.get_run_timing(&canonical_id);
             let has_transcript_file = snapshot
                 .vault_path
                 .join("runs")
-                .join(format!("{id}.events.jsonl"))
+                .join(format!("{canonical_id}.events.jsonl"))
                 .is_file();
             if method == "GET"
                 && timing.is_none()
-                && !snapshot.acp_manager.is_item_running(id)
+                && !snapshot.acp_manager.is_item_running(&canonical_id)
                 && !has_transcript_file
             {
                 send_response(
@@ -2403,14 +2839,28 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
         let (git_statuses, response_etag) = if is_git_stale {
             let resolver = crate::sync::GitStatusResolver::new(snapshot.repo_path.clone());
             let fresh_map = resolver.resolve_all(&ideas);
-            let next_gen = snapshot.git_generation.fetch_add(1, Ordering::Relaxed) + 1;
-            if let Ok(mut cache_guard) = snapshot.git_cache.lock() {
+            let changed = if let Ok(mut cache_guard) = snapshot.git_cache.lock() {
+                let prev_same = cache_guard
+                    .as_ref()
+                    .is_some_and(|(_, prev)| prev == &fresh_map);
                 *cache_guard = Some((Instant::now(), fresh_map.clone()));
+                !prev_same
+            } else {
+                true
+            };
+            let cur_gen = if changed {
+                snapshot.git_generation.fetch_add(1, Ordering::Relaxed) + 1
+            } else {
+                snapshot.git_generation.load(Ordering::Relaxed)
+            };
+            let fresh_etag = format!("{}-g{cur_gen}", compute_vault_etag(&snapshot.vault_path));
+            if let Some(if_none) = &if_none_match {
+                if etags_match(if_none, &fresh_etag) {
+                    send_not_modified(&mut stream, &fresh_etag);
+                    return;
+                }
             }
-            (
-                fresh_map,
-                format!("{}-g{next_gen}", compute_vault_etag(&snapshot.vault_path)),
-            )
+            (fresh_map, fresh_etag)
         } else {
             let cached = snapshot
                 .git_cache
@@ -2711,6 +3161,9 @@ pub fn serve_view(
             let mut last_etag = compute_vault_etag(&watcher_snap.vault_path);
             loop {
                 thread::sleep(std::time::Duration::from_millis(500));
+                if !watcher_snap.broadcaster.has_subscribers() {
+                    continue;
+                }
                 let current_etag = compute_vault_etag(&watcher_snap.vault_path);
                 if current_etag != last_etag {
                     last_etag = current_etag;

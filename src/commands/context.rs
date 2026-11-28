@@ -88,12 +88,11 @@ pub fn context(args: &[String], command: &str, vault_path: &Path) -> CliResult<(
         ))
     })?;
     ideas.sort_by(|a, b| {
-        let p_cmp = b.priority_rank().cmp(&a.priority_rank());
-        if p_cmp != std::cmp::Ordering::Equal {
-            p_cmp
-        } else {
-            b.timestamp.cmp(&a.timestamp)
-        }
+        b.priority_rank()
+            .cmp(&a.priority_rank())
+            .then_with(|| b.timestamp.cmp(&a.timestamp))
+            .then_with(|| b.created_at_ns.cmp(&a.created_at_ns))
+            .then_with(|| a.id.cmp(&b.id))
     });
 
     let fmt = format.unwrap_or_else(|| default_format(OutputFormat::Plain));

@@ -261,9 +261,12 @@ pub fn handoff(args: &[String], command: &str, vault_path: &Path) -> CliResult<(
             let fmt = format.unwrap_or_else(|| default_format(OutputFormat::Plain));
             if fmt == OutputFormat::Json {
                 println!(
-                    "{{\"id\":\"{}\",\"action\":\"handoff_updated\",\"status\":\"{}\"}}",
-                    meta.id,
-                    meta.current_status().as_str()
+                    "{}",
+                    serde_json::json!({
+                        "id": meta.id,
+                        "action": "handoff_updated",
+                        "status": meta.current_status().as_str(),
+                    })
                 );
             } else {
                 emit_single_idea(&meta, fmt);
@@ -585,7 +588,13 @@ pub fn parent(args: &[String], command: &str, vault_path: &Path) -> CliResult<()
         ) {
             Ok(meta) => {
                 if fmt == OutputFormat::Json {
-                    println!("{{\"id\":\"{}\",\"parent_id\":null}}", meta.id);
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "id": meta.id,
+                            "parent_id": serde_json::Value::Null,
+                        })
+                    );
                 } else {
                     println!("Removed parent from {}", meta.id);
                 }
@@ -613,8 +622,11 @@ pub fn parent(args: &[String], command: &str, vault_path: &Path) -> CliResult<()
             Ok(meta) => {
                 if fmt == OutputFormat::Json {
                     println!(
-                        "{{\"id\":\"{}\",\"parent_id\":\"{}\"}}",
-                        meta.id, parent_meta.id
+                        "{}",
+                        serde_json::json!({
+                            "id": meta.id,
+                            "parent_id": parent_meta.id,
+                        })
                     );
                 } else {
                     println!("Set parent of {} to {}", meta.id, parent_meta.id);

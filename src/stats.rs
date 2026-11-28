@@ -6,6 +6,7 @@ use std::path::Path;
 #[derive(Debug, Default, Serialize)]
 pub struct VaultStats {
     pub ideas: usize,
+    pub idea_items: usize,
     pub tasks: usize,
     pub bugs: usize,
     pub decisions: usize,
@@ -68,7 +69,7 @@ pub fn calculate_stats(vault_path: &Path, project: Option<&str>) -> VaultStats {
         match meta.work_type() {
             WorkType::Task => stats.tasks += 1,
             WorkType::Bug => stats.bugs += 1,
-            WorkType::Idea => {}
+            WorkType::Idea => stats.idea_items += 1,
             WorkType::Decision => stats.decisions += 1,
         }
 
@@ -98,6 +99,7 @@ pub fn emit_stats(stats: &VaultStats, format: OutputFormat) {
             println!("Invalid:     {}", stats.invalid);
             println!("Tasks:       {}", stats.tasks);
             println!("Bugs:        {}", stats.bugs);
+            println!("Ideas:       {}", stats.idea_items);
             println!("Decisions:   {}", stats.decisions);
             println!("Created:     {}", stats.created);
             println!("Planned:     {}", stats.planned);

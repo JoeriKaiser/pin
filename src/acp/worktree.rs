@@ -36,6 +36,20 @@ impl From<io::Error> for WorktreeError {
 
 pub struct WorktreeManager;
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct WorktreeInspection {
+    pub exists: bool,
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    pub changed_files: usize,
+    pub ahead_count: usize,
+    pub status_lines: Vec<String>,
+    pub diff_stat: String,
+    pub diff_preview: String,
+    pub truncated: bool,
+}
+
 impl WorktreeManager {
     /// The standard folder convention where all worktrees are stored.
     pub const WORKTREES_DIR_NAME: &'static str = ".pin_worktrees";
@@ -126,41 +140,70 @@ impl WorktreeManager {
             .output();
     }
 
-    /// Resolves the default branch for `repo_path`, prioritizing an up-to-date main branch.
-    ///
-    /// Tries:
-    /// 1. `rev-parse --verify origin/main` (up-to-date remote main)
-    /// 2. `rev-parse --verify refs/heads/main` (local main)
-    /// 3. `symbolic-ref --short refs/remotes/origin/HEAD` (e.g. "origin/main")
-    /// 4. `rev-parse --verify origin/master`
-    /// 5. `rev-parse --verify refs/heads/master` (local master)
-    /// 6. Fallback to `"HEAD"`
-    pub fn resolve_default_branch(repo_path: &Path) -> String {
-        // 1. Try origin/main (up-to-date remote main branch)
-        if let Ok(out) = Command::new("git")
+    fn is_ancestor(repo_path: &Path, ancestor: &str, descendant: &str) -> bool {
+        Command::new("git")
             .arg("-C")
             .arg(repo_path)
-            .args(["rev-parse", "--verify", "origin/main"])
+            .args(["merge-base", "--is-ancestor", ancestor, descendant])
             .output()
-        {
-            if out.status.success() {
-                return "origin/main".to_string();
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+
+    fn ref_exists(repo_path: &Path, reference: &str) -> bool {
+        Command::new("git")
+            .arg("-C")
+            .arg(repo_path)
+            .args(["rev-parse", "--verify", reference])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+
+    /// Sanitizes an item ID for use as a git branch segment under `pin/`.
+    /// Standard hex IDs pass through unchanged.
+    pub fn branch_name_for_item(item_id: &str) -> String {
+        let mut out = String::with_capacity(item_id.len());
+        let mut prev_dot = false;
+        for ch in item_id.chars() {
+            if ch == '.' && prev_dot {
+                continue;
+            }
+            let valid = ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.');
+            if valid {
+                out.push(ch);
+                prev_dot = ch == '.';
+            } else {
+                out.push('-');
+                prev_dot = false;
             }
         }
+        let trimmed = out.trim_matches(['.', '-', '/']);
+        let trimmed = trimmed.strip_suffix(".lock").unwrap_or(trimmed);
+        let seg = if trimmed.is_empty() { "item" } else { trimmed };
+        format!("pin/{seg}")
+    }
 
-        // 2. Try local main branch
-        if let Ok(out) = Command::new("git")
-            .arg("-C")
-            .arg(repo_path)
-            .args(["rev-parse", "--verify", "refs/heads/main"])
-            .output()
-        {
-            if out.status.success() {
+    /// Resolves the default branch for `repo_path`, prioritizing an up-to-date main branch.
+    /// When both `origin/main` and local `main` exist, prefers local `main` if `origin/main`
+    /// is an ancestor of `main` (so unpushed local commits on `main` are not silently dropped).
+    pub fn resolve_default_branch(repo_path: &Path) -> String {
+        let has_origin_main = Self::ref_exists(repo_path, "origin/main");
+        let has_local_main = Self::ref_exists(repo_path, "refs/heads/main");
+        if has_origin_main && has_local_main {
+            if Self::is_ancestor(repo_path, "origin/main", "refs/heads/main") {
                 return "main".to_string();
             }
+            return "origin/main".to_string();
+        }
+        if has_origin_main {
+            return "origin/main".to_string();
+        }
+        if has_local_main {
+            return "main".to_string();
         }
 
-        // 3. Try origin/HEAD symbolic ref
+        // Try origin/HEAD symbolic ref
         if let Ok(out) = Command::new("git")
             .arg("-C")
             .arg(repo_path)
@@ -175,28 +218,19 @@ impl WorktreeManager {
             }
         }
 
-        // 4. Try origin/master
-        if let Ok(out) = Command::new("git")
-            .arg("-C")
-            .arg(repo_path)
-            .args(["rev-parse", "--verify", "origin/master"])
-            .output()
-        {
-            if out.status.success() {
-                return "origin/master".to_string();
-            }
-        }
-
-        // 5. Try local master branch
-        if let Ok(out) = Command::new("git")
-            .arg("-C")
-            .arg(repo_path)
-            .args(["rev-parse", "--verify", "refs/heads/master"])
-            .output()
-        {
-            if out.status.success() {
+        let has_origin_master = Self::ref_exists(repo_path, "origin/master");
+        let has_local_master = Self::ref_exists(repo_path, "refs/heads/master");
+        if has_origin_master && has_local_master {
+            if Self::is_ancestor(repo_path, "origin/master", "refs/heads/master") {
                 return "master".to_string();
             }
+            return "origin/master".to_string();
+        }
+        if has_origin_master {
+            return "origin/master".to_string();
+        }
+        if has_local_master {
+            return "master".to_string();
         }
 
         "HEAD".to_string()
@@ -213,25 +247,47 @@ impl WorktreeManager {
         let worktrees_dir = Self::worktrees_root(repo_path);
         let target_dir = Self::worktree_path(repo_path, item_id);
         if target_dir.exists() {
-            return Ok(target_dir);
+            // Verify it is actually a valid git worktree with its own .git pointer;
+            // an empty or stale directory inside repo_path would otherwise cause git
+            // commands to walk up and mutate the primary checkout.
+            if target_dir.join(".git").exists() && Self::is_git_repo(&target_dir) {
+                return Ok(target_dir);
+            }
+            if target_dir.is_dir() {
+                let _ = fs::remove_dir_all(&target_dir);
+            } else {
+                let _ = fs::remove_file(&target_dir);
+            }
+            let _ = Command::new("git")
+                .arg("-C")
+                .arg(repo_path)
+                .args(["worktree", "prune"])
+                .output();
         }
 
         // Ensure parent directory exists
         if !worktrees_dir.exists() {
             fs::create_dir_all(&worktrees_dir)?;
         }
-        // Ensure .pin_worktrees is excluded in git info exclude if present
+        // Ensure .pin_worktrees is excluded in git info exclude
         let exclude_path = Self::git_exclude_path(repo_path);
-        if exclude_path.exists() {
-            if let Ok(content) = fs::read_to_string(&exclude_path) {
-                if !content.contains(".pin_worktrees") {
-                    let _ = fs::write(&exclude_path, format!("{content}\n.pin_worktrees/\n"));
+        if let Some(parent) = exclude_path.parent() {
+            if parent.exists() || repo_path.join(".git").exists() {
+                let _ = fs::create_dir_all(parent);
+                let content = fs::read_to_string(&exclude_path).unwrap_or_default();
+                if !content.lines().any(|l| l.trim() == ".pin_worktrees/") {
+                    let prefix = if content.is_empty() || content.ends_with('\n') {
+                        ""
+                    } else {
+                        "\n"
+                    };
+                    let _ = fs::write(&exclude_path, format!("{content}{prefix}.pin_worktrees/\n"));
                 }
             }
         }
 
         let base_branch = Self::resolve_default_branch(repo_path);
-        let branch_name = format!("pin/{item_id}");
+        let branch_name = Self::branch_name_for_item(item_id);
         let target_str = target_dir
             .to_str()
             .ok_or_else(|| WorktreeError::GitCommand("Invalid non-UTF-8 path".to_string()))?;
@@ -315,6 +371,116 @@ impl WorktreeManager {
             .output()
             .map(|o| o.status.success() && !o.stdout.is_empty())
             .unwrap_or(false)
+    }
+
+    /// Inspects a worktree for `item_id`, returning branch, dirty status lines,
+    /// ahead commit count, diff stat, and a capped diff preview.
+    pub fn inspect_worktree(repo_path: &Path, item_id: &str) -> WorktreeInspection {
+        let target_dir = Self::worktree_path(repo_path, item_id);
+        let rel_path = format!("{}/{item_id}", Self::WORKTREES_DIR_NAME);
+        if !target_dir.exists() || !target_dir.join(".git").exists() {
+            return WorktreeInspection {
+                exists: false,
+                path: rel_path,
+                branch: None,
+                changed_files: 0,
+                ahead_count: 0,
+                status_lines: Vec::new(),
+                diff_stat: String::new(),
+                diff_preview: String::new(),
+                truncated: false,
+            };
+        }
+
+        let branch = Command::new("git")
+            .arg("-C")
+            .arg(&target_dir)
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .filter(|s| !s.is_empty());
+
+        let status_raw = Command::new("git")
+            .arg("-C")
+            .arg(&target_dir)
+            .args(["status", "--short"])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+            .unwrap_or_default();
+
+        let all_status_lines: Vec<String> = status_raw
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| l.to_string())
+            .collect();
+        let changed_files = all_status_lines.len();
+        let status_lines: Vec<String> = all_status_lines.into_iter().take(50).collect();
+
+        let base_branch = Self::resolve_default_branch(repo_path);
+        let ahead_count = Command::new("git")
+            .arg("-C")
+            .arg(&target_dir)
+            .args(["rev-list", "--count", &format!("{base_branch}..HEAD")])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .and_then(|o| {
+                String::from_utf8_lossy(&o.stdout)
+                    .trim()
+                    .parse::<usize>()
+                    .ok()
+            })
+            .unwrap_or(0);
+
+        let diff_stat = Command::new("git")
+            .arg("-C")
+            .arg(&target_dir)
+            .args(["diff", "--stat", "HEAD"])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default();
+
+        const MAX_DIFF_BYTES: usize = 32 * 1024;
+        let diff_raw = Command::new("git")
+            .arg("-C")
+            .arg(&target_dir)
+            .args(["diff", "HEAD"])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+            .unwrap_or_default();
+
+        let (diff_preview, truncated) = if diff_raw.len() > MAX_DIFF_BYTES {
+            let mut end = MAX_DIFF_BYTES;
+            while end > 0 && !diff_raw.is_char_boundary(end) {
+                end -= 1;
+            }
+            (
+                format!("{}\n[... diff truncated ...]", &diff_raw[..end]),
+                true,
+            )
+        } else {
+            (diff_raw, false)
+        };
+
+        WorktreeInspection {
+            exists: true,
+            path: rel_path,
+            branch,
+            changed_files,
+            ahead_count,
+            status_lines,
+            diff_stat,
+            diff_preview,
+            truncated,
+        }
     }
 
     /// Removes a git worktree for `item_id`.
@@ -553,5 +719,173 @@ mod tests {
             !WorktreeManager::worktrees_root(&repo).exists(),
             "empty .pin_worktrees directory should be removed"
         );
+    }
+
+    #[test]
+    fn test_provision_recovers_from_empty_broken_worktree_dir_and_sanitizes_branch() {
+        let dir = tempdir().unwrap();
+        let repo = dir.path().join("repo");
+        fs::create_dir_all(&repo).unwrap();
+
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["init", "-b", "main"])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["config", "user.name", "Test"])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["config", "user.email", "test@test.com"])
+            .output()
+            .unwrap();
+        fs::write(repo.join("README.md"), "# test").unwrap();
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["add", "."])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["commit", "-m", "init"])
+            .output()
+            .unwrap();
+
+        // Create a broken empty directory where the worktree should live.
+        let broken_dir = WorktreeManager::worktree_path(&repo, "broken1");
+        fs::create_dir_all(&broken_dir).unwrap();
+
+        let wt = WorktreeManager::provision_worktree(&repo, "broken1").unwrap();
+        assert!(wt.join(".git").exists());
+        assert!(wt.join("README.md").exists());
+
+        assert_eq!(
+            WorktreeManager::branch_name_for_item("a1b2c3d4e5f6"),
+            "pin/a1b2c3d4e5f6"
+        );
+        assert_eq!(
+            WorktreeManager::branch_name_for_item("bad name..test.lock"),
+            "pin/bad-name.test"
+        );
+    }
+
+    #[test]
+    fn test_resolve_default_branch_prefers_local_main_ahead_of_origin() {
+        let dir = tempdir().unwrap();
+        let remote = dir.path().join("remote.git");
+        let repo = dir.path().join("repo");
+
+        Command::new("git")
+            .args(["init", "--bare", "-b", "main"])
+            .arg(&remote)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["clone"])
+            .arg(&remote)
+            .arg(&repo)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["config", "user.name", "Test"])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["config", "user.email", "test@test.com"])
+            .output()
+            .unwrap();
+        fs::write(repo.join("README.md"), "v1").unwrap();
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["add", "."])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["commit", "-m", "v1"])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["push", "-u", "origin", "main"])
+            .output()
+            .unwrap();
+
+        // Add an unpushed local commit on main
+        fs::write(repo.join("README.md"), "v2").unwrap();
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["commit", "-am", "v2"])
+            .output()
+            .unwrap();
+
+        assert_eq!(WorktreeManager::resolve_default_branch(&repo), "main");
+    }
+
+    #[test]
+    fn test_inspect_worktree_reports_branch_status_and_diff() {
+        let dir = tempdir().unwrap();
+        let repo = dir.path().join("repo");
+        fs::create_dir_all(&repo).unwrap();
+
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["init", "-b", "main"])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["config", "user.name", "Test"])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["config", "user.email", "test@test.com"])
+            .output()
+            .unwrap();
+        fs::write(repo.join("README.md"), "line 1\n").unwrap();
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["add", "."])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["commit", "-m", "init"])
+            .output()
+            .unwrap();
+
+        let absent = WorktreeManager::inspect_worktree(&repo, "missing1");
+        assert!(!absent.exists);
+
+        let wt = WorktreeManager::provision_worktree(&repo, "insp123").unwrap();
+        fs::write(wt.join("README.md"), "line 1\nline 2\n").unwrap();
+
+        let info = WorktreeManager::inspect_worktree(&repo, "insp123");
+        assert!(info.exists);
+        assert_eq!(info.branch.as_deref(), Some("pin/insp123"));
+        assert_eq!(info.changed_files, 1);
+        assert!(info.diff_preview.contains("+line 2"));
     }
 }

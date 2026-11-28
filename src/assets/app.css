@@ -159,7 +159,12 @@
 }
 
 /* Dark Theme Palette (OKLCH) */
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
 :root[data-theme="dark"] {
+  color-scheme: dark;
   --bg: oklch(0.14 0.015 255);
   --surface: oklch(0.18 0.02 255);
   --surface-raised: oklch(0.22 0.025 255);
@@ -248,6 +253,7 @@
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
+    color-scheme: dark;
     --bg: oklch(0.14 0.015 255);
     --surface: oklch(0.18 0.02 255);
     --surface-raised: oklch(0.22 0.025 255);
@@ -3415,7 +3421,8 @@ a {
   text-decoration: line-through;
 }
 
-.agent-plan-item.current {
+.agent-plan-item.current,
+.agent-plan-item.in_progress {
   font-weight: var(--weight-semibold);
   color: var(--accent);
 }
@@ -3905,19 +3912,19 @@ a {
 }
 
 .status-completed,
-.completed {
+.trajectory-status-badge.completed {
   background: var(--success);
   color: var(--success-ink);
 }
 
 .status-running,
-.in_progress {
+.trajectory-status-badge.in_progress {
   background: var(--status-inprogress-bg);
   color: var(--status-inprogress-ink);
 }
 
 .status-failed,
-.failed {
+.trajectory-status-badge.failed {
   background: var(--danger);
   color: var(--danger-ink);
 }
@@ -4560,6 +4567,8 @@ a {
    -------------------------------------------------------------------------- */
 .toast {
   position: fixed;
+  inset: auto;
+  margin: 0;
   bottom: var(--space-5);
   inset-inline-end: var(--space-5);
   z-index: 200;
@@ -4573,6 +4582,90 @@ a {
   gap: var(--space-2);
   cursor: pointer;
   transition: opacity var(--transition-fast), transform var(--transition-fast);
+}
+
+.toast[hidden] {
+  display: none;
+}
+
+#live-status.disconnected {
+  color: var(--danger-ink);
+  font-weight: var(--weight-semibold);
+}
+
+.inspector-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.worktree-inspector {
+  margin-top: var(--space-2);
+  border-top: 1px solid var(--line-subtle);
+  padding-top: var(--space-2);
+  font-size: var(--text-xs);
+}
+
+.worktree-inspector > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-weight: var(--weight-medium);
+  user-select: none;
+}
+
+.worktree-inspector > summary:hover {
+  color: var(--ink);
+}
+
+.worktree-inspector-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.worktree-summary-line {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--muted);
+}
+
+.worktree-diff-pre {
+  margin: 0;
+  padding: var(--space-2);
+  background: var(--soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  max-height: 12rem;
+  overflow: auto;
+  white-space: pre;
+  color: var(--ink);
+}
+
+.worktree-diff-details > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: var(--text-2xs);
+  margin-bottom: var(--space-1);
+}
+
+.worktree-inspector-actions {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+/* Minimum 24px target height for interactive card/toolbar buttons (WCAG 2.2 SC 2.5.8) */
+.btn-reply-card,
+.btn-view-run,
+.btn-commit-pr,
+.btn-pr-link,
+.btn-archive,
+.snippet-btn,
+.btn-copy-id {
+  min-height: 1.5rem;
 }
 
 .toast-success {
@@ -4923,11 +5016,11 @@ footer {
 
   .board-view {
     padding: var(--space-3);
+    scroll-snap-type: x proximity;
   }
 
   .board-columns {
     grid-template-columns: repeat(5, minmax(min(18rem, 84vw), 1fr));
-    scroll-snap-type: x proximity;
   }
 
   .board-col {

@@ -1,4 +1,4 @@
-import { state, find } from './state.js';
+import { state, find, itemType, kind, priority, tags } from './state.js';
 import { els, $ } from './dom.js';
 import { sendCancel, sendRun, sendCommitPr, sendMessage, sendFinish, sendUpdate, sendSync } from './api.js';
 import { text, clear, node, showToast, formatStatusLabel } from './formatters.js';
@@ -8,7 +8,7 @@ import { handleCardDrop, setViewMode, setBoardCallbacks, renderBoard } from './b
 import { renderAgentsTable, stopAgentsTicker, setAgentsViewCallbacks } from './agents-view.js';
 import { renderList, renderDetail, setReaderTab, setDetailCallbacks } from './detail.js';
 import {
-  SPEC_SNIPPETS, collectTicketFields, expandQuickAdd, collapseQuickAdd, submitQuickAdd,
+  SPEC_SNIPPETS, collectTicketFields, expandQuickAdd, collapseQuickAdd, resetQuickAdd, submitQuickAdd,
   openSpecModal, closeSpecModal, setSpecModalTab, submitSpecModal,
   closeActionModal, triggerModalSubmit, openCompleteModal, openBlockedModal, openCloseModal,
   convertIdeaToSpec, setFormCallbacks, openWorktreeModal, closeWorktreeModal,
@@ -16,7 +16,7 @@ import {
 } from './forms.js';
 import {
   openAgentDrawer, closeAgentDrawer, updateActiveRuns, toggleAllToolCards,
-  openToolInspector, closeToolInspector, copyToolOutput, filterTrajectoryRows,
+  openToolInspector, closeToolInspector, stepToolInspector, copyToolOutput, filterTrajectoryRows,
   appendTrajectoryContextRow, setAgentCallbacks, announceAgentStatus
 } from './agent.js';
 import { bindRunnerUi, closeRunnerDialog } from './runner.js';
@@ -125,13 +125,15 @@ export function sendAgentChatMessage(itemId) {
     })
     .catch(function (err) {
       showToast(err.message || 'Failed to send message', true);
-      if (els.agentChatInput) {
-        els.agentChatInput.value = message;
-        if (state.chatDrafts && itemId) state.chatDrafts[itemId] = message;
-        els.agentChatInput.disabled = false;
-        els.agentChatInput.focus();
+      if (state.chatDrafts && itemId) state.chatDrafts[itemId] = message;
+      if (state.currentStreamingId === itemId) {
+        if (els.agentChatInput) {
+          els.agentChatInput.value = message;
+          els.agentChatInput.disabled = false;
+          els.agentChatInput.focus();
+        }
+        if (els.btnAgentChatSend) els.btnAgentChatSend.disabled = false;
       }
-      if (els.btnAgentChatSend) els.btnAgentChatSend.disabled = false;
     });
 }
 
@@ -398,7 +400,7 @@ export function bindForms() {
   if (els.quickAddExpandBtn) {
     els.quickAddExpandBtn.addEventListener('click', function () {
       var initial = collectTicketFields('quick-add');
-      collapseQuickAdd();
+      resetQuickAdd();
       openSpecModal(initial);
     });
   }
@@ -475,7 +477,10 @@ export function bindForms() {
       var item = state.pendingWorktreeItem;
       var interactive = !!(els.worktreeInteractiveCheckbox && els.worktreeInteractiveCheckbox.checked);
       closeWorktreeModal();
-      if (item) sendRunItem(item.id, false, undefined, undefined, interactive);
+      if (item) {
+        var optMode = itemType(item) === 'idea' ? 'idea' : undefined;
+        sendRunItem(item.id, false, undefined, optMode, interactive);
+      }
     });
   }
   if (els.btnWorktreeConfirm) {
@@ -483,7 +488,10 @@ export function bindForms() {
       var item = state.pendingWorktreeItem;
       var interactive = !!(els.worktreeInteractiveCheckbox && els.worktreeInteractiveCheckbox.checked);
       closeWorktreeModal();
-      if (item) sendRunItem(item.id, true, 'Worktree start failed: ', undefined, interactive);
+      if (item) {
+        var optMode = itemType(item) === 'idea' ? 'idea' : undefined;
+        sendRunItem(item.id, true, 'Worktree start failed: ', optMode, interactive);
+      }
     });
   }
 }
@@ -557,6 +565,8 @@ export function bindAgent() {
       }
     });
   }
+  if (els.btnInspectorPrev) els.btnInspectorPrev.addEventListener('click', function () { stepToolInspector(-1); });
+  if (els.btnInspectorNext) els.btnInspectorNext.addEventListener('click', function () { stepToolInspector(1); });
   if (els.btnCloseInspector) els.btnCloseInspector.addEventListener('click', closeToolInspector);
   if (els.btnCopyToolOutput) els.btnCopyToolOutput.addEventListener('click', copyToolOutput);
 }
@@ -758,6 +768,19 @@ export function bind(options) {
     openAgentDrawer: openAgentDrawer,
     closeAgentDrawer: closeAgentDrawer,
     openReplyModal: openReplyModal,
+    openEditModal: function (item) {
+      if (!item) return;
+      openSpecModal({
+        _editItem: item,
+        title: item.title || '',
+        body: item.content || '',
+        type: itemType(item),
+        kind: kind(item) === 'unspecified' ? 'technical' : kind(item),
+        priority: priority(item) === 'unset' ? '' : priority(item),
+        tags: tags(item).join(', '),
+        project: item.project || ''
+      });
+    },
     updateActiveRuns: updateActiveRuns,
     setViewMode: setViewMode,
     setRoute: setRoute
@@ -770,6 +793,19 @@ export function bind(options) {
     openCloseModal: openCloseModal,
     openAgentDrawer: openAgentDrawer,
     openReplyModal: openReplyModal,
+    openEditModal: function (item) {
+      if (!item) return;
+      openSpecModal({
+        _editItem: item,
+        title: item.title || '',
+        body: item.content || '',
+        type: itemType(item),
+        kind: kind(item) === 'unspecified' ? 'technical' : kind(item),
+        priority: priority(item) === 'unset' ? '' : priority(item),
+        tags: tags(item).join(', '),
+        project: item.project || ''
+      });
+    },
     closeAgentDrawer: closeAgentDrawer,
     sendCommitPrItem: sendCommitPrItem,
     refreshData: function (force) { bootCallbacks.refreshData(force); },
@@ -784,6 +820,19 @@ export function bind(options) {
     openAgentDrawer: openAgentDrawer,
     closeAgentDrawer: closeAgentDrawer,
     openReplyModal: openReplyModal,
+    openEditModal: function (item) {
+      if (!item) return;
+      openSpecModal({
+        _editItem: item,
+        title: item.title || '',
+        body: item.content || '',
+        type: itemType(item),
+        kind: kind(item) === 'unspecified' ? 'technical' : kind(item),
+        priority: priority(item) === 'unset' ? '' : priority(item),
+        tags: tags(item).join(', '),
+        project: item.project || ''
+      });
+    },
     openCompleteModal: openCompleteModal,
     sendCommitPrItem: sendCommitPrItem,
     openCloseModal: openCloseModal,
@@ -883,6 +932,10 @@ function bindDialogLightDismiss() {
       if (e && e.target === dlg && !draggedOut) {
         onClose();
       }
+    });
+    dlg.addEventListener('cancel', function (e) {
+      if (e && typeof e.preventDefault === 'function') e.preventDefault();
+      onClose();
     });
     dlg.addEventListener('close', function () {
       if (lastNonDialogFocus && lastNonDialogFocus.isConnected && typeof lastNonDialogFocus.focus === 'function') {

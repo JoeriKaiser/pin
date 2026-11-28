@@ -32,7 +32,7 @@ impl GitItemStatus {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GitItemInfo {
     pub id: String,
     pub status: GitItemStatus,
@@ -576,8 +576,17 @@ impl GitStatusResolver {
     }
 
     pub fn with_prs(repo_path: PathBuf, prs: Option<Vec<GhPrInfo>>) -> Self {
-        let targets = resolve_target_branches(&repo_path);
         let (local_pin_refs, remote_pin_refs) = preload_pin_refs(&repo_path);
+        Self::with_preloaded_refs(repo_path, prs, local_pin_refs, remote_pin_refs)
+    }
+
+    fn with_preloaded_refs(
+        repo_path: PathBuf,
+        prs: Option<Vec<GhPrInfo>>,
+        local_pin_refs: HashMap<String, String>,
+        remote_pin_refs: HashMap<String, String>,
+    ) -> Self {
+        let targets = resolve_target_branches(&repo_path);
         let current_branch = current_head_branch(&repo_path);
         let target_oids = targets
             .iter()
@@ -793,7 +802,7 @@ pub fn reconcile_and_sync(
     };
 
     let all_items = collect_ideas(vault_path).map_err(|e| format!("Failed to read vault: {e}"))?;
-    let (local_pin_refs, _) = preload_pin_refs(repo_path);
+    let (local_pin_refs, remote_pin_refs) = preload_pin_refs(repo_path);
 
     let candidates: Vec<&IdeaMeta> = all_items
         .iter()
@@ -818,7 +827,13 @@ pub fn reconcile_and_sync(
         return Ok(Vec::new());
     }
 
-    let resolver = GitStatusResolver::new(repo_path.to_path_buf());
+    let prs = query_gh_prs(repo_path);
+    let resolver = GitStatusResolver::with_preloaded_refs(
+        repo_path.to_path_buf(),
+        prs,
+        local_pin_refs,
+        remote_pin_refs,
+    );
     let mut results = Vec::new();
 
     for meta in candidates {
@@ -858,7 +873,7 @@ pub fn reconcile_and_sync(
         let wt_path = repo_path.join(".pin_worktrees").join(&meta.id);
         let branch_name = format!("pin/{}", meta.id);
         let had_worktree = wt_path.exists();
-        let had_branch = local_pin_refs.contains_key(&meta.id);
+        let had_branch = resolver.local_pin_refs.contains_key(&meta.id);
 
         if is_archived && !had_worktree && !had_branch {
             continue;

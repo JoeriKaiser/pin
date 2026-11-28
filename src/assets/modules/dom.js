@@ -179,6 +179,8 @@ export var els = {
   inspectorStatus: $('inspector-status'),
   inspectorArgs: $('inspector-args'),
   inspectorOutput: $('inspector-output'),
+  btnInspectorPrev: $('btn-inspector-prev'),
+  btnInspectorNext: $('btn-inspector-next'),
   btnCloseInspector: $('btn-close-inspector'),
   btnCopyToolOutput: $('btn-copy-tool-output'),
   worktreeModal: $('worktree-modal'),

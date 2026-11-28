@@ -1,6 +1,6 @@
 import { state, find, itemStatus, itemType, kind, priority, tags, matches, updateShown, isRunWaiting, getRunInfo } from './state.js';
 import { els } from './dom.js';
-import { sendAction, ensureActionOk } from './api.js';
+import { sendAction, ensureActionOk, fetchWorktree, deleteWorktree } from './api.js';
 import { node, text, clear, date, timeAgo, showToast, formatStatusLabel } from './formatters.js';
 import { renderMarkdownSnippet, renderMarkdown } from './markdown.js';
 import { setRoute } from './router.js';
@@ -112,14 +112,22 @@ export function renderWorkerBox(item) {
   els.workerCard.appendChild(node('h3', '', 'Agent Run'));
 
   var header = node('div', 'worker-card-header');
-  var waiting = state.activeRuns.has(item.id) && isRunWaiting(item.id);
+  var isActive = state.activeRuns.has(item.id);
+  var waiting = isActive && isRunWaiting(item.id);
+  var runInfo = isActive ? getRunInfo(item.id) : null;
   if (waiting) {
     var waitBadge = node('span', 'card-waiting-indicator');
-    waitBadge.appendChild(node('span', 'needs-reply-dot'));
+    var waitDot = node('span', 'needs-reply-dot');
+    waitDot.setAttribute('aria-hidden', 'true');
+    waitBadge.appendChild(waitDot);
     waitBadge.appendChild(document.createTextNode('Needs reply'));
     header.appendChild(waitBadge);
-  } else if (state.activeRuns.has(item.id)) {
-    header.appendChild(node('span', 'worker-actor', item.claimed_by ? '@' + item.claimed_by : 'Agent running'));
+  } else if (isActive) {
+    var modeText = runInfo && runInfo.mode === 'commit_pr'
+      ? 'Commit + PR'
+      : (runInfo && runInfo.mode === 'idea' ? 'Idea agent' : 'Implementing');
+    var actorLabel = item.claimed_by ? '@' + item.claimed_by + ' · ' + modeText : modeText;
+    header.appendChild(node('span', 'worker-actor', actorLabel));
   } else {
     header.appendChild(node('span', 'worker-actor', 'No active run'));
   }
@@ -129,7 +137,6 @@ export function renderWorkerBox(item) {
   els.workerCard.appendChild(header);
 
   if (waiting) {
-    var runInfo = getRunInfo(item.id);
     var callout = node('div', 'worker-waiting-callout');
     callout.appendChild(node('p', 'worker-waiting-preview', summarizeQuestionPreview(runInfo && runInfo.last_message, 160)));
     var replyNowBtn = node('button', 'action-btn primary action-btn-small', 'Reply Now');
@@ -142,16 +149,126 @@ export function renderWorkerBox(item) {
   }
 
   var meta = node('div', 'worker-meta');
+  if (runInfo) {
+    if (runInfo.model) {
+      meta.appendChild(node('span', '', 'Model: ' + runInfo.model));
+    }
+    if (runInfo.worktree_path) {
+      meta.appendChild(node('span', '', 'Worktree: ' + runInfo.worktree_path));
+    } else if (runInfo.is_primary_worktree) {
+      meta.appendChild(node('span', '', 'Checkout: primary'));
+    }
+  }
   if (item.created_by) {
     meta.appendChild(node('span', '', 'Created by @' + item.created_by));
   }
   if (meta.children.length) {
     els.workerCard.appendChild(meta);
   }
+
+  var showWorktree = !!(item.worktree_path || (runInfo && runInfo.worktree_path) || item.git_status);
+  if (showWorktree && typeof document !== 'undefined') {
+    var wtDetails = document.createElement('details');
+    wtDetails.className = 'worktree-inspector';
+    var wtSummary = document.createElement('summary');
+    wtSummary.textContent = 'Inspect worktree';
+    wtDetails.appendChild(wtSummary);
+
+    var wtBody = node('div', 'worktree-inspector-body');
+    wtDetails.appendChild(wtBody);
+
+    function loadWorktreeInfo() {
+      clear(wtBody);
+      wtBody.appendChild(node('div', 'help-text', 'Loading worktree status…'));
+      fetchWorktree(item.id)
+        .then(function (res) { return res.ok ? res.json() : Promise.reject(new Error('Failed to inspect worktree')); })
+        .then(function (info) {
+          clear(wtBody);
+          if (!info || !info.exists) {
+            wtBody.appendChild(node('div', 'help-text', 'No active worktree on disk.'));
+            return;
+          }
+          var summaryLine = [];
+          if (info.branch) summaryLine.push('Branch: ' + info.branch);
+          if (info.ahead_count > 0) summaryLine.push(info.ahead_count + ' commit' + (info.ahead_count === 1 ? '' : 's') + ' ahead');
+          summaryLine.push(info.changed_files + ' modified file' + (info.changed_files === 1 ? '' : 's'));
+          wtBody.appendChild(node('div', 'worktree-summary-line', summaryLine.join(' · ')));
+
+          if (info.status_lines && info.status_lines.length) {
+            var preStatus = document.createElement('pre');
+            preStatus.className = 'worktree-diff-pre';
+            preStatus.textContent = info.status_lines.join('\n');
+            wtBody.appendChild(preStatus);
+          }
+
+          if (info.diff_preview && info.diff_preview.trim()) {
+            var diffDetails = document.createElement('details');
+            diffDetails.className = 'worktree-diff-details';
+            var diffSum = document.createElement('summary');
+            diffSum.textContent = 'Diff preview';
+            diffDetails.appendChild(diffSum);
+            var preDiff = document.createElement('pre');
+            preDiff.className = 'worktree-diff-pre';
+            preDiff.textContent = info.diff_preview;
+            diffDetails.appendChild(preDiff);
+            wtBody.appendChild(diffDetails);
+          }
+
+          var wtActions = node('div', 'worktree-inspector-actions');
+          var refreshBtn = node('button', 'control', 'Refresh');
+          refreshBtn.type = 'button';
+          refreshBtn.addEventListener('click', loadWorktreeInfo);
+          wtActions.appendChild(refreshBtn);
+
+          if (!info.running) {
+            var discardBtn = node('button', 'action-btn danger action-btn-small', 'Discard worktree');
+            discardBtn.type = 'button';
+            discardBtn.addEventListener('click', function () {
+              discardBtn.disabled = true;
+              deleteWorktree(item.id)
+                .then(ensureActionOk)
+                .then(function () {
+                  showToast('Worktree discarded', false);
+                  callbacks.refreshData();
+                })
+                .catch(function (err) {
+                  discardBtn.disabled = false;
+                  showToast(err.message || 'Failed to discard worktree', true);
+                });
+            });
+            wtActions.appendChild(discardBtn);
+          }
+          wtBody.appendChild(wtActions);
+        })
+        .catch(function (err) {
+          clear(wtBody);
+          wtBody.appendChild(node('div', 'help-text', err.message || 'Could not inspect worktree'));
+        });
+    }
+
+    wtDetails.addEventListener('toggle', function () {
+      if (wtDetails.open) loadWorktreeInfo();
+    });
+    els.workerCard.appendChild(wtDetails);
+  }
 }
 
 export function renderDependencies(item) {
   if (!els.dependenciesCard) return;
+  var preservedForm = null;
+  if (els.dependenciesCard.dataset && els.dependenciesCard.dataset.itemId === item.id && els.dependenciesCard.querySelector) {
+    var existingForm = els.dependenciesCard.querySelector('.dep-add-form');
+    if (existingForm && existingForm.style && existingForm.style.display !== 'none') {
+      var existingSel = existingForm.querySelector('.dep-add-select');
+      var existingInp = existingForm.querySelector('.dep-add-input');
+      preservedForm = {
+        relType: existingSel ? existingSel.value : 'depend',
+        inputVal: existingInp ? existingInp.value : '',
+        hadFocus: typeof document !== 'undefined' && document.activeElement === existingInp
+      };
+    }
+  }
+  if (els.dependenciesCard.dataset) els.dependenciesCard.dataset.itemId = item.id;
   clear(els.dependenciesCard);
   els.dependenciesCard.appendChild(node('h3', '', 'Relationships'));
 
@@ -417,6 +534,16 @@ export function renderDependencies(item) {
     form.style.display = 'flex';
     inp.focus();
   });
+
+  if (preservedForm) {
+    sel.value = preservedForm.relType;
+    inp.value = preservedForm.inputVal;
+    addBtn.style.display = 'none';
+    form.style.display = 'flex';
+    if (preservedForm.hadFocus && typeof inp.focus === 'function') {
+      try { inp.focus(); } catch (_) {}
+    }
+  }
 
   cancelBtn.addEventListener('click', function () {
     form.style.display = 'none';
@@ -855,6 +982,18 @@ export function renderDetail() {
       } catch (_) {}
     });
     els.context.appendChild(copyBtn);
+
+    if (!item.archived_at && callbacks.openEditModal) {
+      var editBtn = node('button', 'btn-copy-id btn-edit-item', 'Edit');
+      editBtn.type = 'button';
+      editBtn.title = 'Edit item details and specification';
+      editBtn.setAttribute('aria-label', 'Edit ' + (item.title || item.id));
+      editBtn.addEventListener('click', function (e) {
+        if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+        callbacks.openEditModal(item);
+      });
+      els.context.appendChild(editBtn);
+    }
   }
   text(els.title, item.title || '(untitled)');
 
