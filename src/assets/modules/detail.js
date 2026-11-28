@@ -982,6 +982,18 @@ export function renderDetail() {
       } catch (_) {}
     });
     els.context.appendChild(copyBtn);
+
+    if (!item.archived_at && callbacks.openEditModal) {
+      var editBtn = node('button', 'btn-copy-id btn-edit-item', 'Edit');
+      editBtn.type = 'button';
+      editBtn.title = 'Edit item details and specification';
+      editBtn.setAttribute('aria-label', 'Edit ' + (item.title || item.id));
+      editBtn.addEventListener('click', function (e) {
+        if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+        callbacks.openEditModal(item);
+      });
+      els.context.appendChild(editBtn);
+    }
   }
   text(els.title, item.title || '(untitled)');
 

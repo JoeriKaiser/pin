@@ -151,6 +151,24 @@ struct ActionPayload {
 }
 
 #[derive(Deserialize)]
+struct EditItemPayload {
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    body: Option<String>,
+    #[serde(default, rename = "type")]
+    item_type: Option<String>,
+    #[serde(default)]
+    kind: Option<String>,
+    #[serde(default)]
+    priority: Option<String>,
+    #[serde(default)]
+    tags: Option<String>,
+    #[serde(default)]
+    expect_revision: Option<u64>,
+}
+
+#[derive(Deserialize)]
 struct RunPayload {
     #[serde(default, alias = "confirm_worktree", alias = "worktree")]
     pub use_worktree: Option<bool>,
@@ -1161,6 +1179,237 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
         }
 
         if let Some(stripped) = subpath.strip_prefix("items/") {
+            if let Some(id_part) = stripped.strip_suffix("/edit") {
+                let id = id_part.trim();
+                if !is_valid_csrf(origin_header.as_deref(), port, has_pin_action_header) {
+                    send_forbidden(&mut stream);
+                    return;
+                }
+                let mut body_bytes = vec![0u8; content_length];
+                if content_length > 0 && reader.read_exact(&mut body_bytes).is_err() {
+                    send_response(
+                        &mut stream,
+                        400,
+                        "Bad Request",
+                        "application/json; charset=utf-8",
+                        b"{\"error\":\"Failed to read body\"}",
+                        false,
+                        true,
+                        None,
+                    );
+                    return;
+                }
+                let payload: EditItemPayload = match serde_json::from_slice(&body_bytes) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        let msg = json_error_bytes(format!("Invalid JSON: {e}"));
+                        send_response(
+                            &mut stream,
+                            400,
+                            "Bad Request",
+                            "application/json; charset=utf-8",
+                            &msg,
+                            false,
+                            true,
+                            None,
+                        );
+                        return;
+                    }
+                };
+                let filename = match resolve_selector(&snapshot.vault_path, id) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        let msg = json_error_bytes(e.to_string());
+                        send_response(
+                            &mut stream,
+                            404,
+                            "Not Found",
+                            "application/json; charset=utf-8",
+                            &msg,
+                            false,
+                            true,
+                            None,
+                        );
+                        return;
+                    }
+                };
+                let _lock = match workflow::FileLock::acquire(&snapshot.vault_path, &filename) {
+                    Ok(l) => l,
+                    Err(e) => {
+                        let msg = json_error_bytes(e.to_string());
+                        send_response(
+                            &mut stream,
+                            409,
+                            "Conflict",
+                            "application/json; charset=utf-8",
+                            &msg,
+                            false,
+                            true,
+                            None,
+                        );
+                        return;
+                    }
+                };
+                let path = snapshot.vault_path.join(&filename);
+                let original = match std::fs::read_to_string(&path) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        let msg = json_error_bytes(format!("Could not read item: {e}"));
+                        send_response(
+                            &mut stream,
+                            500,
+                            "Internal Server Error",
+                            "application/json; charset=utf-8",
+                            &msg,
+                            false,
+                            true,
+                            None,
+                        );
+                        return;
+                    }
+                };
+                let mut issues = Vec::new();
+                let mut meta = match crate::frontmatter::parse_front_matter_detailed(
+                    &filename,
+                    &original,
+                    &mut issues,
+                ) {
+                    Some(m) => m,
+                    None => {
+                        send_response(
+                            &mut stream,
+                            500,
+                            "Internal Server Error",
+                            "application/json; charset=utf-8",
+                            b"{\"error\":\"Could not parse item front matter\"}",
+                            false,
+                            true,
+                            None,
+                        );
+                        return;
+                    }
+                };
+                if let Some(exp) = payload.expect_revision {
+                    let actual = meta.current_revision();
+                    if actual != exp {
+                        let msg = json_error_bytes(format!(
+                            "Revision conflict: expected {exp}, found {actual}"
+                        ));
+                        send_response(
+                            &mut stream,
+                            409,
+                            "Conflict",
+                            "application/json; charset=utf-8",
+                            &msg,
+                            false,
+                            true,
+                            None,
+                        );
+                        return;
+                    }
+                }
+                if let Some(t) = payload.title {
+                    let trimmed = crate::frontmatter::truncate_title(t.trim());
+                    if trimmed.is_empty() {
+                        send_response(
+                            &mut stream,
+                            400,
+                            "Bad Request",
+                            "application/json; charset=utf-8",
+                            b"{\"error\":\"Title cannot be empty\"}",
+                            false,
+                            true,
+                            None,
+                        );
+                        return;
+                    }
+                    meta.title = trimmed;
+                }
+                if let Some(p_str) = payload.priority {
+                    let trimmed = p_str.trim();
+                    if trimmed.is_empty() {
+                        meta.priority = None;
+                    } else if let Ok(p) = trimmed.parse::<crate::model::Priority>() {
+                        meta.priority = Some(p);
+                    } else {
+                        let msg = json_error_bytes(format!("Unknown priority '{trimmed}'"));
+                        send_response(
+                            &mut stream,
+                            400,
+                            "Bad Request",
+                            "application/json; charset=utf-8",
+                            &msg,
+                            false,
+                            true,
+                            None,
+                        );
+                        return;
+                    }
+                }
+                if let Some(k_str) = payload.kind {
+                    let trimmed = k_str.trim();
+                    if let Ok(k) = trimmed.parse::<Kind>() {
+                        if k != Kind::Unspecified {
+                            meta.kind = k;
+                        }
+                    }
+                }
+                if let Some(wt_str) = payload.item_type {
+                    if let Ok(wt) = wt_str.trim().parse::<WorkType>() {
+                        meta.item_type = Some(wt);
+                    }
+                }
+                if let Some(tags_str) = payload.tags {
+                    let trimmed = tags_str.trim();
+                    meta.tags = if trimmed.is_empty() {
+                        None
+                    } else {
+                        Some(trimmed.to_string())
+                    };
+                }
+                if let Some(mut body) = payload.body {
+                    if !body.is_empty() && !body.ends_with('\n') {
+                        body.push('\n');
+                    }
+                    meta.body = body;
+                }
+                meta.updated_at = Some(Utc::now().timestamp());
+                meta.revision = Some(meta.current_revision() + 1);
+                let new_doc = crate::frontmatter::render_full_document(&meta);
+                if let Err(e) = crate::vault::atomic_write(&path, &new_doc) {
+                    let msg = json_error_bytes(format!("Failed to save item: {e}"));
+                    send_response(
+                        &mut stream,
+                        500,
+                        "Internal Server Error",
+                        "application/json; charset=utf-8",
+                        &msg,
+                        false,
+                        true,
+                        None,
+                    );
+                    return;
+                }
+                snapshot
+                    .broadcaster
+                    .broadcast(serde_json::json!({ "type": "vault_changed" }));
+                let mut out_item = JsonIdeaOutput::from(&meta);
+                out_item.content = Some(&meta.body);
+                let resp_str =
+                    serde_json::to_string(&out_item).unwrap_or_else(|_| "{}".to_string());
+                send_response(
+                    &mut stream,
+                    200,
+                    "OK",
+                    "application/json; charset=utf-8",
+                    resp_str.as_bytes(),
+                    true,
+                    true,
+                    None,
+                );
+                return;
+            }
+
             if let Some(id_part) = stripped.strip_suffix("/action") {
                 let id = id_part.trim();
 

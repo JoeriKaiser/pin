@@ -1,4 +1,4 @@
-import { state, find, itemType } from './state.js';
+import { state, find, itemType, kind, priority, tags } from './state.js';
 import { els, $ } from './dom.js';
 import { sendCancel, sendRun, sendCommitPr, sendMessage, sendFinish, sendUpdate, sendSync } from './api.js';
 import { text, clear, node, showToast, formatStatusLabel } from './formatters.js';
@@ -768,6 +768,19 @@ export function bind(options) {
     openAgentDrawer: openAgentDrawer,
     closeAgentDrawer: closeAgentDrawer,
     openReplyModal: openReplyModal,
+    openEditModal: function (item) {
+      if (!item) return;
+      openSpecModal({
+        _editItem: item,
+        title: item.title || '',
+        body: item.content || '',
+        type: itemType(item),
+        kind: kind(item) === 'unspecified' ? 'technical' : kind(item),
+        priority: priority(item) === 'unset' ? '' : priority(item),
+        tags: tags(item).join(', '),
+        project: item.project || ''
+      });
+    },
     updateActiveRuns: updateActiveRuns,
     setViewMode: setViewMode,
     setRoute: setRoute
@@ -780,6 +793,19 @@ export function bind(options) {
     openCloseModal: openCloseModal,
     openAgentDrawer: openAgentDrawer,
     openReplyModal: openReplyModal,
+    openEditModal: function (item) {
+      if (!item) return;
+      openSpecModal({
+        _editItem: item,
+        title: item.title || '',
+        body: item.content || '',
+        type: itemType(item),
+        kind: kind(item) === 'unspecified' ? 'technical' : kind(item),
+        priority: priority(item) === 'unset' ? '' : priority(item),
+        tags: tags(item).join(', '),
+        project: item.project || ''
+      });
+    },
     closeAgentDrawer: closeAgentDrawer,
     sendCommitPrItem: sendCommitPrItem,
     refreshData: function (force) { bootCallbacks.refreshData(force); },
@@ -794,6 +820,19 @@ export function bind(options) {
     openAgentDrawer: openAgentDrawer,
     closeAgentDrawer: closeAgentDrawer,
     openReplyModal: openReplyModal,
+    openEditModal: function (item) {
+      if (!item) return;
+      openSpecModal({
+        _editItem: item,
+        title: item.title || '',
+        body: item.content || '',
+        type: itemType(item),
+        kind: kind(item) === 'unspecified' ? 'technical' : kind(item),
+        priority: priority(item) === 'unset' ? '' : priority(item),
+        tags: tags(item).join(', '),
+        project: item.project || ''
+      });
+    },
     openCompleteModal: openCompleteModal,
     sendCommitPrItem: sendCommitPrItem,
     openCloseModal: openCloseModal,

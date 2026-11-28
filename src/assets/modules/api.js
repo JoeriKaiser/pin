@@ -139,6 +139,17 @@ export function createItem(payload) {
   });
 }
 
+export function updateItem(id, payload) {
+  return fetch(BASE + 'items/' + encodeURIComponent(id) + '/edit', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Pin-Action': 'true'
+    },
+    body: JSON.stringify(payload)
+  });
+}
+
 export function uploadScreenshot(file) {
   return fetch(BASE + 'screenshots', {
     method: 'POST',
