@@ -1,6 +1,6 @@
 import { state, find, itemStatus, itemType, kind, priority, tags, matches, updateShown, isRunWaiting, getRunInfo } from './state.js';
 import { els } from './dom.js';
-import { sendAction, ensureActionOk } from './api.js';
+import { sendAction, ensureActionOk, fetchWorktree, deleteWorktree } from './api.js';
 import { node, text, clear, date, timeAgo, showToast, formatStatusLabel } from './formatters.js';
 import { renderMarkdownSnippet, renderMarkdown } from './markdown.js';
 import { setRoute } from './router.js';
@@ -164,6 +164,92 @@ export function renderWorkerBox(item) {
   }
   if (meta.children.length) {
     els.workerCard.appendChild(meta);
+  }
+
+  var showWorktree = !!(item.worktree_path || (runInfo && runInfo.worktree_path) || item.git_status);
+  if (showWorktree && typeof document !== 'undefined') {
+    var wtDetails = document.createElement('details');
+    wtDetails.className = 'worktree-inspector';
+    var wtSummary = document.createElement('summary');
+    wtSummary.textContent = 'Inspect worktree';
+    wtDetails.appendChild(wtSummary);
+
+    var wtBody = node('div', 'worktree-inspector-body');
+    wtDetails.appendChild(wtBody);
+
+    function loadWorktreeInfo() {
+      clear(wtBody);
+      wtBody.appendChild(node('div', 'help-text', 'Loading worktree status…'));
+      fetchWorktree(item.id)
+        .then(function (res) { return res.ok ? res.json() : Promise.reject(new Error('Failed to inspect worktree')); })
+        .then(function (info) {
+          clear(wtBody);
+          if (!info || !info.exists) {
+            wtBody.appendChild(node('div', 'help-text', 'No active worktree on disk.'));
+            return;
+          }
+          var summaryLine = [];
+          if (info.branch) summaryLine.push('Branch: ' + info.branch);
+          if (info.ahead_count > 0) summaryLine.push(info.ahead_count + ' commit' + (info.ahead_count === 1 ? '' : 's') + ' ahead');
+          summaryLine.push(info.changed_files + ' modified file' + (info.changed_files === 1 ? '' : 's'));
+          wtBody.appendChild(node('div', 'worktree-summary-line', summaryLine.join(' · ')));
+
+          if (info.status_lines && info.status_lines.length) {
+            var preStatus = document.createElement('pre');
+            preStatus.className = 'worktree-diff-pre';
+            preStatus.textContent = info.status_lines.join('\n');
+            wtBody.appendChild(preStatus);
+          }
+
+          if (info.diff_preview && info.diff_preview.trim()) {
+            var diffDetails = document.createElement('details');
+            diffDetails.className = 'worktree-diff-details';
+            var diffSum = document.createElement('summary');
+            diffSum.textContent = 'Diff preview';
+            diffDetails.appendChild(diffSum);
+            var preDiff = document.createElement('pre');
+            preDiff.className = 'worktree-diff-pre';
+            preDiff.textContent = info.diff_preview;
+            diffDetails.appendChild(preDiff);
+            wtBody.appendChild(diffDetails);
+          }
+
+          var wtActions = node('div', 'worktree-inspector-actions');
+          var refreshBtn = node('button', 'control', 'Refresh');
+          refreshBtn.type = 'button';
+          refreshBtn.addEventListener('click', loadWorktreeInfo);
+          wtActions.appendChild(refreshBtn);
+
+          if (!info.running) {
+            var discardBtn = node('button', 'action-btn danger action-btn-small', 'Discard worktree');
+            discardBtn.type = 'button';
+            discardBtn.addEventListener('click', function () {
+              discardBtn.disabled = true;
+              deleteWorktree(item.id)
+                .then(ensureActionOk)
+                .then(function () {
+                  showToast('Worktree discarded', false);
+                  callbacks.refreshData();
+                })
+                .catch(function (err) {
+                  discardBtn.disabled = false;
+                  showToast(err.message || 'Failed to discard worktree', true);
+                });
+            });
+            wtActions.appendChild(discardBtn);
+          }
+          wtBody.appendChild(wtActions);
+        })
+        .catch(function (err) {
+          clear(wtBody);
+          wtBody.appendChild(node('div', 'help-text', err.message || 'Could not inspect worktree'));
+        });
+    }
+
+    wtDetails.addEventListener('toggle', function () {
+      if (wtDetails.open) loadWorktreeInfo();
+    });
+    els.workerCard.appendChild(wtDetails);
   }
 }
 

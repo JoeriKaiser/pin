@@ -4593,6 +4593,64 @@ a {
   font-weight: var(--weight-semibold);
 }
 
+.worktree-inspector {
+  margin-top: var(--space-2);
+  border-top: 1px solid var(--line-subtle);
+  padding-top: var(--space-2);
+  font-size: var(--text-xs);
+}
+
+.worktree-inspector > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-weight: var(--weight-medium);
+  user-select: none;
+}
+
+.worktree-inspector > summary:hover {
+  color: var(--ink);
+}
+
+.worktree-inspector-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.worktree-summary-line {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--muted);
+}
+
+.worktree-diff-pre {
+  margin: 0;
+  padding: var(--space-2);
+  background: var(--soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  max-height: 12rem;
+  overflow: auto;
+  white-space: pre;
+  color: var(--ink);
+}
+
+.worktree-diff-details > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: var(--text-2xs);
+  margin-bottom: var(--space-1);
+}
+
+.worktree-inspector-actions {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
 /* Minimum 24px target height for interactive card/toolbar buttons (WCAG 2.2 SC 2.5.8) */
 .btn-reply-card,
 .btn-view-run,

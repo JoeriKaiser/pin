@@ -36,6 +36,20 @@ impl From<io::Error> for WorktreeError {
 
 pub struct WorktreeManager;
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct WorktreeInspection {
+    pub exists: bool,
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    pub changed_files: usize,
+    pub ahead_count: usize,
+    pub status_lines: Vec<String>,
+    pub diff_stat: String,
+    pub diff_preview: String,
+    pub truncated: bool,
+}
+
 impl WorktreeManager {
     /// The standard folder convention where all worktrees are stored.
     pub const WORKTREES_DIR_NAME: &'static str = ".pin_worktrees";
@@ -357,6 +371,116 @@ impl WorktreeManager {
             .output()
             .map(|o| o.status.success() && !o.stdout.is_empty())
             .unwrap_or(false)
+    }
+
+    /// Inspects a worktree for `item_id`, returning branch, dirty status lines,
+    /// ahead commit count, diff stat, and a capped diff preview.
+    pub fn inspect_worktree(repo_path: &Path, item_id: &str) -> WorktreeInspection {
+        let target_dir = Self::worktree_path(repo_path, item_id);
+        let rel_path = format!("{}/{item_id}", Self::WORKTREES_DIR_NAME);
+        if !target_dir.exists() || !target_dir.join(".git").exists() {
+            return WorktreeInspection {
+                exists: false,
+                path: rel_path,
+                branch: None,
+                changed_files: 0,
+                ahead_count: 0,
+                status_lines: Vec::new(),
+                diff_stat: String::new(),
+                diff_preview: String::new(),
+                truncated: false,
+            };
+        }
+
+        let branch = Command::new("git")
+            .arg("-C")
+            .arg(&target_dir)
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .filter(|s| !s.is_empty());
+
+        let status_raw = Command::new("git")
+            .arg("-C")
+            .arg(&target_dir)
+            .args(["status", "--short"])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+            .unwrap_or_default();
+
+        let all_status_lines: Vec<String> = status_raw
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| l.to_string())
+            .collect();
+        let changed_files = all_status_lines.len();
+        let status_lines: Vec<String> = all_status_lines.into_iter().take(50).collect();
+
+        let base_branch = Self::resolve_default_branch(repo_path);
+        let ahead_count = Command::new("git")
+            .arg("-C")
+            .arg(&target_dir)
+            .args(["rev-list", "--count", &format!("{base_branch}..HEAD")])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .and_then(|o| {
+                String::from_utf8_lossy(&o.stdout)
+                    .trim()
+                    .parse::<usize>()
+                    .ok()
+            })
+            .unwrap_or(0);
+
+        let diff_stat = Command::new("git")
+            .arg("-C")
+            .arg(&target_dir)
+            .args(["diff", "--stat", "HEAD"])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default();
+
+        const MAX_DIFF_BYTES: usize = 32 * 1024;
+        let diff_raw = Command::new("git")
+            .arg("-C")
+            .arg(&target_dir)
+            .args(["diff", "HEAD"])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+            .unwrap_or_default();
+
+        let (diff_preview, truncated) = if diff_raw.len() > MAX_DIFF_BYTES {
+            let mut end = MAX_DIFF_BYTES;
+            while end > 0 && !diff_raw.is_char_boundary(end) {
+                end -= 1;
+            }
+            (
+                format!("{}\n[... diff truncated ...]", &diff_raw[..end]),
+                true,
+            )
+        } else {
+            (diff_raw, false)
+        };
+
+        WorktreeInspection {
+            exists: true,
+            path: rel_path,
+            branch,
+            changed_files,
+            ahead_count,
+            status_lines,
+            diff_stat,
+            diff_preview,
+            truncated,
+        }
     }
 
     /// Removes a git worktree for `item_id`.
@@ -712,5 +836,56 @@ mod tests {
             .unwrap();
 
         assert_eq!(WorktreeManager::resolve_default_branch(&repo), "main");
+    }
+
+    #[test]
+    fn test_inspect_worktree_reports_branch_status_and_diff() {
+        let dir = tempdir().unwrap();
+        let repo = dir.path().join("repo");
+        fs::create_dir_all(&repo).unwrap();
+
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["init", "-b", "main"])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["config", "user.name", "Test"])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["config", "user.email", "test@test.com"])
+            .output()
+            .unwrap();
+        fs::write(repo.join("README.md"), "line 1\n").unwrap();
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["add", "."])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["commit", "-m", "init"])
+            .output()
+            .unwrap();
+
+        let absent = WorktreeManager::inspect_worktree(&repo, "missing1");
+        assert!(!absent.exists);
+
+        let wt = WorktreeManager::provision_worktree(&repo, "insp123").unwrap();
+        fs::write(wt.join("README.md"), "line 1\nline 2\n").unwrap();
+
+        let info = WorktreeManager::inspect_worktree(&repo, "insp123");
+        assert!(info.exists);
+        assert_eq!(info.branch.as_deref(), Some("pin/insp123"));
+        assert_eq!(info.changed_files, 1);
+        assert!(info.diff_preview.contains("+line 2"));
     }
 }

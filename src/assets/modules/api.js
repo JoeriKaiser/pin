@@ -37,6 +37,19 @@ export function fetchItemLog(id) {
   return fetch(BASE + 'items/' + encodeURIComponent(id) + '/log');
 }
 
+export function fetchWorktree(id) {
+  return fetch(BASE + 'items/' + encodeURIComponent(id) + '/worktree', { cache: 'no-cache' });
+}
+
+export function deleteWorktree(id) {
+  return fetch(BASE + 'items/' + encodeURIComponent(id) + '/worktree', {
+    method: 'DELETE',
+    headers: {
+      'X-Pin-Action': 'true'
+    }
+  });
+}
+
 export function ensureActionOk(res) {
   if (res && typeof res.ok === 'boolean' && !res.ok) {
     var parseBody = typeof res.json === 'function'

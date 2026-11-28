@@ -1971,6 +1971,100 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
         return;
     }
 
+    if method == "DELETE" {
+        if let Some(stripped) = subpath.strip_prefix("items/") {
+            if let Some(id_part) = stripped.strip_suffix("/worktree") {
+                if !is_valid_csrf(origin_header.as_deref(), port, has_pin_action_header) {
+                    send_forbidden(&mut stream);
+                    return;
+                }
+                let id = id_part.trim();
+                if !crate::vault::validate_selector(id) {
+                    send_response(
+                        &mut stream,
+                        400,
+                        "Bad Request",
+                        "application/json; charset=utf-8",
+                        b"{\"error\":\"Invalid item selector\"}",
+                        false,
+                        true,
+                        None,
+                    );
+                    return;
+                }
+                let canonical_id = match crate::vault::resolve_selector(&snapshot.vault_path, id) {
+                    Ok(f) => f.strip_suffix(".md").unwrap_or(&f).to_string(),
+                    Err(_) => id.to_string(),
+                };
+                if snapshot.acp_manager.is_item_running(&canonical_id) {
+                    send_response(
+                        &mut stream,
+                        409,
+                        "Conflict",
+                        "application/json; charset=utf-8",
+                        b"{\"error\":\"Cannot discard worktree while agent run is active\"}",
+                        false,
+                        true,
+                        None,
+                    );
+                    return;
+                }
+                match crate::acp::worktree::WorktreeManager::remove_worktree(
+                    &snapshot.repo_path,
+                    &canonical_id,
+                ) {
+                    Ok(()) => {
+                        if let Ok(mut cache_guard) = snapshot.git_cache.lock() {
+                            *cache_guard = None;
+                        }
+                        snapshot.git_generation.fetch_add(1, Ordering::Relaxed);
+                        snapshot
+                            .broadcaster
+                            .broadcast(serde_json::json!({ "type": "git_updated" }));
+                        snapshot
+                            .broadcaster
+                            .broadcast(serde_json::json!({ "type": "vault_changed" }));
+                        send_response(
+                            &mut stream,
+                            200,
+                            "OK",
+                            "application/json; charset=utf-8",
+                            b"{\"removed\":true}",
+                            true,
+                            true,
+                            None,
+                        );
+                    }
+                    Err(e) => {
+                        let msg = json_error_bytes(format!("Failed to remove worktree: {e}"));
+                        send_response(
+                            &mut stream,
+                            500,
+                            "Internal Server Error",
+                            "application/json; charset=utf-8",
+                            &msg,
+                            false,
+                            true,
+                            None,
+                        );
+                    }
+                }
+                return;
+            }
+        }
+        send_response(
+            &mut stream,
+            405,
+            "Method Not Allowed",
+            "text/plain; charset=utf-8",
+            b"Method Not Allowed",
+            false,
+            true,
+            None,
+        );
+        return;
+    }
+
     if method != "GET" && method != "HEAD" {
         send_response(
             &mut stream,
@@ -2174,6 +2268,49 @@ fn handle_client(mut stream: TcpStream, snapshot: &Arc<ViewSnapshot>, port: u16)
     }
 
     if let Some(stripped) = subpath.strip_prefix("items/") {
+        if let Some(id_part) = stripped.strip_suffix("/worktree") {
+            let id = id_part.trim();
+            if !crate::vault::validate_selector(id) {
+                send_response(
+                    &mut stream,
+                    400,
+                    "Bad Request",
+                    "application/json; charset=utf-8",
+                    b"{\"error\":\"Invalid item selector\"}",
+                    false,
+                    true,
+                    None,
+                );
+                return;
+            }
+            let canonical_id = match crate::vault::resolve_selector(&snapshot.vault_path, id) {
+                Ok(f) => f.strip_suffix(".md").unwrap_or(&f).to_string(),
+                Err(_) => id.to_string(),
+            };
+            let inspection = crate::acp::worktree::WorktreeManager::inspect_worktree(
+                &snapshot.repo_path,
+                &canonical_id,
+            );
+            let running = snapshot.acp_manager.is_item_running(&canonical_id);
+            let mut val =
+                serde_json::to_value(&inspection).unwrap_or_else(|_| serde_json::json!({}));
+            if let Some(obj) = val.as_object_mut() {
+                obj.insert("running".to_string(), serde_json::json!(running));
+            }
+            let payload = serde_json::to_string(&val).unwrap_or_else(|_| "{}".to_string());
+            send_response(
+                &mut stream,
+                200,
+                "OK",
+                "application/json; charset=utf-8",
+                payload.as_bytes(),
+                true,
+                method == "GET",
+                None,
+            );
+            return;
+        }
+
         if let Some(id_part) = stripped.strip_suffix("/log") {
             let id = id_part.trim();
             if !crate::vault::validate_selector(id) {
